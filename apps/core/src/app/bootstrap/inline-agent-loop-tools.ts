@@ -90,8 +90,10 @@ export async function createInlineCoreToolsForRun(
       laneInput,
       deps.getAgentRepository(),
       deps.getPermissionRuntimeSettings().agents,
+      deps.getConversationRoutes(),
       deps.getAgentAccessPreset(laneInput.group.folder) !== 'locked' &&
         deps.createTaskLifecycleBackend(laneInput) != null,
+      deps.warn,
     ),
   );
 }
@@ -205,6 +207,9 @@ export function createInlineCoreTools(
                     laneInput,
                     deps.getAgentRepository(),
                     deps.getPermissionRuntimeSettings().agents,
+                    deps.getConversationRoutes(),
+                    true,
+                    deps.warn,
                   )
                 ).some(
                   (current) =>
@@ -637,6 +642,7 @@ export function wireInlineAgentLoopTools(input: {
     requestPermissionApproval,
     requestUserAnswer,
     getAgentAccessPreset: input.getAgentAccessPreset,
+    getConversationRoutes: input.app.getConversationRoutes,
     getPermissionRuntimeSettings: input.getPermissionRuntimeSettings,
     getMcpServerRepository: input.getMcpServerRepository ?? (() => undefined),
     getAgentRepository: input.getAgentRepository ?? (() => undefined),

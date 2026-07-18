@@ -72,9 +72,12 @@ export async function prepareWorkerAuthorityProjection(input: {
   agentInput: AgentInput;
   accessPreset?: 'full' | 'locked';
   delegates: readonly string[];
+  getConversationBoundAgentIds: () => ReadonlySet<string>;
+  personasByAgentId: Readonly<Record<string, string | undefined>>;
   workspaceFolder: string;
   options?: RunAgentOptions;
   getAgentRepository: () => AgentRepository;
+  warn: (context: Record<string, unknown>, message: string) => void;
 }) {
   const accessPreset: 'full' | 'locked' =
     input.accessPreset === 'locked' ? 'locked' : 'full';
@@ -86,10 +89,20 @@ export async function prepareWorkerAuthorityProjection(input: {
     run: input.agentInput,
     delegates: input.delegates,
     callerFolder: input.workspaceFolder,
+    conversationBoundAgentIds:
+      input.options?.asyncTaskRepositoryAvailable === true &&
+      !hideAuthorityTools &&
+      input.agentInput.parentTaskId == null &&
+      input.agentInput.toolPolicyRules?.includes('AgentDelegation') &&
+      input.delegates.length > 0
+        ? input.getConversationBoundAgentIds()
+        : new Set(),
+    personasByAgentId: input.personasByAgentId,
     toolsAvailable:
       input.options?.asyncTaskRepositoryAvailable === true &&
       !hideAuthorityTools,
     getRepository: input.getAgentRepository,
+    warn: input.warn,
   });
   return { accessPreset, hideAuthorityTools, callableAgentManifest };
 }

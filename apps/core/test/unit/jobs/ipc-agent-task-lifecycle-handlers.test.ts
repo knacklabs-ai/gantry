@@ -927,6 +927,7 @@ describe('agent task lifecycle IPC handlers', () => {
         callerAgentId: 'agent:main_agent',
         callerFolder: 'main_agent',
         delegates: ['reviewer'],
+        conversationBoundAgentIds: new Set(['agent:reviewer']),
         toolPolicyRules: ['AgentDelegation'],
       })[0]!,
     );
@@ -954,6 +955,7 @@ describe('agent task lifecycle IPC handlers', () => {
         });
         expect(input.prompt).toContain('Objective: Research lead sources');
         expect(group.folder).toBe('reviewer');
+        expect(group.providerAccountId).toBe('slack-two');
         expect(input.agentId).toBe('agent:reviewer');
         expect(input.workspaceFolder).toBe('reviewer');
         if (sendMessage.mock.calls.length > 0) {
@@ -1017,6 +1019,7 @@ describe('agent task lifecycle IPC handlers', () => {
         name: 'Lead gen',
         folder: 'main_agent',
         providerAccountId: 'slack-one',
+        conversationId: 'conversation:shared',
         isRegistered: true,
       },
       'sl:C123::thread:thread-1::agent:agent%3Areviewer': {
@@ -1024,7 +1027,8 @@ describe('agent task lifecycle IPC handlers', () => {
         name: 'Reviewer',
         folder: 'reviewer',
         agentId: 'agent:reviewer',
-        providerAccountId: 'slack-one',
+        providerAccountId: 'slack-two',
+        conversationId: 'conversation:other',
         isRegistered: true,
       },
     };
@@ -1047,6 +1051,27 @@ describe('agent task lifecycle IPC handlers', () => {
       code: 'forbidden',
     });
     expect(repository.tasks.size).toBe(0);
+
+    await agentTaskLifecycleHandlers.delegate_task(
+      contextFor({
+        data: {
+          ...taskData('delegate-other-conversation', 'delegate_task', {
+            objective: 'Research lead sources',
+            targetAgentId: 'agent:reviewer',
+          }),
+          providerAccountId: 'slack-one',
+        },
+        deps,
+        conversationBindings,
+      }),
+    );
+    expect(
+      readResponse(runtimeHome, 'delegate-other-conversation'),
+    ).toMatchObject({ ok: false, code: 'not_found' });
+    expect(repository.tasks.size).toBe(0);
+    conversationBindings[
+      'sl:C123::thread:thread-1::agent:agent%3Areviewer'
+    ].conversationId = 'conversation:shared';
 
     configuredDelegates = [];
     await agentTaskLifecycleHandlers.delegate_task(
@@ -1147,7 +1172,7 @@ describe('agent task lifecycle IPC handlers', () => {
     expect(sendMessage).toHaveBeenNthCalledWith(
       1,
       'sl:C123',
-      'Checking with the Reviewer agent…',
+      'Checking with the Reviewer agent about: Research lead sources…',
       {
         threadId: 'thread-1',
         providerAccountId: 'slack-one',
@@ -1166,7 +1191,7 @@ describe('agent task lifecycle IPC handlers', () => {
     );
     await vi.waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(2));
     expect(sendMessage.mock.calls.map((call) => call[1])).toEqual([
-      'Checking with the Reviewer agent…',
+      'Checking with the Reviewer agent about: Research lead sources…',
       'Reviewer responded.',
     ]);
 

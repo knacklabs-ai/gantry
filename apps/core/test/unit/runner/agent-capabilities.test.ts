@@ -137,6 +137,7 @@ describe('agent capability composition', () => {
     callerAgentId: 'agent:main_agent',
     callerFolder: 'main_agent',
     delegates: ['reviewer'],
+    conversationBoundAgentIds: new Set(['agent:reviewer']),
     toolPolicyRules: ['AgentDelegation'],
   });
   const callableAgentTool = gantryMcpFullToolName(

@@ -18,6 +18,7 @@ import type {
   AsyncTaskCreateInput,
   AsyncTaskRecord,
 } from '@core/domain/ports/async-tasks.js';
+import { makeAgentThreadQueueKey } from '@core/shared/thread-queue-key.js';
 
 const publishRuntimeEvent = vi.fn(async () => undefined);
 const sendMessage = vi.fn(async () => undefined);
@@ -36,7 +37,31 @@ function wire(overrides: Record<string, unknown> = {}) {
       executionAdapters: undefined,
       runnerSandboxProvider: { enforcing: true },
       getCredentialBroker: vi.fn(async () => undefined),
-      getConversationRoutes: vi.fn(() => ({})),
+      getConversationRoutes: vi.fn(() => ({
+        [makeAgentThreadQueueKey(
+          'conversation:test',
+          'agent-1',
+          undefined,
+          'slack-main',
+        )]: {
+          name: 'Main',
+          folder: 'main_agent',
+          trigger: '',
+          added_at: new Date(0).toISOString(),
+          agentId: 'agent-1',
+          providerAccountId: 'slack-main',
+          conversationId: 'conversation:shared',
+        },
+        [makeAgentThreadQueueKey('conversation:test', 'agent:reviewer')]: {
+          name: 'Reviewer',
+          folder: 'reviewer',
+          trigger: '',
+          added_at: new Date(0).toISOString(),
+          agentId: 'agent:reviewer',
+          providerAccountId: 'slack-reviewer',
+          conversationId: 'conversation:shared',
+        },
+      })),
       resolveExecutionProviderId: vi.fn(async () => 'test:inline'),
     },
     channelWiring: {
@@ -69,6 +94,7 @@ function laneInput() {
     group: {
       name: 'Test',
       folder: 'main_agent',
+      providerAccountId: 'slack-main',
       trigger: '@test',
       added_at: new Date(0).toISOString(),
     },
@@ -312,7 +338,7 @@ describe('inline core tool bootstrap', () => {
     expect(repository.listTasks).toHaveBeenCalledOnce();
   });
 
-  it('preloads and projects an eligible callable-agent manifest', async () => {
+  it('preloads a conversation-bound callable agent with its persona', async () => {
     const listAgents = vi.fn(async () => [
       {
         id: 'agent:main_agent',
@@ -330,7 +356,10 @@ describe('inline core tool bootstrap', () => {
     wire({
       getAgentRepository: () => ({ listAgents }),
       getPermissionRuntimeSettings: () => ({
-        agents: { main_agent: { delegates: ['reviewer'] } },
+        agents: {
+          main_agent: { delegates: ['reviewer'] },
+          reviewer: { persona: 'research' },
+        },
         permissions: {
           autoMode: {},
           yoloMode: { enabled: false },
@@ -347,7 +376,7 @@ describe('inline core tool bootstrap', () => {
     );
 
     expect(projected).toMatchObject({
-      description: 'Delegate to Reviewer.',
+      description: 'Delegate to Reviewer (research).',
     });
     expect(projected?.name.length).toBeLessThanOrEqual(64);
     expect(listAgents).toHaveBeenCalledWith('default');
@@ -371,6 +400,24 @@ describe('inline core tool bootstrap', () => {
         tasks.push(task);
         return task;
       }),
+      getTask: vi.fn(
+        async (taskId: string) =>
+          tasks.find((task) => task.id === taskId) ?? null,
+      ),
+      transitionTask: vi.fn(async (transition) => {
+        const index = tasks.findIndex((task) => task.id === transition.taskId);
+        const current = tasks[index];
+        if (!current) return null;
+        const updated = {
+          ...current,
+          status: transition.status,
+          updatedAt: transition.now,
+          privateCorrelationJson:
+            transition.privateCorrelationJson ?? current.privateCorrelationJson,
+        };
+        tasks[index] = updated;
+        return updated;
+      }),
       listTasks: vi.fn(async () => []),
       countTasksByStatus: vi.fn(async () => []),
       claimQueuedTask: vi.fn(async () => null),
@@ -393,7 +440,10 @@ describe('inline core tool bootstrap', () => {
       getAsyncTaskRepository: () => repository,
       getAgentRepository: () => ({ listAgents }),
       getPermissionRuntimeSettings: () => ({
-        agents: { main_agent: { delegates: ['reviewer'] } },
+        agents: {
+          main_agent: { delegates: ['reviewer'] },
+          reviewer: { persona: 'research' },
+        },
         permissions: {
           autoMode: {},
           yoloMode: { enabled: false },

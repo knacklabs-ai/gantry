@@ -48,6 +48,8 @@ import {
 } from './agent-spawn-types.js';
 import { selectedMemoryIpcActionsFromToolRules } from '../shared/memory-ipc-actions.js';
 import { isCanonicalBrowserCapabilityRule } from '../shared/agent-tool-references.js';
+import { agentIdForFolder } from '../domain/agent/agent-folder-id.js';
+import { conversationBoundAgentIdsForRoute } from '../application/core-tools/callable-agent-tools.js';
 import { resolveMcpCredentialEnvForAgent } from '../application/capability-secrets/mcp-secret-projection.js';
 import {
   attachMcpSourceNetworkHosts,
@@ -193,14 +195,31 @@ async function spawnAgentWithContext(
   }
   const agentIdentifier = group.folder.toLowerCase().replace(/_/g, '-');
   const credentials = host.getHostRuntimeCredentialEnv;
+  const personasByAgentId = Object.fromEntries(
+    Object.entries(runtimeSettings.agents).map(([folder, agent]) => [
+      String(agentIdForFolder(folder)),
+      agent.persona,
+    ]),
+  );
   const { accessPreset, hideAuthorityTools, callableAgentManifest } =
     await prepareWorkerAuthorityProjection({
       agentInput: input,
       accessPreset: agentSettings?.accessPreset,
       delegates: agentSettings?.delegates ?? [],
+      getConversationBoundAgentIds: () =>
+        conversationBoundAgentIdsForRoute({
+          routes: options?.conversationRoutes ?? {},
+          chatJid: input.chatJid,
+          threadId: input.threadId,
+          callerAgentId:
+            input.agentId ?? String(agentIdForFolder(group.folder)),
+          callerProviderAccountId: group.providerAccountId,
+        }),
+      personasByAgentId,
       workspaceFolder: group.folder,
       options,
       getAgentRepository: () => getRuntimeStorage().repositories.agents,
+      warn: logger.warn.bind(logger),
     });
   const compiledSystemPrompt = await compileSpawnSystemPrompt({
     group,

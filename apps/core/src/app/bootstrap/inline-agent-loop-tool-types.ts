@@ -30,6 +30,10 @@ export interface InlineCoreToolHostDeps extends CoreSendMessageDeps {
   publishRuntimeEvent?: (event: RuntimeEventPublishInput) => Promise<void>;
   classifierConsult?: PermissionClassifierPromptConsultInput['classifierConsult'];
   getAgentAccessPreset(folder: string): 'full' | 'locked';
+  getConversationRoutes(): Record<
+    string,
+    import('../../domain/types.js').ConversationRoute
+  >;
   getPermissionRuntimeSettings(): {
     agents?: InlineConfiguredAgents;
     permissions: {

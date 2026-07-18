@@ -94,14 +94,25 @@ export function createInlineAgentTaskLifecycle(input: {
       ? {}
       : {
           runDelegatedAgent: async (delegated) => {
+            const routes = input.getConversationRoutes();
+            const callerConversationId = resolveConversationRoute(
+              routes,
+              owner.conversationId,
+              owner.threadId,
+              owner.agentId,
+              input.laneInput.group.providerAccountId,
+            )?.conversationId;
             const targetGroup = delegated.targetAgentId
-              ? resolveConversationRoute(
-                  input.getConversationRoutes(),
-                  owner.conversationId,
-                  owner.threadId,
-                  delegated.targetAgentId,
-                  input.laneInput.group.providerAccountId,
-                )
+              ? callerConversationId
+                ? resolveConversationRoute(
+                    routes,
+                    owner.conversationId,
+                    owner.threadId,
+                    delegated.targetAgentId,
+                    undefined,
+                    callerConversationId,
+                  )
+                : undefined
               : input.laneInput.group;
             if (!targetGroup) {
               throw new Error(
@@ -200,6 +211,7 @@ export function createInlineAgentTaskLifecycle(input: {
                 },
                 {
                   ...(await input.buildRunOptions(targetAgentId)),
+                  conversationRoutes: input.getConversationRoutes(),
                   timeoutMs:
                     delegated.timeoutMs ?? DEFAULT_DELEGATED_AGENT_TIMEOUT_MS,
                   signal: delegated.signal,

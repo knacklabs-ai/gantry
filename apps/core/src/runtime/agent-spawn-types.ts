@@ -167,6 +167,7 @@ export interface RunAgentOptions {
   executionAdapters?: AgentExecutionAdapterRegistry;
   runnerSandboxProvider: RunnerSandboxProvider;
   asyncTaskRepositoryAvailable?: boolean;
+  conversationRoutes?: Record<string, ConversationRoute>;
 }
 
 export interface HostRuntimeContext {

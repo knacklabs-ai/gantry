@@ -16,6 +16,7 @@ export type CoreTaskLifecycleErrorCode =
   | 'invalid_request'
   | 'unavailable'
   | 'cancelled'
+  | 'failed'
   | 'not_found'
   | 'forbidden';
 
@@ -279,7 +280,12 @@ function delegatedCompletionResult(
     : {
         ok: false,
         message,
-        code: completion.status === 'cancelled' ? 'cancelled' : 'unavailable',
+        code:
+          completion.status === 'cancelled'
+            ? 'cancelled'
+            : completion.status === 'failed'
+              ? 'failed'
+              : 'unavailable',
         data: { taskId: completion.taskId, status: completion.status },
       };
 }

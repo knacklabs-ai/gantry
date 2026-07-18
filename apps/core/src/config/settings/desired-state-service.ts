@@ -245,6 +245,7 @@ export class SettingsDesiredStateService {
         await this.deps.ops.setConversationRoute(routeKey, {
           name: agent.name,
           folder,
+          conversationId: binding.conversationId,
           trigger: binding.trigger,
           added_at: binding.addedAt,
           requiresTrigger: binding.requiresTrigger,
@@ -550,6 +551,7 @@ export class SettingsDesiredStateService {
             conversationId: installConversation.id,
           }),
           route: {
+            configuredConversationId: input.conversationKey,
             trigger: binding.trigger,
             requiresTrigger: binding.requiresTrigger,
             agentConfig: configuredAgentConfig(binding),

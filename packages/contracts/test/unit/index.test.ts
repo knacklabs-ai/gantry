@@ -6,8 +6,10 @@ import type {
 
 import {
   AgentCapabilitiesResponseSchema,
+  AgentDelegatesResponseSchema,
   AgentHarnessSchema,
   AgentResponseSchema,
+  ReplaceAgentDelegatesRequestSchema,
   UpdateAgentRequestSchema,
   ConversationInstallRequestSchema,
   ConversationInstallListResponseSchema,
@@ -880,6 +882,57 @@ describe('contracts package', () => {
     ).toEqual({ agentHarness: 'anthropic_sdk' });
     expect(UpdateAgentRequestSchema.parse({ status: 'active' })).toEqual({
       status: 'active',
+    });
+    expect(
+      ReplaceAgentDelegatesRequestSchema.parse({
+        delegates: [' researcher '],
+        expectedRevision: 4,
+      }),
+    ).toEqual({ delegates: ['researcher'], expectedRevision: 4 });
+    expect(
+      AgentDelegatesResponseSchema.parse({
+        agentId: 'agent:orchestrator',
+        revision: 4,
+        delegates: ['researcher'],
+        resolved: [
+          {
+            ref: 'researcher',
+            agentId: 'agent:researcher',
+            toolName: 'delegate_to_researcher_abcd',
+            displayName: 'Researcher',
+            persona: 'research',
+          },
+        ],
+      }),
+    ).toMatchObject({
+      agentId: 'agent:orchestrator',
+      delegates: ['researcher'],
+      resolved: [{ persona: 'research' }],
+    });
+    expectInvalid(ReplaceAgentDelegatesRequestSchema, {
+      delegates: ['researcher'],
+      unexpected: true,
+    });
+    expectInvalid(ReplaceAgentDelegatesRequestSchema, { delegates: [''] });
+    expectInvalid(ReplaceAgentDelegatesRequestSchema, {
+      delegates: ['x'.repeat(161)],
+    });
+    expectInvalid(ReplaceAgentDelegatesRequestSchema, {
+      delegates: Array.from({ length: 101 }, (_, index) => `agent-${index}`),
+    });
+    expectInvalid(AgentDelegatesResponseSchema, {
+      agentId: 'agent:orchestrator',
+      revision: 4,
+      delegates: [],
+      resolved: [
+        {
+          ref: 'researcher',
+          agentId: 'agent:researcher',
+          toolName: 'delegate_to_researcher_abcd',
+          displayName: 'Researcher',
+          persona: 'finance',
+        },
+      ],
     });
     expectInvalid(CreateAgentRequestSchema, { appId: 'app-1', name: '' });
     const forbiddenAgentRequestFields = [

@@ -94,6 +94,7 @@ describe('startDeepAgentJobHeartbeat', () => {
             toolName: 'reviewer_hash',
             targetAgentId: 'agent:reviewer',
             displayName: 'Reviewer',
+            persona: 'research',
           },
         ],
       },

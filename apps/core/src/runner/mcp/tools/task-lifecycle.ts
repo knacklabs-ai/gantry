@@ -17,6 +17,7 @@ import {
 import {
   CALLABLE_AGENT_RESPONSE_TIMEOUT_MS,
   CALLABLE_AGENT_SYNC_WAIT_TIMEOUT_MS,
+  callableAgentToolDescription,
   callableAgentToolName,
   createCallableAgentToolSchema,
   type CallableAgentToolManifestEntry,
@@ -210,7 +211,7 @@ export function registerTaskLifecycleTools(
     dynamicServer.registerTool(
       callableAgentToolName(entry),
       {
-        description: `Delegate to ${entry.displayName}.`,
+        description: callableAgentToolDescription(entry),
         inputSchema: callableAgentSchema,
       },
       async (args: Record<string, unknown>) =>

@@ -502,3 +502,71 @@ a self-referential parent id.
   restart was performed.
 - Decisions and assumptions: none. No schema, settings, Control API, CLI,
   provider adapter, or new durable projection was added.
+
+## Stage 8 — Audited callable-agent UX and control surface
+
+Goal: close the confirmed callable-agent quality gaps without changing the
+delegation topology, authority model, hybrid lifecycle, or trace contract.
+
+### Scope and acceptance criteria
+
+1. Callable-agent manifest entries carry the target's settings-owned persona,
+   and every synthetic tool description includes the concise display name and
+   persona.
+2. Start narration includes a redacted, length-bounded objective snippet.
+   Failure narration includes a redacted, length-bounded failure reason.
+3. Per-turn projection intersects the curated allowlist with agents bound to
+   the caller's current conversation route, so an unbound delegate is not
+   offered as a synthetic tool.
+4. A terminal delegated `failed` completion maps to a non-retryable business
+   error, while `timed_out` remains transient/retryable.
+5. Each unresolved configured delegate ref emits one bounded operator warning
+   per projection, naming the owning agent and unresolved ref.
+6. `GET /v1/agents/{agentId}/delegates` returns the configured refs plus the
+   active callable roster (including persona), and
+   `PUT /v1/agents/{agentId}/delegates` replaces the list after validating refs
+   against same-app registered agents. The mutation uses the existing canonical
+   desired-state control writer/revision path; it never writes `settings.yaml`
+   directly or adds a second persistence path.
+
+### Bounded implementation packets
+
+- Manifest/projection/narration: shared callable manifest, application
+  projector/dispatcher, inline and worker preload seams, IPC revalidation, and
+  their focused tests.
+- Completion classification: task-lifecycle error mapping plus the existing
+  core-tools mapping table test.
+- Control surface: agent contracts, agents route, shared desired-state control
+  writer, OpenAPI route/schema registration, and focused control/OpenAPI tests.
+
+### Surface Impact Matrix
+
+| Surface                     | Classification       | Reason                                                                                  |
+| --------------------------- | -------------------- | --------------------------------------------------------------------------------------- |
+| Runtime behavior            | Changed              | Persona-aware descriptions, richer narration, bound-only projection, and error typing.  |
+| `settings.yaml`             | Changed              | Delegate API replacement syncs the existing `delegates` field through canonical write.  |
+| Postgres/runtime projection | Changed              | Reads bindings for projection/API and appends normal settings revisions on replacement. |
+| Control API                 | Changed              | Adds first-class GET/PUT delegates endpoints.                                           |
+| SDK/contracts               | Changed              | Adds typed delegate request/response schemas and manifest persona.                      |
+| CLI                         | Unchanged by design  | Existing desired-state CLI remains sufficient; no delegates CLI was requested.          |
+| Gantry MCP/admin            | Unchanged by design  | Agent-requested settings changes keep using the existing reviewed settings tool.        |
+| Channel/provider adapters   | Unchanged by design  | Core narration text changes but delivery routing/adapters do not.                       |
+| Docs/prompts                | Changed              | This audited Stage 8 contract is recorded before implementation.                        |
+| Audit/events                | Read-only/observable | Existing operator logging gains one bounded unresolved-ref warning; no new event type.  |
+| Tests/verification          | Changed              | Focused unit coverage plus `npm run typecheck`; no full suite.                          |
+
+### Verification
+
+- `npm run typecheck`
+- `npx vitest run -c vitest.unit.config.ts <touched unit test files>`
+- No full suite, branch change, commit, background process, or runtime restart.
+
+### Stage 8 routing and authority invariants
+
+- A callable target must share the caller route's canonical configured
+  conversation id and a compatible thread. JID equality is never an
+  authorization boundary, and agent-owned provider-account ids remain target
+  execution details rather than shared-conversation identity.
+- The delegates GET roster uses the orchestrator's actual selected
+  `AgentDelegation` authority and locked/full access posture. It must not force
+  authority merely to describe a configured target.

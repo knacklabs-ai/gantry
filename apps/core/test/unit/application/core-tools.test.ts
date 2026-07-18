@@ -227,6 +227,7 @@ describe('core tool registry', () => {
       toolName: 'reviewer_hash',
       targetAgentId: 'agent:reviewer',
       displayName: 'Reviewer',
+      persona: 'research' as const,
     };
     const registry = createCoreToolRegistry(
       registryDeps({
@@ -244,7 +245,7 @@ describe('core tool registry', () => {
     );
 
     expect(registry.get('delegate_to_reviewer_hash')).toMatchObject({
-      description: 'Delegate to Reviewer.',
+      description: 'Delegate to Reviewer (research).',
     });
     await expect(
       registry.execute('delegate_to_reviewer_hash', {
@@ -277,6 +278,7 @@ describe('core tool registry', () => {
       toolName: 'reviewer_hash',
       targetAgentId: 'agent:reviewer',
       displayName: 'Reviewer',
+      persona: 'research' as const,
     };
     const blocked = createCoreToolRegistry(
       registryDeps({
@@ -783,7 +785,7 @@ describe('core tool registry', () => {
   });
 
   it.each([
-    ['failed', 'unavailable', 'transient', true],
+    ['failed', 'failed', 'business', false],
     ['timed_out', 'unavailable', 'transient', true],
     ['cancelled', 'cancelled', 'business', false],
   ] as const)(

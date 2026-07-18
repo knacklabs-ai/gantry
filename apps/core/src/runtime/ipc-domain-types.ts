@@ -121,7 +121,11 @@ export interface IpcDeps {
   getPermissionRuntimeSettings?: () => {
     agents: Record<
       string,
-      | { permissionMode?: PermissionMode; delegates?: string[] }
+      | {
+          permissionMode?: PermissionMode;
+          delegates?: string[];
+          persona?: string;
+        }
       | null
       | undefined
     >;

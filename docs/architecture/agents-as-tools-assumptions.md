@@ -12,3 +12,7 @@ Format:
 ## Stage 7 — Durable async follow-up and coherent result bounds
 
 None.
+
+## Stage 8 — Audited callable-agent UX and control surface
+
+None.

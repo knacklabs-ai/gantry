@@ -37,7 +37,7 @@ import type {
   RuntimeMessageRepository,
 } from '../../domain/repositories/ops-repo.js';
 import { agentIdForFolder } from '../../domain/agent/agent-folder-id.js';
-import { resolveConversationRoute } from './runtime-app-routes.js';
+import { conversationBoundAgentRoute } from '../../application/core-tools/callable-agent-tools.js';
 
 interface AsyncTaskRecoveryDeps extends Partial<
   Pick<
@@ -284,13 +284,14 @@ function createRecoveredDelegatedAgentRun(
     const conversationId = runInput.task.conversationId ?? '';
     const routes = deps.conversationRoutes?.() ?? {};
     const recoveryAgentId = taskInput.targetAgentId ?? runInput.task.agentId;
-    const group = resolveConversationRoute(
+    const group = conversationBoundAgentRoute({
       routes,
-      conversationId,
-      runInput.task.threadId,
-      recoveryAgentId,
-      taskInput.providerAccountId,
-    );
+      chatJid: conversationId,
+      threadId: runInput.task.threadId,
+      callerAgentId: runInput.task.agentId,
+      callerProviderAccountId: taskInput.providerAccountId,
+      targetAgentId: recoveryAgentId,
+    });
     if (!group) {
       throw new Error('Delegated task conversation is unavailable.');
     }
@@ -373,6 +374,7 @@ function createRecoveredDelegatedAgentRun(
         executionAdapter: deps.executionAdapter,
         executionAdapters: deps.executionAdapters,
         runnerSandboxProvider: deps.runnerSandboxProvider!,
+        conversationRoutes: routes,
         asyncTaskRepositoryAvailable: Boolean(deps.getAsyncTaskRepository?.()),
       },
     );

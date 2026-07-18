@@ -34,6 +34,7 @@ const CALLABLE_AGENT_MANIFEST = projectCallableAgentTools({
   callerAgentId: 'agent:caller',
   callerFolder: 'caller',
   delegates: ['reviewer'],
+  conversationBoundAgentIds: new Set(['agent:reviewer']),
   toolPolicyRules: ['AgentDelegation'],
 });
 const SYNTHETIC_TOOL_NAME = callableAgentToolName(CALLABLE_AGENT_MANIFEST[0]!);

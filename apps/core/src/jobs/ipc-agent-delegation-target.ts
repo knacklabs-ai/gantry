@@ -1,6 +1,7 @@
 import { agentIdForFolder } from '../domain/agent/agent-folder-id.js';
 import type { AppId } from '../domain/app/app.js';
 import type { ConversationRoute } from '../domain/types.js';
+import { logger } from '../infrastructure/logging/logger.js';
 import type { IpcDeps } from '../runtime/ipc-domain-types.js';
 import { resolveRunnerIpcRoute } from '../runtime/ipc-route-authorization.js';
 import {
@@ -18,6 +19,7 @@ import {
 import {
   findConversationRouteForQueue,
   makeAgentThreadQueueKey,
+  routesForConversationId,
 } from '../shared/thread-queue-key.js';
 
 interface DelegatedTaskOwner {
@@ -82,13 +84,19 @@ export async function resolveDelegatedAgentTarget(input: {
     };
   }
   const selectedAgentId = input.targetAgentId ?? input.owner.agentId;
+  const targetRoutes =
+    selectedAgentId === input.owner.agentId
+      ? input.routes
+      : routesForConversationId(input.routes, callerRoute.conversationId);
   const group = findConversationRouteForQueue(
-    input.routes,
+    targetRoutes,
     makeAgentThreadQueueKey(
       input.owner.conversationId,
       selectedAgentId,
       input.owner.threadId,
-      callerRoute.providerAccountId,
+      selectedAgentId === input.owner.agentId
+        ? callerRoute.providerAccountId
+        : undefined,
     ),
     (route) => route.agentId ?? agentIdForFolder(route.folder),
   );
@@ -170,9 +178,9 @@ async function findCallableAgentEntry(input: {
   targetAgentId: string;
 }): Promise<CallableAgentToolManifestEntry | undefined> {
   const repository = input.deps.getAgentRepository?.();
-  const delegates =
-    input.deps.getPermissionRuntimeSettings?.()?.agents[input.sourceAgentFolder]
-      ?.delegates ?? [];
+  const configuredAgents =
+    input.deps.getPermissionRuntimeSettings?.()?.agents ?? {};
+  const delegates = configuredAgents[input.sourceAgentFolder]?.delegates ?? [];
   if (!repository || delegates.length === 0) {
     return undefined;
   }
@@ -182,7 +190,16 @@ async function findCallableAgentEntry(input: {
     callerAgentId: input.owner.agentId,
     callerFolder: input.sourceAgentFolder,
     delegates,
+    conversationBoundAgentIds: new Set([input.targetAgentId]),
+    personasByAgentId: Object.fromEntries(
+      Object.entries(configuredAgents).flatMap(([folder, configured]) =>
+        configured
+          ? [[String(agentIdForFolder(folder)), configured.persona] as const]
+          : [],
+      ),
+    ),
     toolPolicyRules: input.toolPolicyRules,
+    warn: logger.warn.bind(logger),
   });
   return manifest.find(
     (entry) =>

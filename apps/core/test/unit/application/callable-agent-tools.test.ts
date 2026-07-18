@@ -2,12 +2,15 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   CALLABLE_AGENT_TOOL_PREFIX,
+  conversationBoundAgentIdsForRoute,
+  conversationBoundAgentRoute,
   dispatchCallableAgentTool,
   projectCallableAgentTools,
 } from '@core/application/core-tools/callable-agent-tools.js';
 import type { Agent } from '@core/domain/agent/agent.js';
 import type { CoreTaskLifecycleBackend } from '@core/application/core-tools/task-lifecycle.js';
 import type { CoreSendMessageDeps } from '@core/application/core-tools/send-message.js';
+import { makeAgentThreadQueueKey } from '@core/shared/thread-queue-key.js';
 
 function agent(
   id: string,
@@ -51,6 +54,74 @@ function narration(
 }
 
 describe('callable agent tools', () => {
+  it('derives bound agents from live canonical routes across provider accounts', () => {
+    const route = (
+      agentId: string,
+      providerAccountId: string,
+      conversationId?: string,
+    ) => ({
+      name: agentId,
+      folder: agentId.slice('agent:'.length),
+      agentId,
+      providerAccountId,
+      conversationId,
+      trigger: '@gantry',
+      added_at: new Date(0).toISOString(),
+    });
+    const routes = {
+      [makeAgentThreadQueueKey(
+        'slack:C1',
+        'agent:main_agent',
+        undefined,
+        'slack-main',
+      )]: route('agent:main_agent', 'slack-main', 'conversation:shared'),
+      [makeAgentThreadQueueKey(
+        'slack:C1',
+        'agent:reviewer',
+        undefined,
+        'slack-reviewer',
+      )]: route('agent:reviewer', 'slack-reviewer', 'conversation:shared'),
+      [makeAgentThreadQueueKey(
+        'slack:C1',
+        'agent:foreign',
+        undefined,
+        'slack-foreign',
+      )]: route('agent:foreign', 'slack-foreign', 'conversation:other'),
+    };
+
+    expect(
+      conversationBoundAgentIdsForRoute({
+        routes,
+        chatJid: 'slack:C1',
+        callerAgentId: 'agent:main_agent',
+        callerProviderAccountId: 'slack-main',
+      }),
+    ).toEqual(new Set(['agent:main_agent', 'agent:reviewer']));
+    expect(
+      conversationBoundAgentRoute({
+        routes,
+        chatJid: 'slack:C1',
+        callerAgentId: 'agent:main_agent',
+        callerProviderAccountId: 'slack-main',
+        targetAgentId: 'agent:reviewer',
+      }),
+    ).toMatchObject({
+      agentId: 'agent:reviewer',
+      providerAccountId: 'slack-reviewer',
+      conversationId: 'conversation:shared',
+    });
+    expect(
+      conversationBoundAgentIdsForRoute({
+        routes: {
+          caller: route('agent:main_agent', 'slack-main'),
+        },
+        chatJid: 'caller',
+        callerAgentId: 'agent:main_agent',
+        callerProviderAccountId: 'slack-main',
+      }),
+    ).toEqual(new Set());
+  });
+
   it('projects only active same-app non-self allowlisted agents', () => {
     const projected = projectCallableAgentTools({
       agents: [
@@ -70,6 +141,8 @@ describe('callable agent tools', () => {
         'other-app',
         'main_agent',
       ],
+      conversationBoundAgentIds: new Set(['agent:reviewer']),
+      personasByAgentId: { 'agent:reviewer': 'research' },
       toolPolicyRules: ['AgentDelegation'],
     });
 
@@ -77,6 +150,7 @@ describe('callable agent tools', () => {
       expect.objectContaining({
         targetAgentId: 'agent:reviewer',
         displayName: 'Review Agent',
+        persona: 'research',
       }),
     ]);
   });
@@ -88,6 +162,10 @@ describe('callable agent tools', () => {
       callerAgentId: 'agent:main_agent',
       callerFolder: 'main_agent',
       delegates: ['same-name-a', 'same-name-b'],
+      conversationBoundAgentIds: new Set([
+        'agent:same-name-a',
+        'agent:same-name-b',
+      ]),
       toolPolicyRules: ['AgentDelegation'],
     });
 
@@ -107,6 +185,7 @@ describe('callable agent tools', () => {
       callerAgentId: 'agent:main_agent',
       callerFolder: 'main_agent',
       delegates: ['reviewer'],
+      conversationBoundAgentIds: new Set(['agent:reviewer']),
       toolPolicyRules: ['AgentDelegation'],
     });
 
@@ -118,6 +197,7 @@ describe('callable agent tools', () => {
       callerAgentId: 'agent:main_agent',
       callerFolder: 'main_agent',
       delegates: ['reviewer'],
+      conversationBoundAgentIds: new Set(['agent:reviewer']),
       toolPolicyRules: ['AgentDelegation'],
     });
     expect(fallback[0]?.displayName).toBe('reviewer');
@@ -134,9 +214,50 @@ describe('callable agent tools', () => {
         callerAgentId: 'agent:main_agent',
         callerFolder: 'main_agent',
         delegates: ['reviewer'],
+        conversationBoundAgentIds: new Set(['agent:reviewer']),
         ...run,
       }),
     ).toEqual([]);
+  });
+
+  it('omits active delegates not bound to the conversation without warning', () => {
+    const warn = vi.fn();
+
+    expect(
+      projectCallableAgentTools({
+        agents: [agent('agent:reviewer')],
+        callerAppId: 'default',
+        callerAgentId: 'agent:main_agent',
+        callerFolder: 'main_agent',
+        delegates: ['reviewer'],
+        conversationBoundAgentIds: new Set(),
+        toolPolicyRules: ['AgentDelegation'],
+        warn,
+      }),
+    ).toEqual([]);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('warns once per unresolved delegate ref per projection with bounded context', () => {
+    const warn = vi.fn();
+    const longMissingRef = `missing-${'x'.repeat(200)}`;
+
+    projectCallableAgentTools({
+      agents: [],
+      callerAppId: 'default',
+      callerAgentId: 'agent:main_agent',
+      callerFolder: 'main_agent',
+      delegates: [longMissingRef, longMissingRef, 'typo'],
+      conversationBoundAgentIds: new Set(),
+      toolPolicyRules: ['AgentDelegation'],
+      warn,
+    });
+
+    expect(warn).toHaveBeenCalledTimes(2);
+    expect(warn.mock.calls.map(([context]) => context.delegateRef)).toEqual([
+      longMissingRef.slice(0, 160),
+      'typo',
+    ]);
   });
 
   it('injects the pinned target after current eligibility revalidation', async () => {
@@ -146,6 +267,7 @@ describe('callable agent tools', () => {
       toolName: 'reviewer_hash',
       targetAgentId: 'agent:reviewer',
       displayName: 'Reviewer',
+      persona: 'research' as const,
     };
 
     await expect(
@@ -165,7 +287,7 @@ describe('callable agent tools', () => {
     });
   });
 
-  it('narrates delegation start and sync completion on the owner route', async () => {
+  it('narrates the objective at delegation start and sync completion', async () => {
     const sendMessage = vi.fn(async () => undefined);
     const taskBackend = backend();
     vi.mocked(taskBackend.delegate_task).mockResolvedValue({
@@ -181,6 +303,7 @@ describe('callable agent tools', () => {
           toolName: 'reviewer_hash',
           targetAgentId: 'agent:reviewer',
           displayName: 'Reviewer',
+          persona: 'research',
         },
         backend: taskBackend,
         revalidate: vi.fn(async () => true),
@@ -195,7 +318,7 @@ describe('callable agent tools', () => {
     expect(sendMessage).toHaveBeenNthCalledWith(
       1,
       'conversation:origin',
-      'Checking with the Reviewer agent…',
+      'Checking with the Reviewer agent about: Review this…',
       expect.objectContaining({
         providerAccountId: 'slack_beta',
         threadId: 'thread-1',
@@ -222,6 +345,7 @@ describe('callable agent tools', () => {
         toolName: 'reviewer_hash',
         targetAgentId: 'agent:reviewer',
         displayName: 'Reviewer',
+        persona: 'research',
       },
       backend: taskBackend,
       revalidate: vi.fn(async () => true),
@@ -247,6 +371,7 @@ describe('callable agent tools', () => {
         toolName: 'reviewer_hash',
         targetAgentId: 'agent:reviewer',
         displayName: 'Reviewer',
+        persona: 'research',
       },
       backend: taskBackend,
       revalidate: vi.fn(async () => true),
@@ -255,12 +380,12 @@ describe('callable agent tools', () => {
 
     await vi.waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(2));
     expect(sendMessage.mock.calls.map(([, text]) => text)).toEqual([
-      'Checking with the Reviewer agent…',
+      'Checking with the Reviewer agent about: Review this…',
       "Reviewer is still working; I'll follow up.",
     ]);
   });
 
-  it('narrates a timed-out delegation failure', async () => {
+  it('narrates a timed-out delegation failure reason', async () => {
     const sendMessage = vi.fn(async () => undefined);
     const taskBackend = backend();
     const delegatedResult = {
@@ -278,6 +403,7 @@ describe('callable agent tools', () => {
           toolName: 'reviewer_hash',
           targetAgentId: 'agent:reviewer',
           displayName: 'Reviewer',
+          persona: 'research',
         },
         backend: taskBackend,
         revalidate: vi.fn(async () => true),
@@ -287,9 +413,47 @@ describe('callable agent tools', () => {
 
     await vi.waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(2));
     expect(sendMessage.mock.calls.map(([, text]) => text)).toEqual([
-      'Checking with the Reviewer agent…',
-      'Delegation to Reviewer failed.',
+      'Checking with the Reviewer agent about: Review this…',
+      'Delegation to Reviewer failed: Delegated agent timed out.',
     ]);
+  });
+
+  it('redacts and bounds objective and failure narration snippets', async () => {
+    const sendMessage = vi.fn(async () => undefined);
+    const taskBackend = backend();
+    const objectiveSecret = 'objective-secret-value';
+    const failureSecret = 'failure-secret-value';
+    vi.mocked(taskBackend.delegate_task).mockResolvedValue({
+      ok: false,
+      message: `password=${failureSecret} ${'f'.repeat(300)}`,
+      code: 'unavailable',
+    });
+
+    await dispatchCallableAgentTool({
+      args: {
+        objective: `api_key=${objectiveSecret} ${'o'.repeat(300)}`,
+      },
+      entry: {
+        toolName: 'reviewer_hash',
+        targetAgentId: 'agent:reviewer',
+        displayName: 'Reviewer',
+        persona: 'research',
+      },
+      backend: taskBackend,
+      revalidate: vi.fn(async () => true),
+      narration: narration(sendMessage),
+    });
+
+    await vi.waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(2));
+    const narrationTexts = sendMessage.mock.calls.map(([, text]) => text);
+    expect(narrationTexts.join('\n')).not.toContain(objectiveSecret);
+    expect(narrationTexts.join('\n')).not.toContain(failureSecret);
+    expect(narrationTexts).toEqual([
+      expect.stringContaining('api_key=[REDACTED_SECRET]'),
+      expect.stringContaining('password=[REDACTED_SECRET]'),
+    ]);
+    expect(narrationTexts[0]!.length).toBeLessThanOrEqual(202);
+    expect(narrationTexts[1]!.length).toBeLessThanOrEqual(191);
   });
 
   it('warns and keeps delegation fail-open when narration delivery rejects', async () => {
@@ -312,6 +476,7 @@ describe('callable agent tools', () => {
           toolName: 'reviewer_hash',
           targetAgentId: 'agent:reviewer',
           displayName: 'Reviewer',
+          persona: 'research',
         },
         backend: taskBackend,
         revalidate: vi.fn(async () => true),
@@ -346,6 +511,7 @@ describe('callable agent tools', () => {
           toolName: 'reviewer_hash',
           targetAgentId: 'agent:reviewer',
           displayName: 'Reviewer',
+          persona: 'research',
         },
         backend: taskBackend,
         revalidate,
@@ -391,6 +557,7 @@ describe('callable agent tools', () => {
         toolName: 'reviewer_hash',
         targetAgentId: 'agent:reviewer',
         displayName: 'Reviewer',
+        persona: 'research',
       },
       backend: taskBackend,
       revalidate: vi.fn(async () => false),
@@ -419,6 +586,7 @@ describe('callable agent tools', () => {
         toolName: 'reviewer_hash',
         targetAgentId: 'agent:reviewer',
         displayName: 'Reviewer',
+        persona: 'research',
       },
       backend: taskBackend,
       revalidate,
@@ -437,7 +605,7 @@ describe('callable agent tools', () => {
     expect(taskBackend.delegate_task).not.toHaveBeenCalled();
     await vi.waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(2));
     expect(sendMessage.mock.calls.map(([, text]) => text)).toEqual([
-      'Checking with the Reviewer agent…',
+      'Checking with the Reviewer agent about: Review this…',
       'Reviewer is no longer available.',
     ]);
   });
@@ -448,6 +616,7 @@ describe('callable agent tools', () => {
       toolName: 'reviewer_hash',
       targetAgentId: 'agent:reviewer',
       displayName: 'Reviewer',
+      persona: 'research' as const,
     };
 
     await expect(

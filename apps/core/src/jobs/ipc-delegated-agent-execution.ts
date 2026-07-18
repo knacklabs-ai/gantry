@@ -124,6 +124,7 @@ export async function executeResolvedDelegation(input: {
           executionAdapter: context.deps.executionAdapter,
           executionAdapters: context.deps.executionAdapters,
           runnerSandboxProvider: context.deps.runnerSandboxProvider!,
+          conversationRoutes: context.conversationBindings,
           asyncTaskRepositoryAvailable: Boolean(
             context.deps.getAsyncTaskRepository?.(),
           ),
