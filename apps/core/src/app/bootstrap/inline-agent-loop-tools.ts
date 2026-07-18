@@ -98,7 +98,7 @@ interface InlineCoreToolHostDeps extends CoreSendMessageDeps {
   getAgentRepository(): AgentRepository | undefined;
   getPermissionPromotionRepository(): PermissionPromotionRepository | undefined;
   createTaskLifecycleBackend(
-    laneInput: InlineAgentLoopLaneInput,
+    laneInput: InlineAgentLoopLaneInput, authorityToolName?: 'AgentDelegation',
   ): CoreTaskLifecycleBackend | undefined;
 }
 
@@ -175,6 +175,7 @@ export function createInlineCoreTools(
     deps.getAgentAccessPreset(laneInput.group.folder) !== 'locked'
       ? callableAgentManifest
       : [];
+  const callableAgentTaskLifecycleBackend = projectedCallableAgents.length ? deps.createTaskLifecycleBackend(laneInput, 'AgentDelegation') : undefined;
   const registry = createCoreToolRegistry({
     context: {
       sourceAgentFolder: laneInput.group.folder,
@@ -215,7 +216,7 @@ export function createInlineCoreTools(
     onPermissionPromptFinished: (request) =>
       laneInput.jobActivity.finishPermissionRequest(request.requestId),
     taskLifecycleBackend,
-    ...(taskLifecycleBackend && projectedCallableAgents.length
+    ...(callableAgentTaskLifecycleBackend && projectedCallableAgents.length
       ? {
           callableAgentManifest: projectedCallableAgents,
           dispatchCallableAgent: (
@@ -225,7 +226,7 @@ export function createInlineCoreTools(
             dispatchCallableAgentTool({
               args,
               entry,
-              backend: taskLifecycleBackend,
+              backend: callableAgentTaskLifecycleBackend,
               narration: { sourceAgentFolder: laneInput.group.folder, deps, isScheduledJob: run.isScheduledJob === true },
               revalidate: async (expected) =>
                 (
@@ -671,9 +672,9 @@ export function wireInlineAgentLoopTools(input: {
     getPermissionPromotionRepository:
       input.getPermissionPromotionRepository ?? (() => undefined),
     classifierConsult: input.classifierConsult,
-    createTaskLifecycleBackend: (laneInput) =>
+    createTaskLifecycleBackend: (laneInput, authorityToolName) =>
       createInlineAgentTaskLifecycle({
-        laneInput,
+        laneInput, authorityToolName,
         repository: input.getAsyncTaskRepository?.(),
         runRepository: input.opsRepository,
         getConversationRoutes: input.app.getConversationRoutes,

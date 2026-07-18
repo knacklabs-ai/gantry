@@ -53,6 +53,7 @@ type DelegatedRunAccess = Pick<
 
 export function createInlineAgentTaskLifecycle(input: {
   laneInput: InlineAgentLoopLaneInput;
+  authorityToolName?: 'AgentDelegation';
   repository?: AsyncTaskRepository;
   runRepository?: DelegatedRunRepository;
   getConversationRoutes(): Record<string, ConversationRoute>;
@@ -76,6 +77,7 @@ export function createInlineAgentTaskLifecycle(input: {
   return createCoreTaskLifecycleBackend({
     service,
     owner,
+    authorityToolName: input.authorityToolName,
     parentTaskId: run.parentTaskId,
     parentRunId: run.jobId
       ? null

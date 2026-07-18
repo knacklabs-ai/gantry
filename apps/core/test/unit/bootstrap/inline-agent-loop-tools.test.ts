@@ -14,6 +14,10 @@ import {
   formatMemoryToolResponse,
   formatMemoryWriteResponse,
 } from '@core/runner/mcp/formatting.js';
+import type {
+  AsyncTaskCreateInput,
+  AsyncTaskRecord,
+} from '@core/domain/ports/async-tasks.js';
 
 const publishRuntimeEvent = vi.fn(async () => undefined);
 const sendMessage = vi.fn(async () => undefined);
@@ -347,6 +351,80 @@ describe('inline core tool bootstrap', () => {
     });
     expect(projected?.name.length).toBeLessThanOrEqual(64);
     expect(listAgents).toHaveBeenCalledWith('default');
+  });
+
+  it('records AgentDelegation authority for inline callable-agent tasks', async () => {
+    const tasks: AsyncTaskRecord[] = [];
+    const repository = {
+      createTask: vi.fn(async (taskInput: AsyncTaskCreateInput) => {
+        const task: AsyncTaskRecord = {
+          ...taskInput,
+          conversationId: taskInput.conversationId ?? null,
+          threadId: taskInput.threadId ?? null,
+          parentRunId: taskInput.parentRunId ?? null,
+          parentJobId: taskInput.parentJobId ?? null,
+          parentJobRunId: taskInput.parentJobRunId ?? null,
+          privateCorrelationJson: taskInput.privateCorrelationJson ?? {},
+          createdAt: taskInput.now,
+          updatedAt: taskInput.now,
+        };
+        tasks.push(task);
+        return task;
+      }),
+      listTasks: vi.fn(async () => []),
+      countTasksByStatus: vi.fn(async () => []),
+      claimQueuedTask: vi.fn(async () => null),
+    };
+    const listAgents = vi.fn(async () => [
+      {
+        id: 'agent:main_agent',
+        appId: 'default',
+        name: 'Main',
+        status: 'active',
+      },
+      {
+        id: 'agent:reviewer',
+        appId: 'default',
+        name: 'Reviewer',
+        status: 'active',
+      },
+    ]);
+    wire({
+      getAsyncTaskRepository: () => repository,
+      getAgentRepository: () => ({ listAgents }),
+      getPermissionRuntimeSettings: () => ({
+        agents: { main_agent: { delegates: ['reviewer'] } },
+        permissions: {
+          autoMode: {},
+          yoloMode: { enabled: false },
+        },
+        memory: { llm: { models: { extractor: 'sonnet' } } },
+      }),
+    });
+    const input = laneInput();
+    input.input.toolPolicyRules = ['AgentDelegation'];
+    const tools = await createInlineCoreToolsForRun(input, support());
+    const callableTool = tools.tools.find(({ name }) =>
+      name.startsWith('delegate_to_'),
+    );
+
+    vi.stubEnv(
+      'SECRET_ENCRYPTION_KEY',
+      Buffer.alloc(32, 1).toString('base64'),
+    );
+    const result = await tools.execute(callableTool!.name, {
+      objective: 'Review the change',
+      syncWaitTimeoutMs: 1,
+    });
+    vi.unstubAllEnvs();
+
+    expect(result).not.toMatchObject({ isError: true });
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0]?.authoritySnapshotJson).toEqual({
+      toolName: 'AgentDelegation',
+      maxDepth: 1,
+    });
+    expect(tasks[0]?.authoritySnapshotJson.toolName).not.toBe('delegate_task');
   });
 
   it.each([
