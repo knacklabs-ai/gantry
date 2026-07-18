@@ -238,13 +238,17 @@ export async function handleTelegramGroupJoinCallback(input: {
       });
       return true;
     }
+    // Registration is durably committed past this point - receipt/answer
+    // delivery failures must not fall into the catch and misreport failure.
     const botUsername = input.ctx.me?.username || input.assistantName;
     await editCallbackMessage(
       input.ctx,
       callbackMessage,
       `Registered. Members can reach the agent with @${botUsername}. Anyone in the group can @mention; actions still need your approval.`,
     );
-    await input.ctx.answerCallbackQuery({ text: 'Registered.' });
+    await input.ctx
+      .answerCallbackQuery({ text: 'Registered.' })
+      .catch(() => {});
   } catch (err) {
     logger.error(
       {
