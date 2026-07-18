@@ -1256,7 +1256,7 @@ describe('ipc-interaction-handler', () => {
       approved: false,
       mode: 'cancel',
       decidedBy: 'runtime',
-      reason: expect.stringContaining('input was sanitized'),
+      reason: expect.stringContaining('tool input view was incomplete'),
       decisionClassification: 'user_reject',
     });
     expect(publishRuntimeEvent).toHaveBeenCalledWith(
