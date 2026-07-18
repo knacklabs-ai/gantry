@@ -87,7 +87,23 @@ describe('createCanUseToolCallback', () => {
   it.each(['registry.npmjs.org', '10.0.0.7'])(
     'allows direct-mode SDK network access to %s without a per-tool token',
     async (host) => {
-      const canUseTool = makeCallback();
+      const canUseTool = makeCallback({
+        agentInput: {
+          runMode: 'normal',
+          isScheduledJob: false,
+          appId: 'default',
+          agentId: 'agent:test',
+          runId: 'run-1',
+          chatJid: 'tg:test',
+          allowedTools: [],
+          egressDenylist: ['blocked.example'],
+          yoloMode: {
+            enabled: true,
+            denylist: [],
+            denylistPaths: [],
+          },
+        } as never,
+      });
 
       const network = await canUseTool(
         'SandboxNetworkAccess',
@@ -105,6 +121,43 @@ describe('createCanUseToolCallback', () => {
       expect(permissionMock.requestPermissionApproval).not.toHaveBeenCalled();
     },
   );
+
+  it('denies direct-mode SDK network access to a denylisted WebFetch host', async () => {
+    const canUseTool = makeCallback({
+      agentInput: {
+        runMode: 'normal',
+        isScheduledJob: false,
+        appId: 'default',
+        agentId: 'agent:test',
+        runId: 'run-1',
+        chatJid: 'tg:test',
+        allowedTools: [],
+        egressDenylist: ['blocked.example'],
+        yoloMode: {
+          enabled: true,
+          denylist: [],
+          denylistPaths: [],
+        },
+      } as never,
+    });
+
+    const network = await canUseTool(
+      'SandboxNetworkAccess',
+      { host: 'blocked.example', parentToolUseID: 'toolu_webfetch_1' },
+      makePermissionOptions({
+        toolUseID: 'toolu_network_1',
+        parentToolUseID: 'toolu_webfetch_1',
+      }) as never,
+    );
+
+    expect(network).toEqual({
+      behavior: 'deny',
+      message:
+        'Host blocked.example matched permissions.egress.denylist pattern blocked.example.',
+      interrupt: false,
+    });
+    expect(permissionMock.requestPermissionApproval).not.toHaveBeenCalled();
+  });
 
   it('passes the runner conversation as the interactive permission target', async () => {
     permissionMock.requestPermissionApproval.mockResolvedValueOnce({

@@ -27,6 +27,7 @@ import {
   scheduledPermissionSuggestionPlan,
 } from './permission-suggestions.js';
 import { sandboxBlockedRuntimeEvents } from './sandbox-events.js';
+import { decideSdkSandboxNetworkAccess } from './sdk-sandbox-network-gate.js';
 import { readExternalMcpAllowedTools } from './external-mcp-tool-rules.js';
 import { applyBashTrustEnv } from './bash-trust-env.js';
 import { log } from './logging.js';
@@ -41,7 +42,6 @@ import { waitOnlyBashMonitoringDenial } from './wait-only-bash-guard.js';
 import { forceBackgroundNativeAgentInput } from './native-agent-tool-input.js';
 import { denyNonPromptableAutonomousRecovery } from './autonomous-permission-recovery.js';
 import {
-  isSdkSandboxNetworkAccessToolName,
   publicCapabilityAllowedToolRules,
 } from '../../../../shared/agent-tool-references.js';
 import { evaluateYoloModeDenylist } from '../../../../shared/yolo-mode-policy.js';
@@ -230,9 +230,12 @@ export function createCanUseToolCallback(
       return { behavior: 'allow' as const, updatedInput: trustInput() };
     };
 
-    if (isSdkSandboxNetworkAccessToolName(toolName)) {
-      return allowToolUse('default_allow');
-    }
+    const sandboxNetworkAccessDecision = decideSdkSandboxNetworkAccess({
+      toolName,
+      toolInput,
+      denylist: input.agentInput.egressDenylist ?? [],
+    });
+    if (sandboxNetworkAccessDecision) return sandboxNetworkAccessDecision;
 
     if (toolName === 'Agent') {
       const modelDenial = validateAgentToolInput(toolInput, currentModel);

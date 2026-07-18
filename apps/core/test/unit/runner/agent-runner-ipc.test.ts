@@ -164,6 +164,10 @@ function createRunnerFixture(): {
     path.join(sharedDir, 'memory-boundary.ts'),
   );
   fs.copyFileSync(
+    path.resolve('apps/core/src/shared/egress-policy.ts'),
+    path.join(sharedDir, 'egress-policy.ts'),
+  );
+  fs.copyFileSync(
     path.resolve('apps/core/src/runner/runtime-signal-pump.ts'),
     path.join(runnerDir, 'runtime-signal-pump.ts'),
   );
