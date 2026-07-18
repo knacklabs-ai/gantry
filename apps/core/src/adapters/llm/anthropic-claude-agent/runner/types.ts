@@ -46,6 +46,7 @@ export interface AgentRunnerInput {
   compiledSystemPrompt?: string;
   memoryContextBlock?: string;
   yoloMode?: YoloModeSettings;
+  egressDenylist?: string[];
   permissionMode: PermissionMode;
   modelCredentialEnv?: Record<string, string>;
   toolNetworkEnv?: Record<string, string>;

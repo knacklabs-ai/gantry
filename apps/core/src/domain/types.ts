@@ -164,12 +164,65 @@ export interface PermissionApprovalRequest {
   decisionOptions?: PermissionApprovalDecisionMode[];
   promotionHintCount?: number;
   interaction?: InteractionDescriptor;
+  permissionBatch?: {
+    requestIds: string[];
+    rows: string[];
+  };
 }
 
 export type PermissionApprovalDecisionMode =
   | 'allow_once'
   | 'allow_persistent_rule'
   | 'cancel';
+
+export interface PermissionRecoveryEnvelope {
+  version: 1;
+  renderedDecisionOptions: PermissionApprovalDecisionMode[];
+  targetJid: string | null;
+  approvalContextJid: string | null;
+  threadId: string | null;
+  decisionPolicy: PermissionApprovalRequest['decisionPolicy'] | null;
+  renderedRequest: PermissionApprovalRequest;
+  members: Array<{
+    callback: {
+      appId: string;
+      sourceAgentFolder: string;
+      requestId: string;
+      index: number;
+    };
+    request: PermissionApprovalRequest;
+  }>;
+  batch: {
+    canonicalId: string;
+    phase: 'decision' | 'review_each';
+  } | null;
+}
+
+export interface PermissionCallbackScope {
+  appId: string;
+  sourceAgentFolder: string;
+  interactionId: string;
+}
+
+export interface PermissionCallbackClaimIntent {
+  mode: PermissionApprovalDecisionMode;
+  approverRef: string;
+  decidedAt: string;
+}
+
+export interface PermissionCallbackClaimReference {
+  id: string;
+  scope: PermissionCallbackScope;
+}
+
+export interface PermissionCallbackClaim extends PermissionCallbackClaimReference {
+  intent: PermissionCallbackClaimIntent;
+  match: {
+    kind: 'individual' | 'batch';
+    canonicalId: string;
+    providerAliases: string[];
+  };
+}
 
 export interface PermissionApprovalRuleValue {
   toolName: string;
@@ -203,6 +256,8 @@ export interface PermissionApprovalDecision {
   reason?: string;
   updatedPermissions?: PermissionApprovalUpdate[];
   decisionClassification?: 'user_temporary' | 'user_permanent' | 'user_reject';
+  batchDecision?: 'review_each';
+  permissionCallbackClaim?: PermissionCallbackClaimReference;
 }
 
 export interface UserQuestionOption {
@@ -233,6 +288,26 @@ export interface UserQuestionRequest {
   responseKeyId?: string;
   questions: UserQuestionItem[];
   interaction?: InteractionDescriptor;
+}
+
+export interface QuestionRecoveryCallbackIdentity {
+  appId: string;
+  sourceAgentFolder: string;
+  requestId: string;
+  questionIndex: number;
+}
+
+export interface QuestionRecoveryEnvelope {
+  version: 1;
+  targetJid: string | null;
+  threadId: string | null;
+  request: UserQuestionRequest;
+  callbacks: Record<string, QuestionRecoveryCallbackIdentity>;
+  selections: Array<{ questionIndex: number; optionIndexes: number[] }>;
+  answers: Record<string, string | string[]>;
+  completedQuestionIndexes: number[];
+  deliveredQuestionIndexes: number[];
+  otherPrompts: Record<string, QuestionRecoveryCallbackIdentity>;
 }
 
 export interface UserQuestionResponse {
@@ -515,7 +590,7 @@ export interface StreamingSink {
 }
 
 export interface StreamingStateSink {
-  resetStreaming(jid: string): void;
+  resetStreaming(jid: string, options?: { threadId?: string }): void;
 }
 
 export interface ProgressSink {
@@ -534,11 +609,21 @@ export interface InteractionSurface {
   requestPermissionApproval(
     jid: string,
     request: PermissionApprovalRequest,
+    onPromptDelivered?: (messageId: string) => void,
   ): Promise<PermissionApprovalDecision>;
   requestUserAnswer(
     jid: string,
     request: UserQuestionRequest,
+    onPromptDelivered?: (messageId: string, questionIndex?: number) => void,
   ): Promise<UserQuestionResponse>;
+  questionIndexesForDeliveredPrompt?(
+    request: UserQuestionRequest,
+    firstQuestionIndex: number,
+  ): number[];
+  dropPendingInteraction?(
+    kind: 'permission' | 'question',
+    request: PermissionApprovalRequest | UserQuestionRequest,
+  ): void;
 }
 
 export interface RichInteractionSurface {

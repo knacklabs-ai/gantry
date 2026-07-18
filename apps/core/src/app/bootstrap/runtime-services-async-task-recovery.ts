@@ -96,7 +96,7 @@ export async function recoverStaleAsyncCommandTasks(
     {
       completionMessageRepository: deps.opsRepository,
       createRecoveredDelegatedAgentRun: createRecoveredDelegatedAgentRun(deps),
-      prepareRun: async ({ task, allowedNetworkHosts }) => {
+      prepareRun: async ({ task }) => {
         const gateway = await ensureEgressGateway({
           key: `${task.appId}:${task.agentId}:${task.id}`,
           settings: deps.getEgressSettings?.() ?? { denylist: [] },
@@ -110,9 +110,6 @@ export async function recoverStaleAsyncCommandTasks(
             ...(task.parentRunId ? { runId: task.parentRunId } : {}),
             ...(task.parentJobId ? { jobId: task.parentJobId } : {}),
           },
-          ...(allowedNetworkHosts && allowedNetworkHosts.length > 0
-            ? { allowedNetworkHosts }
-            : {}),
           ...(deps.publishRuntimeEvent
             ? { publishRuntimeEvent: deps.publishRuntimeEvent }
             : {}),

@@ -129,8 +129,12 @@ function taskService(context: TaskContext): AsyncCommandTaskService | null {
         }),
     },
     {
+<<<<<<< HEAD
       completionMessageRepository: context.deps.opsRepository,
       prepareRun: async ({ task, allowedNetworkHosts }) => {
+=======
+      prepareRun: async ({ task }) => {
+>>>>>>> origin/main
         const gateway = await ensureEgressGateway({
           key: `${task.appId}:${task.agentId}:${task.id}`,
           settings: context.deps.getEgressSettings?.() ?? { denylist: [] },
@@ -144,9 +148,6 @@ function taskService(context: TaskContext): AsyncCommandTaskService | null {
             ...(task.parentRunId ? { runId: task.parentRunId } : {}),
             ...(task.parentJobId ? { jobId: task.parentJobId } : {}),
           },
-          ...(allowedNetworkHosts && allowedNetworkHosts.length > 0
-            ? { allowedNetworkHosts }
-            : {}),
           ...(context.deps.publishRuntimeEvent
             ? { publishRuntimeEvent: context.deps.publishRuntimeEvent }
             : {}),
