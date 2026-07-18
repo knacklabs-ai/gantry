@@ -41,9 +41,7 @@ import {
 import { waitOnlyBashMonitoringDenial } from './wait-only-bash-guard.js';
 import { forceBackgroundNativeAgentInput } from './native-agent-tool-input.js';
 import { denyNonPromptableAutonomousRecovery } from './autonomous-permission-recovery.js';
-import {
-  publicCapabilityAllowedToolRules,
-} from '../../../../shared/agent-tool-references.js';
+import { publicCapabilityAllowedToolRules } from '../../../../shared/agent-tool-references.js';
 import { evaluateYoloModeDenylist } from '../../../../shared/yolo-mode-policy.js';
 type ApprovalInput = Parameters<typeof requestPermissionApproval>[0];
 const WORKSPACE_FOLDER_KEY = WORKSPACE_FOLDER_OPTION_KEY as keyof ApprovalInput;
