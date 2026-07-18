@@ -16,6 +16,6 @@ CREATE TABLE "group_join_onboarding" (
 	CONSTRAINT "group_join_onboarding_status_check" CHECK ("group_join_onboarding"."status" IN ('prompted', 'dismissed', 'registered'))
 );
 --> statement-breakpoint
-ALTER TABLE "group_join_onboarding" ADD CONSTRAINT "group_join_onboarding_provider_account_provider_accounts_id_fk" FOREIGN KEY ("provider_account") REFERENCES "public"."provider_accounts"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "group_join_onboarding" ADD CONSTRAINT "group_join_onboarding_provider_account_provider_accounts_id_fk" FOREIGN KEY ("provider_account") REFERENCES "provider_accounts"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 CREATE UNIQUE INDEX "group_join_onboarding_provider_chat_unique" ON "group_join_onboarding" USING btree ("provider_account","chat_jid");--> statement-breakpoint
 CREATE INDEX "idx_group_join_onboarding_status" ON "group_join_onboarding" USING btree ("status");
