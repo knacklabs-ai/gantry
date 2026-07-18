@@ -37,9 +37,9 @@ export async function handleTelegramGroupMembershipUpdate(input: {
     { providerAccountId: input.opts.providerAccountId },
   );
 
-  const oldStatus = update.old_chat_member.status;
-  const newStatus = update.new_chat_member.status;
-  if (isPresentStatus(oldStatus) && isAbsentStatus(newStatus)) {
+  const oldMember = update.old_chat_member;
+  const newMember = update.new_chat_member;
+  if (isPresentStatus(oldMember) && isAbsentStatus(newMember)) {
     logger.info(
       { provider: 'telegram', providerAccountId, chatId, chatJid },
       'Telegram bot left a group',
@@ -52,7 +52,7 @@ export async function handleTelegramGroupMembershipUpdate(input: {
     });
     return;
   }
-  if (!isAbsentStatus(oldStatus) || !isPresentStatus(newStatus)) return;
+  if (!isAbsentStatus(oldMember) || !isPresentStatus(newMember)) return;
 
   const registered =
     findConversationRoutesForChat(
@@ -260,12 +260,28 @@ export async function handleTelegramGroupJoinCallback(input: {
   return true;
 }
 
-function isAbsentStatus(status: string): boolean {
-  return status === 'left' || status === 'kicked';
+interface TelegramChatMemberState {
+  status: string;
+  is_member?: boolean;
 }
 
-function isPresentStatus(status: string): boolean {
-  return status === 'member' || status === 'administrator';
+function isAbsentStatus(member: TelegramChatMemberState): boolean {
+  return (
+    member.status === 'left' ||
+    member.status === 'kicked' ||
+    // A restricted member with is_member false has been removed.
+    (member.status === 'restricted' && member.is_member === false)
+  );
+}
+
+function isPresentStatus(member: TelegramChatMemberState): boolean {
+  return (
+    member.status === 'member' ||
+    member.status === 'administrator' ||
+    // Telegram reports a bot added with restrictions as status 'restricted'
+    // with is_member true - it is present and onboarding must fire.
+    (member.status === 'restricted' && member.is_member !== false)
+  );
 }
 
 interface RegisteredTelegramContext {
@@ -359,7 +375,17 @@ async function editCallbackMessage(
   const chatId = message?.chat?.id;
   const messageId = message?.message_id;
   if (chatId === undefined || messageId === undefined) return;
-  await ctx.api.editMessageText(chatId, messageId, text, {
-    reply_markup: { inline_keyboard: [] },
-  });
+  try {
+    await ctx.api.editMessageText(chatId, messageId, text, {
+      reply_markup: { inline_keyboard: [] },
+    });
+  } catch (err) {
+    // The decision is already persisted by the time the receipt is edited; a
+    // transient edit failure must not fail the callback or misreport the
+    // outcome to the approver.
+    logger.warn(
+      { provider: 'telegram', chatId, err: err instanceof Error ? err.message : String(err) },
+      'Telegram group join receipt edit failed',
+    );
+  }
 }

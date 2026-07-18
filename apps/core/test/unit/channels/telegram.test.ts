@@ -518,6 +518,7 @@ function createMyChatMemberCtx(overrides: {
   username?: string;
   oldStatus?: string;
   newStatus?: string;
+  newMember?: { status: string; is_member?: boolean };
 }) {
   const chat = {
     id: overrides.chatId ?? -1001234,
@@ -539,7 +540,9 @@ function createMyChatMemberCtx(overrides: {
       from,
       date: 1_752_800_000,
       old_chat_member: { status: overrides.oldStatus ?? 'left' },
-      new_chat_member: { status: overrides.newStatus ?? 'member' },
+      new_chat_member: overrides.newMember ?? {
+        status: overrides.newStatus ?? 'member',
+      },
     },
   };
 }
@@ -981,6 +984,51 @@ describe('TelegramChannel', () => {
           },
         }),
       );
+    });
+
+    it('prompts when the bot is added with restrictions (restricted, is_member)', async () => {
+      const { opts, coordinator } = createGroupJoinOnboardingOpts();
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+
+      await triggerMyChatMember(
+        createMyChatMemberCtx({
+          newMember: { status: 'restricted', is_member: true },
+        }),
+      );
+
+      expect(coordinator.recordPrompt).toHaveBeenCalledWith(
+        expect.objectContaining({ chatJid: 'tg:-1001234', adder: '111' }),
+      );
+    });
+
+    it('answers the callback with the true outcome when the receipt edit fails', async () => {
+      const { opts, coordinator } = createGroupJoinOnboardingOpts();
+      const channel = new TelegramChannel('test-token', opts);
+      await channel.connect();
+      await triggerMyChatMember(createMyChatMemberCtx({}));
+      currentBot().api.editMessageText.mockRejectedValueOnce(
+        new Error('edit failed'),
+      );
+      const answerCallbackQuery = vi.fn();
+
+      await triggerCallbackQuery({
+        callbackQuery: {
+          data: latestGroupJoinCallback('yes'),
+          from: { id: 222 },
+          message: { chat: { id: 222 }, message_id: 987 },
+        },
+        chat: { id: 222 },
+        from: { id: 222 },
+        api: currentBot().api,
+        me: { username: 'andy_ai_bot' },
+        answerCallbackQuery,
+      });
+
+      // Registration is persisted before the receipt edit; a transient edit
+      // failure must not fail the callback or misreport the outcome.
+      expect(coordinator.register).toHaveBeenCalled();
+      expect(answerCallbackQuery).toHaveBeenCalledWith({ text: 'Registered.' });
     });
 
     it('does not prompt and info-logs when a stranger adds the bot', async () => {
