@@ -269,3 +269,36 @@ handler seams and can run first independently.
   delegated child, missing `AgentDelegation` authority, and missing task
   lifecycle executor) before consulting agent inventory. Suppressed runs do not
   call `listAgents`, so repository failures cannot affect them.
+
+## Stage 3 implementation ledger
+
+- Scope: upgraded only the Stage 2 synthetic callable-agent dispatch to bounded
+  hybrid waiting. Narration, other execution lanes, and trace nesting remain
+  deferred to Stages 4-6.
+- Timeout contract: callable-agent dispatch now carries a distinct
+  `syncWaitTimeoutMs`, defaulting to and capped at 60 seconds. The delegated
+  run's independent `timeoutMs` still controls execution/abort. Exhausting the
+  sync-wait budget returns the queued task id without cancelling the durable
+  child.
+- Completion contract: a completion subscription is registered before queue
+  admission can drain the task. Terminal settlement resolves it with the full
+  in-memory result; the existing persisted 1,000-character output cap remains
+  unchanged for async DTOs.
+- IPC contract: `delegate_task` is classified as detached long-running IPC, and
+  its response deadline is 65 seconds, above the 60-second sync-wait ceiling.
+  Ordinary task IPC retains its 20-second response deadline. A real watcher
+  test holds delegation open while a response-bearing `task_get` completes,
+  pinning the no-serialization-deadlock guarantee.
+- Queue ceiling: a waiting parent still occupies one message-run slot. With the
+  default global limit of three, hybrid waits can temporarily consume one of
+  those three slots, but never for more than the 60-second sync-wait cap; queue
+  policy and child execution timeout are otherwise unchanged.
+- Deterministic coverage: inline full-result completion, async fallback with the
+  child still running and later retrievable, response-bearing IPC during the
+  parent wait, and untruncated results above 1,000 characters.
+- Verification: TypeScript completed with exit 0; the focused hybrid suite
+  passed 4 files / 69 tests; the requested broad unit command passed 185 files
+  / 2,436 tests; the architecture gate reported only the accepted
+  `text-styles.ts` Telegram findings at lines 13, 64, and 75.
+- Decisions and assumptions: no product or security decisions were introduced;
+  all three plan-validation seams were implemented as pinned.

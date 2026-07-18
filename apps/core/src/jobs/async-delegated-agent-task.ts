@@ -20,11 +20,12 @@ import {
 import {
   type AsyncCommandProcessHandle,
   type AsyncCommandRunnerResult,
-  type StartAsyncCommandTaskResult,
 } from './async-command-task-service.js';
 import { asyncDelegatedPrivateCorrelation } from './async-task-execution-payload.js';
 import { createAdmittedAsyncTask } from './async-task-admission.js';
-import { notifyAsyncTaskChange } from './async-task-change-waiter.js';
+import { notifyAsyncTaskCompletion } from './async-task-change-waiter.js';
+import { subscribeAsyncTaskCompletion } from './async-task-change-waiter.js';
+import type { AsyncTaskCompletionStartResult } from './async-task-change-waiter.js';
 
 const ASYNC_TASK_HEARTBEAT_MS = 15_000;
 const ASYNC_TASK_WAKE_FALLBACK_MS = 15_000;
@@ -63,8 +64,6 @@ export interface StartDelegatedAgentTaskInput {
   }): Promise<AsyncCommandRunnerResult>;
 }
 
-export type StartDelegatedAgentTaskResult = StartAsyncCommandTaskResult;
-
 export type PendingDelegatedAgentExecution = {
   task: AsyncTaskRecord;
   command: string;
@@ -93,7 +92,7 @@ export async function startDelegatedAgentTask(input: {
     parent: AsyncTaskRecord,
     options: { signal: AbortSignal; timeoutMs: number },
   ) => Promise<void>;
-}): Promise<StartDelegatedAgentTaskResult> {
+}): Promise<AsyncTaskCompletionStartResult> {
   const objective = input.taskInput.objective.trim();
   if (!objective) {
     return { ok: false, message: 'delegate_task requires an objective.' };
@@ -128,6 +127,7 @@ export async function startDelegatedAgentTask(input: {
   });
   if (!created.ok) return created;
   const task = created.task;
+  const completion = subscribeAsyncTaskCompletion(input.repository, task.id);
   input.queueTask({
     task,
     command: '',
@@ -140,7 +140,7 @@ export async function startDelegatedAgentTask(input: {
       waitForTaskChange: input.waitForTaskChange,
     },
   });
-  return { ok: true, task: toPublicAsyncTaskDto(task) };
+  return { ok: true, task: toPublicAsyncTaskDto(task), completion };
 }
 
 export async function sendDelegatedAgentTaskMessage(input: {
@@ -468,7 +468,7 @@ async function finishDelegatedAgentTask(
       needsAttention: input.needsAttention,
     },
   });
-  if (updated) notifyAsyncTaskChange(repository);
+  notifyAsyncTaskCompletion(repository, updated, task.id, input);
 }
 async function waitForLinkedChildTasks(
   repository: AsyncTaskRepository,

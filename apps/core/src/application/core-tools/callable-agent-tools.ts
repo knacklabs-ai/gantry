@@ -10,6 +10,8 @@ import type {
 } from './task-lifecycle.js';
 
 export const CALLABLE_AGENT_TOOL_PREFIX = 'delegate_to_';
+export const CALLABLE_AGENT_SYNC_WAIT_TIMEOUT_MS = 60_000;
+export const CALLABLE_AGENT_SYNC_WAIT_MAX_MS = 60_000;
 
 export interface CallableAgentToolManifestEntry {
   toolName: string;
@@ -90,6 +92,10 @@ export async function dispatchCallableAgentTool(input: {
   return input.backend.delegate_task({
     ...input.args,
     targetAgentId: input.entry.targetAgentId,
+    syncWaitTimeoutMs:
+      typeof input.args.syncWaitTimeoutMs === 'number'
+        ? input.args.syncWaitTimeoutMs
+        : CALLABLE_AGENT_SYNC_WAIT_TIMEOUT_MS,
   });
 }
 

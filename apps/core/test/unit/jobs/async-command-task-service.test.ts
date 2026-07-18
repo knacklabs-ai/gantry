@@ -1933,6 +1933,48 @@ describe('AsyncCommandTaskService', () => {
     });
   });
 
+  it('keeps delegated work running after a completion wait expires and resolves the full result later', async () => {
+    const repository = new MemoryAsyncTaskRepository();
+    const fullResult = 'x'.repeat(1_500);
+    let releaseRun!: () => void;
+    const runGate = new Promise<void>((resolve) => {
+      releaseRun = resolve;
+    });
+    const service = new AsyncCommandTaskService(repository, {
+      run: async () => ({}),
+    });
+    const started = await service.startDelegatedAgent({
+      appId: 'app-1',
+      agentId: 'agent-1',
+      conversationId: 'conversation-1',
+      objective: 'Produce a long result',
+      workspaceFolder: 'main_agent',
+      run: async ({ signal }) => {
+        await runGate;
+        if (signal.aborted) throw new Error('unexpected abort');
+        return { outputSummary: fullResult };
+      },
+    });
+    expect(started.ok).toBe(true);
+    if (!started.ok) return;
+
+    await expect(started.completion.wait(1)).resolves.toBeNull();
+    await waitForStatus(repository, started.task.id, 'running');
+    expect(repository.tasks.get(started.task.id)?.status).toBe('running');
+
+    releaseRun();
+    await expect(started.completion.wait(1_000)).resolves.toEqual({
+      taskId: started.task.id,
+      status: 'completed',
+      result: fullResult,
+    });
+    await expect(service.get(started.task.id)).resolves.toMatchObject({
+      id: started.task.id,
+      status: 'completed',
+      outputSummary: `${'x'.repeat(1_000)}...`,
+    });
+  });
+
   it('starts delegated agent tasks and records steering messages', async () => {
     vi.stubEnv(
       'SECRET_ENCRYPTION_KEY',

@@ -17,8 +17,11 @@ import {
 import { formatTaskFailureLines } from '../formatting.js';
 import { waitForTaskResponse, writeIpcFile } from '../ipc.js';
 import { makeIpcId } from '../ipc-ids.js';
+import { CALLABLE_AGENT_SYNC_WAIT_MAX_MS } from '../../../application/core-tools/callable-agent-tools.js';
 
 const TASK_TOOL_TIMEOUT_MS = 20_000;
+const DELEGATION_IPC_RESPONSE_TIMEOUT_MS =
+  CALLABLE_AGENT_SYNC_WAIT_MAX_MS + 5_000;
 
 const todoItemSchema = z.object({
   id: z.string().min(1).max(80),
@@ -32,6 +35,7 @@ async function submitTaskLifecycleRequest(input: {
   payload: Record<string, unknown>;
   timeoutMessage: string;
   fallbackError: string;
+  responseTimeoutMs?: number;
 }) {
   const taskId = makeIpcId(input.type.replaceAll('_', '-'));
   writeIpcFile(TASKS_DIR, {
@@ -59,7 +63,10 @@ async function submitTaskLifecycleRequest(input: {
     authThreadId: threadId,
     timestamp: nowIso(),
   });
-  const response = await waitForTaskResponse(taskId, TASK_TOOL_TIMEOUT_MS);
+  const response = await waitForTaskResponse(
+    taskId,
+    input.responseTimeoutMs ?? TASK_TOOL_TIMEOUT_MS,
+  );
   if (!response) {
     return {
       content: [{ type: 'text' as const, text: input.timeoutMessage }],
@@ -178,6 +185,7 @@ export function registerTaskLifecycleTools(server: McpServer): void {
         payload: args,
         timeoutMessage: 'Delegated task start timed out.',
         fallbackError: 'Delegated task start failed.',
+        responseTimeoutMs: DELEGATION_IPC_RESPONSE_TIMEOUT_MS,
       }),
   );
 

@@ -679,6 +679,113 @@ describe('core tool registry', () => {
     );
   });
 
+  it('returns the full delegated result within the sync-wait budget without changing execution timeout', async () => {
+    const fullResult = 'specialist result '.repeat(100);
+    const completion = {
+      wait: vi.fn(async () => ({
+        taskId: 'task-inline',
+        status: 'completed' as const,
+        result: fullResult,
+      })),
+    };
+    const runDelegatedAgent = vi.fn(async () => ({
+      outputSummary: fullResult,
+    }));
+    const startDelegatedAgent = vi.fn(async (input) => {
+      await input.run({
+        task: { id: 'task-inline' },
+        prompt: 'Investigate',
+        signal: new AbortController().signal,
+      });
+      return {
+        ok: true as const,
+        task: { id: 'task-inline', summary: 'Investigate' },
+        completion,
+      };
+    });
+    const backend = createCoreTaskLifecycleBackend({
+      service: {
+        getScoped: vi.fn(),
+        list: vi.fn(),
+        cancel: vi.fn(),
+        startDelegatedAgent,
+        message: vi.fn(),
+      } as never,
+      owner: {
+        appId: 'default',
+        agentId: 'agent-1',
+        conversationId: 'conversation:test',
+      },
+      workspaceFolder: 'main_agent',
+      runDelegatedAgent,
+    });
+
+    await expect(
+      backend.delegate_task({
+        objective: 'Investigate',
+        timeoutMs: 123_000,
+        syncWaitTimeoutMs: 25,
+      }),
+    ).resolves.toEqual({
+      ok: true,
+      message: fullResult,
+      data: { taskId: 'task-inline', status: 'completed' },
+    });
+    expect(fullResult.length).toBeGreaterThan(1_000);
+    expect(completion.wait).toHaveBeenCalledWith(25);
+    expect(runDelegatedAgent).toHaveBeenCalledWith(
+      expect.objectContaining({ timeoutMs: 123_000 }),
+    );
+  });
+
+  it('falls back to the durable queued task when the sync-wait budget expires', async () => {
+    const completion = { wait: vi.fn(async () => null) };
+    const startDelegatedAgent = vi.fn(async () => ({
+      ok: true as const,
+      task: {
+        id: 'task-running',
+        status: 'running',
+        summary: 'Long investigation',
+      },
+      completion,
+    }));
+    const backend = createCoreTaskLifecycleBackend({
+      service: {
+        getScoped: vi.fn(),
+        list: vi.fn(),
+        cancel: vi.fn(),
+        startDelegatedAgent,
+        message: vi.fn(),
+      } as never,
+      owner: {
+        appId: 'default',
+        agentId: 'agent-1',
+        conversationId: 'conversation:test',
+      },
+      workspaceFolder: 'main_agent',
+      runDelegatedAgent: vi.fn(),
+    });
+
+    await expect(
+      backend.delegate_task({
+        objective: 'Investigate',
+        timeoutMs: 300_000,
+        syncWaitTimeoutMs: 5,
+      }),
+    ).resolves.toEqual({
+      ok: true,
+      message: 'Queued: task-running',
+      data: expect.objectContaining({
+        id: 'task-running',
+        status: 'running',
+      }),
+    });
+    expect(completion.wait).toHaveBeenCalledWith(5);
+    expect(startDelegatedAgent).toHaveBeenCalledWith(
+      expect.objectContaining({ objective: 'Investigate' }),
+    );
+  });
+
   it('suppresses direct send_message delivery for scheduled jobs', async () => {
     const sendMessage = vi.fn(async () => undefined);
     const registry = createCoreToolRegistry(

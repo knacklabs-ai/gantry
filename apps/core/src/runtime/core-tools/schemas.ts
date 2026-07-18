@@ -1,3 +1,5 @@
+import { CALLABLE_AGENT_SYNC_WAIT_MAX_MS } from '../../application/core-tools/callable-agent-tools.js';
+
 type ZodFactory = Record<string, (...args: any[]) => any>;
 
 export interface CoreToolInputSchema<Output> {
@@ -53,6 +55,7 @@ export type CallableAgentToolInput = {
   context?: string;
   expectedOutput?: string;
   timeoutMs?: number;
+  syncWaitTimeoutMs?: number;
 };
 
 export type CoreToolSchemas = {
@@ -137,6 +140,12 @@ export function createCoreToolSchemas(z: ZodFactory): CoreToolSchemas {
           .int()
           .positive()
           .max(30 * 60_000)
+          .optional(),
+        syncWaitTimeoutMs: z
+          .number()
+          .int()
+          .positive()
+          .max(CALLABLE_AGENT_SYNC_WAIT_MAX_MS)
           .optional(),
       })
       .strict(),

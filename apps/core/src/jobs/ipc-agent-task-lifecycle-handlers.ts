@@ -43,6 +43,7 @@ import { resolveTurnToolPolicy } from '../runtime/group-run-context.js';
 import { createCoreTaskLifecycleBackend } from '../application/core-tools/task-lifecycle.js';
 import { delegatedTaskAgentInScope } from './async-command-task-helpers.js';
 import { resolveDelegatedAgentTarget } from './ipc-agent-delegation-target.js';
+import { resolveDelegatedAgentTimeouts } from './ipc-agent-delegation-target.js';
 
 const TODO_STATUSES = new Set([
   'pending',
@@ -622,10 +623,10 @@ const delegateTaskHandler: TaskHandler = async (context) => {
     context: toTrimmedString(payload.context, { maxLen: 20_000 }) ?? undefined,
     expectedOutput:
       toTrimmedString(payload.expectedOutput, { maxLen: 2_000 }) ?? undefined,
-    timeoutMs:
-      typeof payload.timeoutMs === 'number'
-        ? Math.min(payload.timeoutMs, DEFAULT_DELEGATED_AGENT_TIMEOUT_MS)
-        : undefined,
+    ...resolveDelegatedAgentTimeouts(
+      payload,
+      DEFAULT_DELEGATED_AGENT_TIMEOUT_MS,
+    ),
   });
   respondTaskLifecycleResult(context, sharedResult);
 };

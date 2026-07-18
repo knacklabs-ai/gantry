@@ -117,6 +117,7 @@ describe('callable agent tools', () => {
     expect(taskBackend.delegate_task).toHaveBeenCalledWith({
       objective: 'Review this',
       timeoutMs: 1234,
+      syncWaitTimeoutMs: 60_000,
       targetAgentId: 'agent:reviewer',
     });
   });

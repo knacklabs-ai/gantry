@@ -1,5 +1,6 @@
 import type {
   AsyncTaskRecord,
+  AsyncTaskStatus,
   PublicAsyncTaskDto,
 } from '../../domain/ports/async-tasks.js';
 
@@ -57,6 +58,20 @@ export interface CoreDelegatedRunInput {
   timeoutMs?: number;
 }
 
+export interface CoreDelegatedTaskCompletion {
+  taskId: string;
+  status: Extract<
+    AsyncTaskStatus,
+    'completed' | 'cancelled' | 'timed_out' | 'failed'
+  >;
+  result: string;
+  error?: string;
+}
+
+export interface CoreDelegatedTaskCompletionSubscription {
+  wait(timeoutMs: number): Promise<CoreDelegatedTaskCompletion | null>;
+}
+
 export interface CoreTaskLifecycleService {
   getScoped(
     input: CoreTaskOwner & {
@@ -90,7 +105,12 @@ export interface CoreTaskLifecycleService {
       }>;
     },
   ): Promise<
-    { ok: true; task: PublicAsyncTaskDto } | { ok: false; message: string }
+    | {
+        ok: true;
+        task: PublicAsyncTaskDto;
+        completion: CoreDelegatedTaskCompletionSubscription;
+      }
+    | { ok: false; message: string }
   >;
   message(
     input: CoreTaskOwner & {
@@ -174,6 +194,28 @@ export function createCoreTaskLifecycleBackend(input: {
               : {}),
           }),
       });
+      if (result.ok && typeof args.syncWaitTimeoutMs === 'number') {
+        const completion = await result.completion.wait(args.syncWaitTimeoutMs);
+        if (completion) {
+          return completion.status === 'completed'
+            ? {
+                ok: true,
+                message: completion.result,
+                data: { taskId: completion.taskId, status: completion.status },
+              }
+            : {
+                ok: false,
+                message: completion.error || completion.result,
+                code: 'invalid_request',
+                data: { taskId: completion.taskId, status: completion.status },
+              };
+        }
+        return {
+          ok: true,
+          message: `Queued: ${result.task.id}`,
+          data: result.task,
+        };
+      }
       return result.ok
         ? {
             ok: true,

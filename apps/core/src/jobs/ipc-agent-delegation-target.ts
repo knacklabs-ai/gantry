@@ -8,6 +8,7 @@ import {
   resolveTurnSemanticCapabilities,
   resolveTurnToolPolicy,
 } from '../runtime/group-run-context.js';
+import { CALLABLE_AGENT_SYNC_WAIT_MAX_MS } from '../application/core-tools/callable-agent-tools.js';
 import {
   findConversationRouteForQueue,
   makeAgentThreadQueueKey,
@@ -18,6 +19,22 @@ interface DelegatedTaskOwner {
   agentId: string;
   conversationId: string;
   threadId?: string | null;
+}
+
+export function resolveDelegatedAgentTimeouts(
+  payload: Record<string, unknown>,
+  executionTimeoutMaxMs: number,
+) {
+  return {
+    timeoutMs:
+      typeof payload.timeoutMs === 'number'
+        ? Math.min(payload.timeoutMs, executionTimeoutMaxMs)
+        : undefined,
+    syncWaitTimeoutMs:
+      typeof payload.syncWaitTimeoutMs === 'number'
+        ? Math.min(payload.syncWaitTimeoutMs, CALLABLE_AGENT_SYNC_WAIT_MAX_MS)
+        : undefined,
+  };
 }
 
 export async function resolveDelegatedAgentTarget(input: {
