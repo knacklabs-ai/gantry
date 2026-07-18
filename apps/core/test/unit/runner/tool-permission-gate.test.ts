@@ -84,179 +84,27 @@ describe('createCanUseToolCallback', () => {
     vi.restoreAllMocks();
   });
 
-  it('denies parentless SandboxNetworkAccess after an allow-once approved Bash tool call', async () => {
-    permissionMock.requestPermissionApproval.mockResolvedValueOnce({
-      approved: true,
-      mode: 'allow_once',
-      updatedPermissions: undefined,
-      decidedBy: 'user',
-    });
+  it.each(['registry.npmjs.org', '10.0.0.7'])(
+    'allows direct-mode SDK network access to %s without a per-tool token',
+    async (host) => {
+      const canUseTool = makeCallback();
 
-    const canUseTool = makeCallback();
-    const bash = await canUseTool(
-      'Bash',
-      { command: 'npm install' },
-      makePermissionOptions({
-        toolUseID: 'toolu_bash_1',
-        agentID: 'subagent-a',
-      }) as never,
-    );
-    const network = await canUseTool(
-      'SandboxNetworkAccess',
-      { host: 'registry.npmjs.org' },
-      makePermissionOptions({
-        toolUseID: 'toolu_network_1',
-        agentID: 'subagent-a',
-      }) as never,
-    );
+      const network = await canUseTool(
+        'SandboxNetworkAccess',
+        { host },
+        makePermissionOptions({
+          toolUseID: 'toolu_network_1',
+          agentID: 'agent:test',
+        }) as never,
+      );
 
-    expect(bash.behavior).toBe('allow');
-    expect(network).toEqual(
-      expect.objectContaining({
-        behavior: 'deny',
-        message: expect.stringContaining('without a parent tool-use id'),
-      }),
-    );
-    expect(permissionMock.requestPermissionApproval).toHaveBeenCalledTimes(1);
-  });
-
-  it('suppresses SandboxNetworkAccess only when it carries the approved parent tool-use id', async () => {
-    permissionMock.requestPermissionApproval.mockResolvedValueOnce({
-      approved: true,
-      mode: 'allow_once',
-      updatedPermissions: undefined,
-      decidedBy: 'user',
-    });
-
-    const canUseTool = makeCallback();
-    const bash = await canUseTool(
-      'Bash',
-      { command: 'npm install' },
-      makePermissionOptions({
-        toolUseID: 'toolu_bash_1',
-        agentID: 'subagent-a',
-      }) as never,
-    );
-    const network = await canUseTool(
-      'SandboxNetworkAccess',
-      { host: 'registry.npmjs.org', parentToolUseID: 'toolu_bash_1' },
-      makePermissionOptions({
-        toolUseID: 'toolu_network_1',
-        parentToolUseID: 'toolu_bash_1',
-        agentID: 'subagent-a',
-      }) as never,
-    );
-
-    expect(bash.behavior).toBe('allow');
-    expect(network).toEqual({
-      behavior: 'allow',
-      updatedInput: {
-        host: 'registry.npmjs.org',
-        parentToolUseID: 'toolu_bash_1',
-      },
-    });
-    expect(permissionMock.requestPermissionApproval).toHaveBeenCalledTimes(1);
-  });
-
-  it('does not suppress parentless SandboxNetworkAccess across SDK agent principals', async () => {
-    permissionMock.requestPermissionApproval.mockResolvedValueOnce({
-      approved: true,
-      mode: 'allow_once',
-      updatedPermissions: undefined,
-      decidedBy: 'user',
-    });
-
-    const canUseTool = makeCallback();
-    const bash = await canUseTool(
-      'Bash',
-      { command: 'npm install' },
-      makePermissionOptions({
-        toolUseID: 'toolu_bash_1',
-        agentID: 'subagent-a',
-      }) as never,
-    );
-    const network = await canUseTool(
-      'SandboxNetworkAccess',
-      { host: 'registry.npmjs.org' },
-      makePermissionOptions({
-        toolUseID: 'toolu_network_1',
-        agentID: 'subagent-b',
-      }) as never,
-    );
-
-    expect(bash.behavior).toBe('allow');
-    expect(network).toEqual(
-      expect.objectContaining({
-        behavior: 'deny',
-        message: expect.stringContaining('without a parent tool-use id'),
-      }),
-    );
-    expect(permissionMock.requestPermissionApproval).toHaveBeenCalledTimes(1);
-  });
-
-  it('suppresses parentless scheduled SandboxNetworkAccess for reviewed local CLI command bindings', async () => {
-    const canUseTool = makeCallback({
-      agentInput: {
-        runMode: 'normal',
-        isScheduledJob: true,
-        appId: 'default',
-        agentId: 'agent:test',
-        runId: 'run-1',
-        jobId: 'job-1',
-        chatJid: 'tg:test',
-        threadId: undefined,
-        runtimeAccess: [
-          {
-            selectedCapabilityId: 'acme.records.get',
-            sourceType: 'local_cli',
-            auditLabel: 'Fixture Records get',
-            commandRules: ['RunCommand(/opt/homebrew/bin/acme records get *)'],
-            credentialDirs: [],
-            networkBindings: [
-              {
-                commandRules: [
-                  'RunCommand(/opt/homebrew/bin/acme records get *)',
-                ],
-                hosts: ['oauth2.googleapis.com'],
-              },
-            ],
-          },
-        ],
-        allowedTools: ['RunCommand(/opt/homebrew/bin/acme records get *)'],
-        yoloMode: {
-          enabled: true,
-          denylist: [],
-          denylistPaths: [],
-        },
-      } as never,
-    });
-    const bash = await canUseTool(
-      'Bash',
-      {
-        command:
-          '/opt/homebrew/bin/acme records get fixture_sheet_001 "Fixture Leads!A1:Z1" --json --account operator@example.test',
-      },
-      makePermissionOptions({
-        toolUseID: 'toolu_bash_1',
-        agentID: 'agent:test',
-      }) as never,
-    );
-    const network = await canUseTool(
-      'SandboxNetworkAccess',
-      { host: 'oauth2.googleapis.com' },
-      makePermissionOptions({
-        toolUseID: 'toolu_network_1',
-        agentID: 'agent:test',
-      }) as never,
-    );
-
-    expect(bash.behavior).toBe('allow');
-    expect(network).toEqual({
-      behavior: 'allow',
-      updatedInput: { host: 'oauth2.googleapis.com' },
-    });
-    expect(permissionMock.requestPermissionApproval).not.toHaveBeenCalled();
-  });
+      expect(network).toEqual({
+        behavior: 'allow',
+        updatedInput: { host },
+      });
+      expect(permissionMock.requestPermissionApproval).not.toHaveBeenCalled();
+    },
+  );
 
   it('passes the runner conversation as the interactive permission target', async () => {
     permissionMock.requestPermissionApproval.mockResolvedValueOnce({

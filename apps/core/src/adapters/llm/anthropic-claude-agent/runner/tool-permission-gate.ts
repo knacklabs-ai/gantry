@@ -27,7 +27,6 @@ import {
   scheduledPermissionSuggestionPlan,
 } from './permission-suggestions.js';
 import { sandboxBlockedRuntimeEvents } from './sandbox-events.js';
-import { createSdkSandboxNetworkGate } from './sdk-sandbox-network-gate.js';
 import { readExternalMcpAllowedTools } from './external-mcp-tool-rules.js';
 import { applyBashTrustEnv } from './bash-trust-env.js';
 import { log } from './logging.js';
@@ -41,7 +40,10 @@ import {
 import { waitOnlyBashMonitoringDenial } from './wait-only-bash-guard.js';
 import { forceBackgroundNativeAgentInput } from './native-agent-tool-input.js';
 import { denyNonPromptableAutonomousRecovery } from './autonomous-permission-recovery.js';
-import { publicCapabilityAllowedToolRules } from '../../../../shared/agent-tool-references.js';
+import {
+  isSdkSandboxNetworkAccessToolName,
+  publicCapabilityAllowedToolRules,
+} from '../../../../shared/agent-tool-references.js';
 import { evaluateYoloModeDenylist } from '../../../../shared/yolo-mode-policy.js';
 type ApprovalInput = Parameters<typeof requestPermissionApproval>[0];
 const WORKSPACE_FOLDER_KEY = WORKSPACE_FOLDER_OPTION_KEY as keyof ApprovalInput;
@@ -68,7 +70,6 @@ export function createCanUseToolCallback(
   const toolExecutionClassifier = new ToolExecutionClassifier();
   const toolExecutionPolicy = new ToolExecutionPolicyService();
   const liveApprovedRules = new Set<string>();
-  const sdkSandboxNetworkGate = createSdkSandboxNetworkGate(input.agentInput);
   const skillActionCapabilities = readRunnerSkillActionCapabilities();
   const currentAllowedToolRules = (): string[] => [
     ...(input.agentInput.allowedTools ?? []),
@@ -215,13 +216,6 @@ export function createCanUseToolCallback(
       permissionOpts.agentID?.trim() ||
       input.agentInput.agentId ||
       input.workspaceFolder;
-    const rememberAllowedTool = () =>
-      sdkSandboxNetworkGate.rememberAllowedTool(
-        toolName,
-        toolInput,
-        permissionOpts,
-        sdkApprovalPrincipal,
-      );
     const allowToolUse = (reason = 'allowed') => {
       emitJobToolActivity(
         input.agentInput,
@@ -233,9 +227,12 @@ export function createCanUseToolCallback(
           reason,
         },
       );
-      rememberAllowedTool();
       return { behavior: 'allow' as const, updatedInput: trustInput() };
     };
+
+    if (isSdkSandboxNetworkAccessToolName(toolName)) {
+      return allowToolUse('default_allow');
+    }
 
     if (toolName === 'Agent') {
       const modelDenial = validateAgentToolInput(toolInput, currentModel);
@@ -319,14 +316,6 @@ export function createCanUseToolCallback(
         interrupt: false,
       };
     }
-    const sandboxNetworkAccessDecision = sdkSandboxNetworkGate.decide(
-      toolName,
-      toolInput,
-      permissionOpts,
-      sdkApprovalPrincipal,
-    );
-    if (sandboxNetworkAccessDecision) return sandboxNetworkAccessDecision;
-
     const yoloDenylistMatch = evaluateYoloModeDenylist({
       settings: input.agentInput.yoloMode,
       toolName,
@@ -458,7 +447,6 @@ export function createCanUseToolCallback(
         )) {
           liveApprovedRules.add(rule);
         }
-        rememberAllowedTool();
         emitJobToolActivity(
           input.agentInput,
           input.getNewSessionId,
@@ -596,7 +584,6 @@ export function createCanUseToolCallback(
       )) {
         liveApprovedRules.add(rule);
       }
-      rememberAllowedTool();
       emitJobToolActivity(
         input.agentInput,
         input.getNewSessionId,

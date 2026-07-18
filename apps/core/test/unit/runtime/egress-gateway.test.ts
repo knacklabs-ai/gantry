@@ -23,7 +23,7 @@ afterEach(async () => {
 });
 
 describe('egress gateway', () => {
-  it('blocks private CONNECT targets by default and audits the decision', async () => {
+  it('allows non-denylisted private CONNECT targets and audits the decision', async () => {
     const target = await startTargetServer();
     const publishRuntimeEvent = vi.fn();
     const gateway = await ensureEgressGateway({
@@ -43,7 +43,7 @@ describe('egress gateway', () => {
       authority: `127.0.0.1:${target.port}`,
     });
 
-    expect(response.statusCode).toBe(403);
+    expect(response.statusCode).toBe(200);
     const auditEvent = publishRuntimeEvent.mock.calls[0]?.[0];
     expect(auditEvent).toEqual(
       expect.objectContaining({
@@ -52,9 +52,9 @@ describe('egress gateway', () => {
         conversationId: 'conversation:tg:test',
         payload: expect.objectContaining({
           host: '127.0.0.1',
-          allowed: false,
-          denied: true,
-          reason: expect.stringContaining('Network blocked by policy'),
+          allowed: true,
+          denied: false,
+          reason: 'default_allow',
           principal: 'agent:test',
           conversationId: 'tg:test',
           runId: 'run-1',
@@ -62,6 +62,61 @@ describe('egress gateway', () => {
       }),
     );
     expect(auditEvent).not.toHaveProperty('runId');
+    await target.close();
+  });
+
+  it('allows non-denylisted internal hostnames that resolve privately', async () => {
+    const target = await startTargetServer();
+    const publishRuntimeEvent = vi.fn();
+    vi.mocked(dns.lookup).mockResolvedValueOnce([
+      { address: '127.0.0.1', family: 4 },
+    ]);
+    const gateway = await ensureEgressGateway({
+      key: 'test:internal-host',
+      settings: { denylist: [] },
+      principal: { appId: 'default', agentId: 'agent:test' },
+      publishRuntimeEvent,
+    });
+
+    const response = await connectThroughGateway({
+      gatewayPort: gateway.port,
+      authority: `service.internal:${target.port}`,
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(publishRuntimeEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        payload: expect.objectContaining({
+          host: 'service.internal',
+          allowed: true,
+          denied: false,
+          reason: 'default_allow',
+        }),
+      }),
+    );
+    await target.close();
+  });
+
+  it('still blocks a denylisted private host', async () => {
+    const target = await startTargetServer();
+    const gateway = await ensureEgressGateway({
+      key: 'test:deny-private',
+      settings: { denylist: ['127.0.0.1'] },
+      principal: { appId: 'default', agentId: 'agent:test' },
+    });
+
+    const response = await connectThroughGateway({
+      gatewayPort: gateway.port,
+      authority: `127.0.0.1:${target.port}`,
+    });
+
+    expect(response.statusCode).toBe(403);
+    expect(JSON.parse(response.body)).toEqual({
+      deniedHost: '127.0.0.1',
+      matchedPattern: '127.0.0.1',
+      reason:
+        'Host 127.0.0.1 matched permissions.egress.denylist pattern 127.0.0.1.',
+    });
     await target.close();
   });
 
@@ -92,7 +147,7 @@ describe('egress gateway', () => {
     });
 
     // Default-allow: the declared host is reviewed audit metadata, so traffic
-    // passes through normally while DNS pinning keeps the tunnel public and the
+    // passes through normally while the resolved address keeps the tunnel stable and the
     // audit event still names the capability that declared it.
     expect(response.statusCode).toBe(502);
     expect(upstream.headers[0]).toContain('CONNECT 93.184.216.34:443 HTTP/1.1');
@@ -157,7 +212,7 @@ describe('egress gateway', () => {
     const upstream = await startRecordingProxy();
     const publishRuntimeEvent = vi.fn();
     const gateway = await ensureEgressGateway({
-      key: 'test:sandbox-allowlist',
+      key: 'test:default-allow',
       settings: { denylist: [] },
       principal: { appId: 'default', agentId: 'agent:test' },
       upstreamProxy: {
@@ -192,7 +247,7 @@ describe('egress gateway', () => {
     const publishRuntimeEvent = vi.fn();
     const upstream = await startRecordingProxy();
     const gateway = await ensureEgressGateway({
-      key: 'test:sandbox-model-provider-allowlist',
+      key: 'test:model-provider-default-allow',
       settings: { denylist: [] },
       principal: { appId: 'default', agentId: 'agent:test' },
       upstreamProxy: {
@@ -223,13 +278,12 @@ describe('egress gateway', () => {
     await upstream.close();
   });
 
-  it('allows IPv6 loopback model gateway HTTP requests under a sandbox allowlist', async () => {
+  it('allows IPv6 loopback HTTP requests by default', async () => {
     const publishRuntimeEvent = vi.fn();
     const gateway = await ensureEgressGateway({
       key: 'test:sandbox-ipv6-model-gateway',
       settings: { denylist: [] },
       principal: { appId: 'default', agentId: 'agent:test' },
-      allowedPrivateNetworkHosts: ['[::1]:18999'],
       publishRuntimeEvent,
     });
 
@@ -245,7 +299,7 @@ describe('egress gateway', () => {
           host: '::1',
           allowed: true,
           denied: false,
-          reason: 'model_gateway_allow',
+          reason: 'default_allow',
         }),
       }),
     );
@@ -277,7 +331,7 @@ describe('egress gateway', () => {
             host: SANDBOX_RUNTIME_MODEL_GATEWAY_HOST,
             allowed: true,
             denied: false,
-            reason: 'model_gateway_allow',
+            reason: 'mapped_connect_host',
           }),
         }),
       );
@@ -341,7 +395,7 @@ describe('egress gateway', () => {
 
     // Previously the missing host validator turned a declared host into a
     // CONNECT 403; now the approved capability reaches public hosts through the
-    // gateway while DNS pinning keeps private targets blocked.
+    // gateway while retaining one resolved address for the tunnel.
     expect(response.statusCode).not.toBe(403);
     expect(upstream.headers[0]).toContain('CONNECT 93.184.216.34:443 HTTP/1.1');
     expect(upstream.headers[0]).toContain('Host: api.linkedin.com:443');
