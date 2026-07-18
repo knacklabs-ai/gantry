@@ -237,7 +237,12 @@ async function handleConnectRequest(
     address: target.host,
   });
   if (literalAddressDeny) {
-    await denyConnectRequest(state, clientSocket, literalAddressDeny, target.port);
+    await denyConnectRequest(
+      state,
+      clientSocket,
+      literalAddressDeny,
+      target.port,
+    );
     return;
   }
   const mappedTarget = mappedEgressTarget(state, target);
