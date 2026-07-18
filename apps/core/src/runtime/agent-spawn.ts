@@ -15,7 +15,6 @@ import {
   getSelectedAgentHarness,
   getSelectedAgentRuntime,
 } from '../config/index.js';
-import { resolveAgentAccessPolicy } from '../config/profiles.js';
 import { logger } from '../infrastructure/logging/logger.js';
 import { runSpawnWithLogContext } from '../infrastructure/observability/spawn-log-context.js';
 import type { SpawnTurnTracker } from '../infrastructure/observability/spawn-turn-tracker.js';
@@ -71,6 +70,7 @@ import {
 import {
   getConfiguredModelProvidersForApp,
   getRuntimeFileArtifactStore,
+  getRuntimeStorage,
 } from '../adapters/storage/postgres/runtime-store.js';
 import { effectiveYoloModeSettings } from '../shared/yolo-mode-policy.js';
 import { formatGeneratedRuntimePathPermissionError } from './generated-runtime-path-error.js';
@@ -98,7 +98,7 @@ import {
   buildAndLogRunnerRuntimeDetails,
   type RunnerAgentInput,
 } from './agent-spawn-helpers.js';
-import { prepareAgentSpawn } from './agent-spawn-preparation.js';
+import { prepareAgentSpawn, prepareWorkerAuthorityProjection } from './agent-spawn-preparation.js';
 import { resolveSpawnExecutionAdapter } from './agent-spawn-execution-adapter.js';
 export { writeGroupsSnapshot } from './agent-spawn-snapshots.js';
 export type { AvailableGroup } from './agent-spawn-types.js';
@@ -191,15 +191,20 @@ async function spawnAgentWithContext(
   }
   const agentIdentifier = group.folder.toLowerCase().replace(/_/g, '-');
   const credentials = host.getHostRuntimeCredentialEnv;
-  const agentAccessPolicy = resolveAgentAccessPolicy(
-    agentSettings?.accessPreset,
-  );
-  const isLockedAgent = agentAccessPolicy.preset === 'locked';
+  const { accessPreset, hideAuthorityTools, callableAgentManifest } =
+    await prepareWorkerAuthorityProjection({
+      agentInput: input,
+      accessPreset: agentSettings?.accessPreset,
+      delegates: agentSettings?.delegates ?? [],
+      workspaceFolder: group.folder,
+      options,
+      getAgentRepository: () => getRuntimeStorage().repositories.agents,
+    });
   const compiledSystemPrompt = await compileSpawnSystemPrompt({
     group,
     agentInput: input,
     appId: input.appId || 'default',
-    accessPreset: agentAccessPolicy.preset,
+    accessPreset,
     fileArtifactStore: () => getRuntimeFileArtifactStore(),
     measureAsync: (name, fn) => hostStartup.measureAsync(name, fn),
   });
@@ -212,13 +217,10 @@ async function spawnAgentWithContext(
   const browserIpcEnabled = (trustedToolPolicyRules ?? []).some(
     isCanonicalBrowserCapabilityRule,
   );
-  const hideAuthorityTools =
-    isLockedAgent ||
-    input.hideAuthorityTools === true ||
-    process.env.GANTRY_NO_PERMISSION_TOOLS === '1';
   const runnerInput: RunnerAgentInput = {
     ...input,
     allowedTools: trustedToolPolicyRules,
+    callableAgentManifest,
     browserProfileName,
     hideAuthorityTools,
     compiledSystemPrompt,
@@ -548,7 +550,7 @@ async function spawnAgentWithContext(
       memoryDefaultScope: input.memoryDefaultScope,
       memoryReviewerIsControlApprover: input.memoryReviewerIsControlApprover,
       hideAuthorityTools,
-      agentAccessPreset: agentAccessPolicy.preset,
+      agentAccessPreset: accessPreset,
       deploymentMode: getDeploymentMode(),
       permissionMode: input.permissionMode ?? 'ask',
       turnIntentSummary: input.prompt,

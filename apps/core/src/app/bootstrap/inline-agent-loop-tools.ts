@@ -226,7 +226,7 @@ export function createInlineCoreTools(
               args,
               entry,
               backend: taskLifecycleBackend,
-              narration: { sourceAgentFolder: laneInput.group.folder, deps },
+              narration: { sourceAgentFolder: laneInput.group.folder, deps, isScheduledJob: run.isScheduledJob === true },
               revalidate: async (expected) =>
                 (
                   await resolveInlineCallableAgentManifest(

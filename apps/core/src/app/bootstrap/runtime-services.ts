@@ -458,6 +458,7 @@ export async function startRuntimeServices(
       onSchedulerChanged,
       opsRepository: resolved.opsRepository,
       getToolRepository: resolved.getToolRepository,
+      getAgentRepository: resolved.getAgentRepository,
       getSkillRepository: resolved.getSkillRepository,
       getAsyncTaskRepository: resolved.getAsyncTaskRepository,
       getMcpServerRepository: resolved.getMcpServerRepository,

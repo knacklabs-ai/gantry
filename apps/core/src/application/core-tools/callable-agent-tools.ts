@@ -3,25 +3,85 @@ import {
   folderForAgentId,
 } from '../../domain/agent/agent-folder-id.js';
 import type { Agent } from '../../domain/agent/agent.js';
+import type { AppId } from '../../domain/app/app.js';
+import type { AgentRepository } from '../../domain/ports/repositories.js';
+import {
+  CALLABLE_AGENT_SYNC_WAIT_TIMEOUT_MS,
+  CALLABLE_AGENT_TOOL_PREFIX,
+  callableAgentToolName,
+  type CallableAgentToolInputSchema,
+  type CallableAgentToolManifestEntry,
+} from '../../shared/callable-agent-manifest.js';
 import { sha256Base64Url } from '../../shared/stable-hash.js';
 import type {
   CoreTaskLifecycleBackend,
+  CoreTaskLifecycleErrorCode,
   CoreTaskLifecycleResult,
 } from './task-lifecycle.js';
-import {
-  sendCoreMessage,
-  type CoreSendMessageDeps,
-} from './send-message.js';
+import { coreTaskLifecycleResultText } from './task-lifecycle.js';
+import { sendCoreMessage, type CoreSendMessageDeps } from './send-message.js';
 
-export const CALLABLE_AGENT_TOOL_PREFIX = 'delegate_to_';
 const CALLABLE_AGENT_NARRATION_TIMEOUT_MS = 5_000;
-export const CALLABLE_AGENT_SYNC_WAIT_TIMEOUT_MS = 60_000;
-export const CALLABLE_AGENT_SYNC_WAIT_MAX_MS = 60_000;
 
-export interface CallableAgentToolManifestEntry {
-  toolName: string;
-  targetAgentId: string;
-  displayName: string;
+export {
+  CALLABLE_AGENT_RESPONSE_TIMEOUT_MS,
+  CALLABLE_AGENT_SYNC_WAIT_MAX_MS,
+  CALLABLE_AGENT_SYNC_WAIT_TIMEOUT_MS,
+  CALLABLE_AGENT_TOOL_PREFIX,
+  callableAgentToolName,
+  createCallableAgentToolSchema,
+  parseCallableAgentManifest,
+  type CallableAgentToolInput,
+  type CallableAgentToolInputSchema,
+  type CallableAgentToolManifestEntry,
+} from '../../shared/callable-agent-manifest.js';
+
+export function isCallableAgentToolName(name: string): boolean {
+  return name.startsWith(CALLABLE_AGENT_TOOL_PREFIX);
+}
+
+export function createCallableAgentToolDefinitions(input: {
+  manifest: readonly CallableAgentToolManifestEntry[];
+  schema: CallableAgentToolInputSchema;
+  dispatch(
+    entry: CallableAgentToolManifestEntry,
+    args: Record<string, unknown>,
+  ): Promise<CoreTaskLifecycleResult>;
+}) {
+  return input.manifest.map((entry) => ({
+    name: callableAgentToolName(entry),
+    description: `Delegate to ${entry.displayName}.`,
+    inputSchema: input.schema,
+    handler: async (args: Record<string, unknown>) =>
+      coreTaskLifecycleMcpResult(await input.dispatch(entry, args)),
+  }));
+}
+
+export function coreTaskLifecycleMcpResult(result: CoreTaskLifecycleResult) {
+  const text = coreTaskLifecycleResultText(result);
+  return {
+    content: [{ type: 'text' as const, text }],
+    ...(result.ok
+      ? {}
+      : { isError: true, error: taskLifecycleError(result.code, text) }),
+  };
+}
+
+function taskLifecycleError(
+  code: CoreTaskLifecycleErrorCode | undefined,
+  message: string,
+) {
+  switch (code) {
+    case 'unavailable':
+      return { category: 'transient' as const, isRetryable: true, message };
+    case 'invalid_request':
+      return { category: 'validation' as const, isRetryable: false, message };
+    case 'forbidden':
+      return { category: 'permission' as const, isRetryable: false, message };
+    case 'not_found':
+    default:
+      return { category: 'business' as const, isRetryable: false, message };
+  }
 }
 
 export function projectCallableAgentTools(input: {
@@ -64,13 +124,53 @@ export function projectCallableAgentTools(input: {
       byIdentity.get(String(agentIdForFolder(delegate)));
     if (!agent || seen.has(String(agent.id))) return [];
     seen.add(String(agent.id));
+    const displayName = (
+      agent.name.replace(/\s+/g, ' ').trim() ||
+      folderForAgentId(agent.id) ||
+      String(agent.id)
+    ).slice(0, 200);
     return [
       {
         toolName: immutableToolName(String(agent.id)),
         targetAgentId: String(agent.id),
-        displayName: agent.name.replace(/\s+/g, ' ').trim(),
+        displayName,
       },
     ];
+  });
+}
+
+export async function preloadCallableAgentManifest(input: {
+  run: {
+    appId?: string;
+    agentId?: string;
+    parentTaskId?: string | null;
+    toolPolicyRules?: readonly string[];
+  };
+  delegates: readonly string[];
+  callerFolder: string;
+  toolsAvailable: boolean;
+  getRepository?: () => AgentRepository;
+}) {
+  const { run } = input;
+  if (
+    !input.toolsAvailable ||
+    run.parentTaskId != null ||
+    !run.toolPolicyRules?.includes('AgentDelegation') ||
+    !run.appId ||
+    !run.agentId ||
+    input.delegates.length === 0 ||
+    !input.getRepository
+  ) {
+    return [];
+  }
+  return projectCallableAgentTools({
+    agents: await input.getRepository().listAgents(run.appId as AppId),
+    callerAppId: run.appId,
+    callerAgentId: run.agentId,
+    callerFolder: input.callerFolder,
+    delegates: input.delegates,
+    toolPolicyRules: run.toolPolicyRules,
+    parentTaskId: run.parentTaskId,
   });
 }
 
@@ -81,6 +181,7 @@ export async function dispatchCallableAgentTool(input: {
   revalidate(entry: CallableAgentToolManifestEntry): Promise<boolean>;
   narration?: {
     sourceAgentFolder: string;
+    isScheduledJob?: boolean;
     deps: CoreSendMessageDeps & {
       warn(context: Record<string, unknown>, message: string): void;
     };
@@ -149,6 +250,7 @@ async function narrate(
           targetJid: owner.conversationId,
           providerAccountId: owner.providerAccountId ?? undefined,
           threadId: owner.threadId ?? undefined,
+          isScheduledJob: input.narration.isScheduledJob,
         },
         deps: input.narration.deps,
       }),
@@ -181,6 +283,7 @@ function immutableToolName(agentId: string): string {
       .replace(/[^a-z0-9_-]+/g, '_')
       .replace(/^_+|_+$/g, '')
       .slice(0, 8) || 'agent';
-  const digest = sha256Base64Url(agentId);
+  // Leaves room for the fully qualified facade name within the shared 64-char cap.
+  const digest = sha256Base64Url(agentId).slice(0, 30);
   return `${stem}_${digest}`;
 }

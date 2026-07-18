@@ -343,3 +343,43 @@ handler seams and can run first independently.
   1 file / 11 tests; TypeScript exited 0; the requested broad unit command
   passed 153 files / 2,410 tests; the architecture gate reported only the
   accepted `text-styles.ts` findings at lines 13, 64, and 75.
+
+## Stage 5 implementation ledger
+
+- Scope: projected the Stage 2 callable-agent manifest into the Anthropic,
+  DeepAgents, and stdio MCP lanes. Stage 6 trace nesting remains deferred.
+- Projection contract: worker preload uses the existing manifest builder once;
+  each lane receives that plain-data manifest and reuses the same callable-agent
+  name, schema, and definition construction. No lane derives its own target set.
+- Suppression contract: preload and every lane suppress synthetic tools for a
+  delegated child, locked/authority-hidden access, unavailable async task
+  lifecycle, or an empty delegate allowlist. Suppressed preload does not read
+  agent inventory.
+- Dispatch contract: stdio registration injects the manifest-pinned target and
+  carries the Stage 3 default bounded sync wait. The host revalidates current
+  active, same-app, non-self allowlist eligibility before delegation.
+- Audit contract: synthetic IPC carries its synthetic tool identity only for
+  revalidation, then records durable delegated-task authority as
+  `AgentDelegation`. Anthropic permission naming and DeepAgents heartbeat events
+  use the same canonical name; ordinary `delegate_task` audit remains unchanged.
+- Autoreview follow-up: stdio manifest parsing accepts the full base64url
+  alphabet emitted by the shared builder, and the cross-lane test consumes a
+  real projected manifest. Synthetic stdio dispatch also enters the shared
+  Stage 4 narration path and revalidates eligibility after start narration.
+- Timeout/name follow-up: stdio IPC uses a 75-second response budget, leaving
+  setup margin beyond narration and the bounded sync wait. DeepAgents applies an
+  80-second MCP timeout only to manifest-listed synthetic tools, leaving existing
+  question, browser, and scheduler tool budgets unchanged. The
+  manifest builder bounds display names once, while stdio skips an invalid entry
+  without hiding valid sibling tools.
+- Scheduled-run follow-up: inline and worker synthetic dispatch carry the
+  existing scheduled-job flag into shared narration, so intermediate delegation
+  messages remain suppressed and the scheduler owns terminal notification.
+- Verification: TypeScript completed with exit 0; focused Stage 5 coverage
+  passed 7 files / 85 tests plus the final regression set at 5 files / 58
+  tests; the requested broad unit command passed 157 files / 2,446 tests. The
+  architecture gate reported 0 non-text-style findings and only the accepted
+  `text-styles.ts` Telegram findings at lines 13, 64, and 75.
+- Decisions and assumptions: none. Locked-mode suppression is defense in depth
+  at host preload, lane projection, stdio manifest parsing, and the existing
+  locked IPC denial boundary.

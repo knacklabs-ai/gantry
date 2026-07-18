@@ -39,7 +39,6 @@ class DelegatedChildFailureError extends Error {
     super(failure.attemptedAction);
   }
 }
-
 export interface StartDelegatedAgentTaskInput {
   appId: string;
   agentId: string;
@@ -51,6 +50,7 @@ export interface StartDelegatedAgentTaskInput {
   context?: string | null;
   expectedOutput?: string | null;
   targetAgentId?: string;
+  authorityToolName?: 'AgentDelegation';
   workspaceFolder: string;
   run(input: {
     task: AsyncTaskRecord;
@@ -110,7 +110,7 @@ export async function startDelegatedAgentTask(input: {
     kind: 'delegated_agent',
     status: 'queued',
     admissionClass: 'task',
-    authoritySnapshotJson: { toolName: 'delegate_task', maxDepth: 1 },
+    authoritySnapshotJson: { toolName: input.taskInput.authorityToolName ?? 'delegate_task', maxDepth: 1 },
     privateCorrelationJson: asyncDelegatedPrivateCorrelation({
       appId: input.taskInput.appId,
       taskId,

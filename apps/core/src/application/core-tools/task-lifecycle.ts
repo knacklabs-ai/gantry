@@ -100,6 +100,7 @@ export interface CoreTaskLifecycleService {
       context?: string | null;
       expectedOutput?: string | null;
       targetAgentId?: string;
+      authorityToolName?: 'AgentDelegation';
       workspaceFolder: string;
       run(input: CoreDelegatedRunInput): Promise<{
         outputSummary?: string | null;
@@ -129,6 +130,7 @@ export function createCoreTaskLifecycleBackend(input: {
   owner: CoreTaskOwner;
   parentTaskId?: string | null;
   parentRunId?: string | null;
+  authorityToolName?: 'AgentDelegation';
   workspaceFolder: string;
   runDelegatedAgent?: (
     input: CoreDelegatedRunInput,
@@ -188,6 +190,7 @@ export function createCoreTaskLifecycleBackend(input: {
         context: optionalString(args.context),
         expectedOutput: optionalString(args.expectedOutput),
         ...(targetAgentId ? { targetAgentId } : {}),
+        authorityToolName: input.authorityToolName,
         workspaceFolder: input.workspaceFolder,
         run: (runInput) =>
           input.runDelegatedAgent!({

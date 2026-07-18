@@ -1,4 +1,5 @@
 import { agentIdForFolder } from '../domain/agent/agent-folder-id.js';
+import type { AppId } from '../domain/app/app.js';
 import type { ConversationRoute } from '../domain/types.js';
 import type { IpcDeps } from '../runtime/ipc-domain-types.js';
 import { resolveRunnerIpcRoute } from '../runtime/ipc-route-authorization.js';
@@ -9,6 +10,11 @@ import {
   resolveTurnToolPolicy,
 } from '../runtime/group-run-context.js';
 import { CALLABLE_AGENT_SYNC_WAIT_MAX_MS } from '../application/core-tools/callable-agent-tools.js';
+import {
+  callableAgentToolName,
+  projectCallableAgentTools,
+  type CallableAgentToolManifestEntry,
+} from '../application/core-tools/callable-agent-tools.js';
 import {
   findConversationRouteForQueue,
   makeAgentThreadQueueKey,
@@ -45,6 +51,7 @@ export async function resolveDelegatedAgentTarget(input: {
   trustedProviderAccountId?: string | null;
   requestedProviderAccountId?: string;
   targetAgentId?: string;
+  callableAgentToolName?: unknown;
 }) {
   let callerRoute: ReturnType<typeof resolveRunnerIpcRoute>;
   try {
@@ -102,7 +109,30 @@ export async function resolveDelegatedAgentTarget(input: {
       code: 'forbidden' as const,
     };
   }
+  const syntheticToolName =
+    typeof input.callableAgentToolName === 'string'
+      ? input.callableAgentToolName.trim()
+      : '';
   const targetAgentId = group.agentId ?? agentIdForFolder(group.folder);
+  let callableAgentEntry: CallableAgentToolManifestEntry | undefined;
+  if (targetAgentId !== input.owner.agentId || syntheticToolName) {
+    const permittedEntry = await findCallableAgentEntry({
+      deps: input.deps,
+      owner: input.owner,
+      sourceAgentFolder: input.sourceAgentFolder,
+      toolPolicyRules: callerToolPolicy.toolPolicyRules,
+      syntheticToolName,
+      targetAgentId,
+    });
+    if (!permittedEntry) {
+      return {
+        ok: false as const,
+        message: 'Callable agent target is no longer permitted.',
+        code: 'forbidden' as const,
+      };
+    }
+    if (syntheticToolName) callableAgentEntry = permittedEntry;
+  }
   const targetOwner = { ...input.owner, agentId: targetAgentId };
   const [toolPolicy, selectedSkillContext, semanticCapabilities] =
     await Promise.all([
@@ -126,6 +156,38 @@ export async function resolveDelegatedAgentTarget(input: {
     selectedSkillContext,
     semanticCapabilities,
     attachedMcpSourceIds,
+    callableAgentEntry,
     providerAccountId: callerRoute.providerAccountId ?? null,
   };
+}
+
+async function findCallableAgentEntry(input: {
+  deps: IpcDeps;
+  owner: DelegatedTaskOwner;
+  sourceAgentFolder: string;
+  toolPolicyRules?: readonly string[];
+  syntheticToolName: string;
+  targetAgentId: string;
+}): Promise<CallableAgentToolManifestEntry | undefined> {
+  const repository = input.deps.getAgentRepository?.();
+  const delegates =
+    input.deps.getPermissionRuntimeSettings?.()?.agents[input.sourceAgentFolder]
+      ?.delegates ?? [];
+  if (!repository || delegates.length === 0) {
+    return undefined;
+  }
+  const manifest = projectCallableAgentTools({
+    agents: await repository.listAgents(input.owner.appId as AppId),
+    callerAppId: input.owner.appId,
+    callerAgentId: input.owner.agentId,
+    callerFolder: input.sourceAgentFolder,
+    delegates,
+    toolPolicyRules: input.toolPolicyRules,
+  });
+  return manifest.find(
+    (entry) =>
+      entry.targetAgentId === input.targetAgentId &&
+      (!input.syntheticToolName ||
+        callableAgentToolName(entry) === input.syntheticToolName),
+  );
 }

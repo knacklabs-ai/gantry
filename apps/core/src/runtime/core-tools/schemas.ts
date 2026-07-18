@@ -1,6 +1,16 @@
-import { CALLABLE_AGENT_SYNC_WAIT_MAX_MS } from '../../application/core-tools/callable-agent-tools.js';
+import {
+  createCallableAgentToolSchema,
+  type CallableAgentToolInput,
+} from '../../application/core-tools/callable-agent-tools.js';
 
-type ZodFactory = Record<string, (...args: any[]) => any>;
+interface ZodFactory {
+  object(shape: Record<string, unknown>): any;
+  string(): any;
+  number(): any;
+  boolean(): any;
+  array(schema: unknown): any;
+  enum(values: readonly string[]): any;
+}
 
 export interface CoreToolInputSchema<Output> {
   safeParse(
@@ -48,14 +58,6 @@ export type CoreToolInputByName = {
   task_list: Record<string, never>;
   task_cancel: { taskId: string };
   task_message: { taskId: string; message: string };
-};
-
-export type CallableAgentToolInput = {
-  objective: string;
-  context?: string;
-  expectedOutput?: string;
-  timeoutMs?: number;
-  syncWaitTimeoutMs?: number;
 };
 
 export type CoreToolSchemas = {
@@ -130,25 +132,7 @@ export function createCoreToolSchemas(z: ZodFactory): CoreToolSchemas {
         .max(30 * 60_000)
         .optional(),
     }),
-    callable_agent: z
-      .object({
-        objective: z.string().min(1).max(10_000),
-        context: z.string().max(20_000).optional(),
-        expectedOutput: z.string().max(2_000).optional(),
-        timeoutMs: z
-          .number()
-          .int()
-          .positive()
-          .max(30 * 60_000)
-          .optional(),
-        syncWaitTimeoutMs: z
-          .number()
-          .int()
-          .positive()
-          .max(CALLABLE_AGENT_SYNC_WAIT_MAX_MS)
-          .optional(),
-      })
-      .strict(),
+    callable_agent: createCallableAgentToolSchema(z),
     task_get: taskIdSchema,
     task_list: z.object({}),
     task_cancel: taskIdSchema,

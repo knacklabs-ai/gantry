@@ -14,6 +14,7 @@ import type {
 import type { HostnameLookup } from '../domain/network/public-address-policy.js';
 import type {
   CapabilitySecretRepository,
+  AgentRepository,
   McpServerRepository,
   PermissionRepository,
   SkillCatalogRepository,
@@ -89,6 +90,7 @@ export interface IpcDeps {
   mcpHostnameLookup?: HostnameLookup;
   opsRepository: RuntimeJobRepository;
   getToolRepository?: () => ToolCatalogRepository | undefined;
+  getAgentRepository?: () => AgentRepository | undefined;
   getSkillRepository?: () => SkillCatalogRepository | undefined;
   getAsyncTaskRepository?: () => AsyncTaskRepository | undefined;
   getMcpServerRepository?: () => McpServerRepository | undefined;
@@ -119,7 +121,9 @@ export interface IpcDeps {
   getPermissionRuntimeSettings?: () => {
     agents: Record<
       string,
-      { permissionMode?: PermissionMode } | null | undefined
+      | { permissionMode?: PermissionMode; delegates?: string[] }
+      | null
+      | undefined
     >;
     permissions: { autoMode: { model?: string } };
     memory: { llm: { models: { extractor: string } } };

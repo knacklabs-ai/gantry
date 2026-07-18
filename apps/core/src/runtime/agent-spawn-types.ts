@@ -37,6 +37,7 @@ import type {
   RunnerSandboxProvider,
   RunnerSandboxSpawnInput,
 } from '../shared/runner-sandbox-provider.js';
+import type { CallableAgentToolManifestEntry } from '../application/core-tools/callable-agent-tools.js';
 
 export type AgentToolRule =
   | {
@@ -79,6 +80,7 @@ export interface AgentInput {
   jobName?: string;
   runId?: string;
   parentTaskId?: string;
+  callableAgentManifest?: CallableAgentToolManifestEntry[];
   runLeaseToken?: string;
   runLeaseFencingVersion?: number;
   liveStopActionToken?: string;

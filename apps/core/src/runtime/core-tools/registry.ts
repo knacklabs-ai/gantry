@@ -33,12 +33,12 @@ import {
   type CoreTaskLifecycleName,
   type CoreTaskLifecycleResult,
 } from '../../application/core-tools/task-lifecycle.js';
-import type { CallableAgentToolManifestEntry } from '../../application/core-tools/callable-agent-tools.js';
 import {
   coreTaskLifecycleMcpResult,
   createCallableAgentToolDefinitions,
   isCallableAgentToolName,
-} from './callable-agent-tools.js';
+  type CallableAgentToolManifestEntry,
+} from '../../application/core-tools/callable-agent-tools.js';
 import type {
   CoreToolInputByName,
   CoreToolInputSchema,

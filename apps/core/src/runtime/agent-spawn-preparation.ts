@@ -1,6 +1,8 @@
 import type { ChildProcess } from 'node:child_process';
 
 import type { ConversationRoute } from '../domain/types.js';
+import type { AgentRepository } from '../domain/ports/repositories.js';
+import { preloadCallableAgentManifest } from '../application/core-tools/callable-agent-tools.js';
 import type { AgentRuntime } from '../shared/agent-runtime.js';
 import { nowMs } from '../shared/time/datetime.js';
 import { prepareRunnerWorkspace } from './agent-spawn-helpers.js';
@@ -64,4 +66,30 @@ export async function prepareAgentSpawn(input: {
     groupDir,
     processName,
   };
+}
+
+export async function prepareWorkerAuthorityProjection(input: {
+  agentInput: AgentInput;
+  accessPreset?: 'full' | 'locked';
+  delegates: readonly string[];
+  workspaceFolder: string;
+  options?: RunAgentOptions;
+  getAgentRepository: () => AgentRepository;
+}) {
+  const accessPreset: 'full' | 'locked' =
+    input.accessPreset === 'locked' ? 'locked' : 'full';
+  const hideAuthorityTools =
+    accessPreset === 'locked' ||
+    input.agentInput.hideAuthorityTools === true ||
+    process.env.GANTRY_NO_PERMISSION_TOOLS === '1';
+  const callableAgentManifest = await preloadCallableAgentManifest({
+    run: input.agentInput,
+    delegates: input.delegates,
+    callerFolder: input.workspaceFolder,
+    toolsAvailable:
+      input.options?.asyncTaskRepositoryAvailable === true &&
+      !hideAuthorityTools,
+    getRepository: input.getAgentRepository,
+  });
+  return { accessPreset, hideAuthorityTools, callableAgentManifest };
 }

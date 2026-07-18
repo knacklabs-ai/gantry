@@ -95,9 +95,32 @@ describe('callable agent tools', () => {
     expect(
       projected.every(
         ({ toolName }) =>
-          `${CALLABLE_AGENT_TOOL_PREFIX}${toolName}`.length <= 64,
+          `mcp__gantry__${CALLABLE_AGENT_TOOL_PREFIX}${toolName}`.length <= 64,
       ),
     ).toBe(true);
+  });
+
+  it('bounds projected display names for every worker lane', () => {
+    const projected = projectCallableAgentTools({
+      agents: [agent('agent:reviewer', { name: `  ${'R'.repeat(240)}  ` })],
+      callerAppId: 'default',
+      callerAgentId: 'agent:main_agent',
+      callerFolder: 'main_agent',
+      delegates: ['reviewer'],
+      toolPolicyRules: ['AgentDelegation'],
+    });
+
+    expect(projected[0]?.displayName).toHaveLength(200);
+
+    const fallback = projectCallableAgentTools({
+      agents: [agent('agent:reviewer', { name: '   ' })],
+      callerAppId: 'default',
+      callerAgentId: 'agent:main_agent',
+      callerFolder: 'main_agent',
+      delegates: ['reviewer'],
+      toolPolicyRules: ['AgentDelegation'],
+    });
+    expect(fallback[0]?.displayName).toBe('reviewer');
   });
 
   it.each([
@@ -187,6 +210,26 @@ describe('callable agent tools', () => {
         threadId: 'thread-1',
       }),
     );
+  });
+
+  it('suppresses narration for a scheduled run', async () => {
+    const sendMessage = vi.fn(async () => undefined);
+    const taskBackend = backend();
+
+    await dispatchCallableAgentTool({
+      args: { objective: 'Review this' },
+      entry: {
+        toolName: 'reviewer_hash',
+        targetAgentId: 'agent:reviewer',
+        displayName: 'Reviewer',
+      },
+      backend: taskBackend,
+      revalidate: vi.fn(async () => true),
+      narration: { ...narration(sendMessage), isScheduledJob: true },
+    });
+
+    expect(taskBackend.delegate_task).toHaveBeenCalledOnce();
+    expect(sendMessage).not.toHaveBeenCalled();
   });
 
   it('narrates the async fallback without posting a transcript', async () => {
