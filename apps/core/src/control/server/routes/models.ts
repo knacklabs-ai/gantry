@@ -240,6 +240,11 @@ function providerForAlias(
   return resolved.entry.modelRoute.id;
 }
 
+function patchedModelAlias(value: unknown, inheritedAlias: unknown): unknown {
+  if (value === null || value === 'inherit') return inheritedAlias;
+  return typeof value === 'string' ? value : undefined;
+}
+
 export function providersSelectedByPatch(
   body: Record<string, unknown>,
   defaults: ReturnType<ControlRouteContext['getModelDefaults']>,
@@ -249,12 +254,7 @@ export function providersSelectedByPatch(
     defaults.defaults.chat.effectiveAlias ?? DEFAULT_SETUP_MODEL_ALIAS;
 
   if ('chat' in body) {
-    chatAlias =
-      body.chat === null || body.chat === 'inherit'
-        ? DEFAULT_SETUP_MODEL_ALIAS
-        : typeof body.chat === 'string'
-          ? body.chat
-          : undefined;
+    chatAlias = patchedModelAlias(body.chat, DEFAULT_SETUP_MODEL_ALIAS);
   }
 
   let oneTimeAlias: unknown =
@@ -275,20 +275,10 @@ export function providersSelectedByPatch(
     }
   }
   if ('oneTime' in body) {
-    oneTimeAlias =
-      body.oneTime === null || body.oneTime === 'inherit'
-        ? chatAlias
-        : typeof body.oneTime === 'string'
-          ? body.oneTime
-          : undefined;
+    oneTimeAlias = patchedModelAlias(body.oneTime, chatAlias);
   }
   if ('recurring' in body) {
-    recurringAlias =
-      body.recurring === null || body.recurring === 'inherit'
-        ? chatAlias
-        : typeof body.recurring === 'string'
-          ? body.recurring
-          : undefined;
+    recurringAlias = patchedModelAlias(body.recurring, chatAlias);
   }
 
   const affectedAliases: Array<[unknown, ModelWorkload]> = [];
