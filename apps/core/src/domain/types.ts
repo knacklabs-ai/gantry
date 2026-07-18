@@ -285,7 +285,6 @@ export interface UserQuestionRequest {
   targetJid?: string;
   threadId?: string;
   responseKeyId?: string;
-  recoveryStartIndex?: number;
   questions: UserQuestionItem[];
   interaction?: InteractionDescriptor;
 }
@@ -302,7 +301,6 @@ export interface QuestionRecoveryEnvelope {
   targetJid: string | null;
   threadId: string | null;
   request: UserQuestionRequest;
-  nextQuestionIndex: number | null;
   callbacks: Record<string, QuestionRecoveryCallbackIdentity>;
   selections: Array<{ questionIndex: number; optionIndexes: number[] }>;
   answers: Record<string, string | string[]>;

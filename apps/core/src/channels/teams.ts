@@ -49,6 +49,7 @@ import {
   teamsMessageAttachments as teamsInboundMessageAttachments,
 } from './teams-conversation-context.js';
 import { renderTeamsRichInteraction } from './teams-rich-interaction.js';
+import { teamsDeliveredQuestionIndexes } from './teams-user-question.js';
 import { createMicrosoftTeamsSdkClient } from './teams-sdk-client.js';
 import {
   applyTeamsStreamingChunk,
@@ -478,10 +479,7 @@ export class TeamsChannel implements ChannelAdapter {
     if (!conversationId) return emptyResponse;
     if (!this.sdkClient.sendAdaptiveCard) return emptyResponse;
     if (!request.questions.length) return emptyResponse;
-    const startIndex = request.recoveryStartIndex ?? 0;
-    if (startIndex < 0 || startIndex >= request.questions.length) {
-      return emptyResponse;
-    }
+    const startIndex = 0;
     const questionRequest = { ...request, targetJid: request.targetJid ?? jid };
     const callback = createDurableQuestionCallback({
       appId: request.appId,
@@ -591,14 +589,7 @@ export class TeamsChannel implements ChannelAdapter {
     }
   }
 
-  questionIndexesForDeliveredPrompt(
-    request: UserQuestionRequest,
-    firstQuestionIndex: number,
-  ): number[] {
-    return request.questions.flatMap((_, index) =>
-      index >= firstQuestionIndex ? [index] : [],
-    );
-  }
+  questionIndexesForDeliveredPrompt = teamsDeliveredQuestionIndexes;
 
   private async handleUserQuestionSubmit(
     message: TeamsInboundMessage,

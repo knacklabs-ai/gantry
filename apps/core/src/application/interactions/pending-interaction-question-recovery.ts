@@ -3,7 +3,7 @@ import { isStringOrNull } from './pending-interaction-permission-envelope.js';
 
 const DEFAULT_APP_ID = 'default';
 
-export interface DurableQuestionCallbackContext {
+interface DurableQuestionCallbackContext {
   appId: string;
   sourceAgentFolder: string;
   requestId: string;
@@ -50,9 +50,6 @@ export function readQuestionRecoveryEnvelope(
     typeof envelope.request.requestId !== 'string' ||
     typeof envelope.request.sourceAgentFolder !== 'string' ||
     !Array.isArray(envelope.request.questions) ||
-    (envelope.nextQuestionIndex !== null &&
-      (!Number.isInteger(envelope.nextQuestionIndex) ||
-        envelope.nextQuestionIndex! < 0)) ||
     !envelope.callbacks ||
     typeof envelope.callbacks !== 'object' ||
     Array.isArray(envelope.callbacks) ||
@@ -132,16 +129,6 @@ export function questionCallbacks(
       (entry): entry is [string, DurableQuestionCallbackContext] =>
         readQuestionCallbackContext(entry[1]) !== null,
     ),
-  );
-}
-
-export function questionCallback(
-  value: unknown,
-  callbackId: string,
-): DurableQuestionCallbackContext | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  return readQuestionCallbackContext(
-    (value as Record<string, unknown>)[callbackId],
   );
 }
 

@@ -8,6 +8,12 @@ the row with non-atomic read-modify-replace, fails to persist live UI state at
 the callback boundary, mishandles post-send persistence failure, and leaves
 stale batch markers / settled batch claims on individually re-bound rows.
 
+Scope after #228 closeout: PERMISSION recovery remains fully durable. QUESTION
+interactions are in-process only; pending rows exist only for live callback
+routing, provider settlement, audit, and fail-closed persistence. A restart
+terminalizes an orphaned question row and the runner re-asks; no question
+envelope replay or answer recovery is in scope.
+
 Fix the MUST-FIX invariants below across all four providers (Telegram, Discord,
 Slack, Teams) with a call-site audit + tests. **Escalate, do not expand:** if an
 invariant needs more than atomic writes at the existing callback boundary — new
@@ -48,8 +54,7 @@ IF achievable via atomic write; else escalate)
   the real selection, not empty.
 - Delivered-then-timed-out questions skip the progress write (slack/user-
   question-delivery.ts ~155; Telegram/Teams/Discord same). Persist the completed
-  index (with the timeout result) + advance nextQuestionIndex BEFORE continuing,
-  so a restart doesn't re-render a terminally timed-out question.
+  index (with the timeout result) BEFORE the live loop continues.
   If either needs schema beyond the existing `selections`/`completedQuestionIndexes`
   payload fields, escalate instead of migrating.
 
@@ -123,7 +128,7 @@ settledClaim` (pending-interaction-permission-callback.ts ~74); after a batch
   migration, or cross-process coordination was needed. Live selection toggles
   persist through `selections` before local mutation/acknowledgement, while a
   timeout writes the provider's empty result plus
-  `completedQuestionIndexes`, which atomically recomputes `nextQuestionIndex`.
+  `completedQuestionIndexes`.
 - A typed `DurableInteractionPersistenceError` distinguishes repository/write
   failures from legitimate false results caused by a settled or missing row.
   Provider delivery boundaries propagate the typed post-send failure; live
@@ -152,13 +157,15 @@ escalate (`DECISION NEEDED:`) if an invariant needs schema/coordination beyond
 the existing claim CAS. The orchestrator is watching this job log.
 
 ## SW — Single-winner atomicity (structural, must-fix)
+
 The claim CAS in `resolvePendingInteraction` is the ONLY gate that may publish a
 terminal outcome. No path (live callback, disconnect cleanup, timeout, batch
 fan-out) may append a live-turn command/outbox row, resolve an in-memory waiter
 as denied/cancelled, or terminalize the row unless it is the CAS winner.
+
 - **SW.1 — publish only after winning the CAS.** `pending-interaction-
-  resolution.ts:84` appends the live-turn command BEFORE `resolvePendingInter
-  action`'s claim-scoped CAS. If the CAS loses (e.g. a disconnect/timeout cancel
+resolution.ts:84` appends the live-turn command BEFORE `resolvePendingInter
+action`'s claim-scoped CAS. If the CAS loses (e.g. a disconnect/timeout cancel
   races an already-claimed user decision), the losing payload is already durably
   queued and, sharing the interaction's idempotency key, is replayed in place of
   the real winner's command. Make the row transition and the outbox/command
@@ -175,10 +182,12 @@ as denied/cancelled, or terminalize the row unless it is the CAS winner.
   disconnect cleanup have the same pattern — fix all four.
 
 ## FC — Fail-closed propagation (structural, must-fix)
+
 `DurableInteractionPersistenceError` (a post-send durable-write failure while the
 prompt is still visible and the live waiter retained) must propagate to a
 WITHHELD/retryable outcome at EVERY boundary — never be converted to an empty
 answer or a denial.
+
 - **FC.1 — question IPC catch.** `ipc-interaction-processing.ts` ~821 (and the
   sibling at `ipc.ts:745`) currently routes the typed error into
   `writeUserQuestionInteractionFailure`, which writes a normal `{answers:{}}`
@@ -186,13 +195,14 @@ answer or a denial.
   error: withhold/leave the row pending for restart replay; do NOT write empty
   answers.
 - **FC.2 — permission requester/coalescer.** `permission-approval-requester.ts:
-  167` converts the typed error into an ordinary denial (and the batch fan-out
+167` converts the typed error into an ordinary denial (and the batch fan-out
   then resolves scheduled requests as denied too), so IPC terminalizes the row
   while an actionable prompt is still visible and the retained waiter is orphaned.
   Propagate the typed failure through the requester/coalescer (reject the
   per-request promise); never manufacture a permission decision from it.
 
 ## Localized fixes
+
 - **L1 — Discord live authorization uses the wrong conversation (security).**
   `discord-permission-callback.ts:64` omits `conversationJid`, so
   `isInteractionApproverAllowed` defaults to `dc:${interaction.channel_id}`
@@ -201,14 +211,14 @@ answer or a denial.
   `pending.request.approvalContextJid ?? pending.request.targetJid` here and in
   the live full-view check. (Recovered path + other providers already do this.)
 - **L2 — preserve partial answers on timeout.** `discord-user-question-
-  delivery.ts:80` (and the Teams bulk-timeout at `teams.ts` ~508) resolves with
+delivery.ts:80` (and the Teams bulk-timeout at `teams.ts` ~508) resolves with
   `answers: {}` when a later question times out, dropping the user's earlier
   answers. Resolve with `pending.answers` merged with the just-persisted timeout
   values. Also add an already-completed guard in `recordDurableQuestionAnswer
-  Progress` (`pending-interaction-durability.ts` ~401) so a timeout write can't
+Progress` (`pending-interaction-durability.ts` ~401) so a timeout write can't
   clobber a concurrently-recovered real answer.
 - **L3 — restore the sanitizer whitelist (I1 security).** `durablePermission
-  RequestSnapshot` (`pending-interaction-permission-envelope.ts:17`) was rewritten
+RequestSnapshot` (`pending-interaction-permission-envelope.ts:17`) was rewritten
   from a ~13-field whitelist to `{...request}` minus `toolInput` (a blacklist),
   so runner-supplied `description`/`interaction.files`/etc. now reach the durable
   payload. Restore an explicit allowlist of the rendering fields actually needed;
@@ -216,6 +226,7 @@ answer or a denial.
   `toolInput`.
 
 ## Verification
+
 - Per-invariant tests: SW.1 losing-CAS does not queue/replay a command; SW.2
   disconnect preserves an `already_decided` winner (all four providers); FC.1
   question persistence failure leaves the row pending, not empty-answered; FC.2
@@ -260,19 +271,19 @@ answer or a denial.
 
 ### Surface Impact Matrix
 
-| Surface | Classification | Reason |
-| --- | --- | --- |
-| Runtime behavior | Changed | One CAS publishes terminal outcomes; typed persistence failures remain retryable. |
-| `settings.yaml` | Unchanged by design | No desired-state value or setting is introduced. |
-| Postgres/runtime projection | Changed | Existing interaction and live-turn-command rows are written atomically with no schema change. |
-| Control API | Unchanged by design | No public administration contract changes. |
-| SDK/contracts | Changed | The internal pending-interaction repository accepts an optional live-turn command. |
-| CLI | Unchanged by design | No local operator workflow changes. |
-| Gantry MCP tools/admin skill | Unchanged by design | No agent-facing or admin tool changes. |
-| Channel/provider adapters | Changed | All four disconnect paths preserve an in-flight winner; Discord and Teams receive localized fixes. |
-| Docs/prompts | Changed | This ledger records the Round 2 decisions and scope. |
-| Audit/events | Changed | Typed persistence failures no longer emit false successful/denied terminal outcomes. |
-| Tests/verification | Changed | Added per-invariant and four-provider regression coverage. |
+| Surface                      | Classification      | Reason                                                                                             |
+| ---------------------------- | ------------------- | -------------------------------------------------------------------------------------------------- |
+| Runtime behavior             | Changed             | One CAS publishes terminal outcomes; typed persistence failures remain retryable.                  |
+| `settings.yaml`              | Unchanged by design | No desired-state value or setting is introduced.                                                   |
+| Postgres/runtime projection  | Changed             | Existing interaction and live-turn-command rows are written atomically with no schema change.      |
+| Control API                  | Unchanged by design | No public administration contract changes.                                                         |
+| SDK/contracts                | Changed             | The internal pending-interaction repository accepts an optional live-turn command.                 |
+| CLI                          | Unchanged by design | No local operator workflow changes.                                                                |
+| Gantry MCP tools/admin skill | Unchanged by design | No agent-facing or admin tool changes.                                                             |
+| Channel/provider adapters    | Changed             | All four disconnect paths preserve an in-flight winner; Discord and Teams receive localized fixes. |
+| Docs/prompts                 | Changed             | This ledger records the Round 2 decisions and scope.                                               |
+| Audit/events                 | Changed             | Typed persistence failures no longer emit false successful/denied terminal outcomes.               |
+| Tests/verification           | Changed             | Added per-invariant and four-provider regression coverage.                                         |
 
 ---
 
@@ -286,6 +297,7 @@ audit every provider, escalate (`DECISION NEEDED:`) only if a fix needs
 schema/coordination. Orchestrator watching the job log.
 
 ## R3.1 — Drop the in-memory waiter on typed-error withhold (moderate, must-fix)
+
 After a post-send `DurableInteractionPersistenceError`, IPC correctly withholds
 (archives, leaves the row pending) BUT the live in-memory waiter (promise +
 timer + callback maps), registered before the failed persist, is deliberately
@@ -295,6 +307,7 @@ and resolves a promise nobody holds — the grant is never applied, the row neve
 terminalizes (claim lingers to the 24h TTL), no IPC response is written, and the
 runner watchdog denies. UI shows success; decision is dropped; the retained
 waiter SHADOWS the recovered/durable path that would have resolved it correctly.
+
 - Applies to BOTH permission and question paths, ALL four providers
   (round-48 flagged Telegram `channel-delivery.ts:656` + Teams `teams.ts:569`;
   Fable generalizes to Discord/Slack bind catches + the question timeout-persist
@@ -307,6 +320,7 @@ waiter SHADOWS the recovered/durable path that would have resolved it correctly.
   any empty-answer/denial conversion (FC stays closed).
 
 ## R3.2 — Acknowledge provider callback before awaiting later questions (P2)
+
 `recordDurableQuestionAnswerProgress`/recovery dispatch: when a recovered answer
 advances to another question (`pending-interaction-durability.ts:570`), it awaits
 the full recovery dispatcher (which awaits the entire `requestUserAnswer` flow),
@@ -317,6 +331,7 @@ first, then schedule the continuation independently (fire-and-forget the next
 prompt), so provider ack is timely.
 
 ## R3.3 — Disconnect preserves partial question answers (low, pre-existing)
+
 L2 fixed timeouts but disconnect still drops mid-flow answers: Discord
 `clearPendingInteractions` and Telegram `disconnect.ts:72-79` resolve questions
 with `answers: {}` / empty selections, and `finishDurableQuestionInteraction`
@@ -325,6 +340,7 @@ the durable envelope (`pending.answers`) on disconnect, mirroring the L2 timeout
 fix. Cheap; same family.
 
 ## R3.4 — Resolve the local waiter on ownerless already_decided (low, defense)
+
 If the claim gate returns `already_decided` because the row is GONE (TTL-expired
 / externally cancelled) rather than claimed, timeout/disconnect paths return
 without resolving the local waiter, hanging the map entry + requester promise for
@@ -333,6 +349,7 @@ in normal timing (10-min prompt vs 24h TTL) but resolve the local waiter (deny)
 on ownerless already_decided as defense-in-depth.
 
 ## Verification
+
 - Tests: R3.1 post-persist-failure then user-click → durable path terminalizes +
   grants (no orphaned-promise drop), all four providers, permission + question;
   R3.2 provider callback acked before later prompts; R3.3 disconnect keeps partial
@@ -348,10 +365,9 @@ on ownerless already_decided as defense-in-depth.
   `channel-wiring-interactions.ts` for questions. Discord, Slack, Telegram, and
   Teams clear matching promise, timer, and callback-map state without resolving
   it, so the recovered durable path wins and fail-closed behavior stays closed.
-- R3.2 persists the current recovered question answer, then schedules the next
-  recovery prompt independently. The provider callback can acknowledge before
-  later questions complete, and asynchronous continuation failures are logged
-  without changing the already-persisted answer result.
+- R3.2's recovery continuation was removed by the #228 split-out below. The
+  live in-process question loop persists each answer before continuing; no
+  callback schedules later durable work.
 - R3.3 resolves Discord disconnects with the pending durable answer envelope and
   Telegram disconnects with the pending multi-select answers, preserving partial
   question progress in the same way as the Round 2 timeout fix.
@@ -367,3 +383,28 @@ on ownerless already_decided as defense-in-depth.
   coverage registers both live maps with an authorized approver and observes
   the permission and question promises independently, proving cleanup removes
   neither by resolution.
+
+## #228 closeout ledger
+
+- Durable QUESTION recovery is deferred entirely to the durable-work-primitive
+  cycle. Questions are in-process only: the live `requestUserAnswer` loop owns
+  sequential dispatch and answer collection while the process is running. On
+  restart, an orphaned pending QUESTION row is terminalized fail-closed and the
+  runner re-asks; no question envelope replay, answer recovery,
+  partial-cancellation reconciliation, or cross-restart finalization remains.
+  PERMISSION recovery remains fully durable and unchanged, including claim
+  CAS/single-winner, fail-closed recovery envelopes, batch coalescing,
+  disconnect winner preservation, permission-approval-requester, and all four
+  provider paths.
+- The durable QUESTION row remains only for live callback routing, provider
+  settlement, audit, and fail-closed prompt/answer persistence while the
+  process is up. Duplicate question labels are still rejected before
+  persistence, and a current-question post-send persistence failure still
+  withholds the response so the runner re-asks.
+- Surface impact: runtime question recovery behavior, question-only provider
+  fallback handlers, tests, and this ledger changed. Postgres schema,
+  `settings.yaml`, Postgres/runtime projection, control API, SDK/contracts,
+  CLI, Gantry MCP/admin tools, provider permission paths, and audit/event
+  contracts are unchanged by design because this closeout removes internal
+  question restart coordination without changing public or configuration
+  surfaces.

@@ -407,7 +407,6 @@ function requestSlackUserAnswer(
         targetJid: request.targetJid || jid,
         threadId: request.threadId ?? null,
         request,
-        nextQuestionIndex: request.questions.length ? 0 : null,
         callbacks: {},
         selections: [],
         answers: {},
@@ -5295,115 +5294,6 @@ describe('Slack channel', () => {
     expect(answer.answeredBy).toBe('Alice');
   });
 
-  it('resolves same-request Slack questions in exact agent scope after restart', async () => {
-    const callbacks = ['agent-a', 'agent-b'].map((sourceAgentFolder) => ({
-      providerAlias: `slack-question-${sourceAgentFolder}`,
-      scope: {
-        appId: 'default',
-        sourceAgentFolder,
-        interactionId: 'shared-question',
-      },
-      questionIndex: 0,
-    }));
-    const rows = callbacks.map((callback) => {
-      const request = {
-        requestId: 'shared-question',
-        sourceAgentFolder: callback.scope.sourceAgentFolder,
-        targetJid: 'sl:C1234567890',
-        questions: [
-          {
-            header: 'Pick one',
-            question: 'Preferred option?',
-            options: [
-              {
-                label: callback.scope.sourceAgentFolder,
-                description: '',
-              },
-            ],
-            multiSelect: false,
-          },
-        ],
-      };
-      return {
-        appId: 'default',
-        kind: 'question' as const,
-        status: 'pending' as const,
-        idempotencyKey: `default:question:${callback.scope.sourceAgentFolder}:shared-question`,
-        payload: {
-          requestId: 'shared-question',
-          sourceAgentFolder: callback.scope.sourceAgentFolder,
-          targetJid: 'sl:C1234567890',
-          request,
-          questionRecoveryEnvelope: {
-            version: 1,
-            targetJid: request.targetJid,
-            threadId: null,
-            request,
-            nextQuestionIndex: 0,
-            callbacks: {
-              [callback.providerAlias]: {
-                appId: callback.scope.appId,
-                sourceAgentFolder: callback.scope.sourceAgentFolder,
-                requestId: callback.scope.interactionId,
-                questionIndex: callback.questionIndex,
-              },
-            },
-            selections: [],
-            answers: {},
-            completedQuestionIndexes: [],
-            deliveredQuestionIndexes: [0],
-            otherPrompts: {},
-          },
-        } as Record<string, unknown>,
-      };
-    });
-    const repository = {
-      listPendingInteractions: vi.fn(async () => rows),
-      updatePendingInteractionPayload: vi.fn((input) =>
-        updatePendingInteractionPayload(rows, input),
-      ),
-      resolvePendingInteraction: vi.fn(async () => true),
-    };
-    configurePendingInteractionDurability({ repository: repository as never });
-    const channel = new SlackChannel(
-      'xoxb-token',
-      'xapp-token',
-      createOptsWithApproverHook(['U123']) as any,
-    );
-    await channel.connect();
-    const actionHandler = appRef.current.actionHandlers.get(
-      'gantry_userq_select',
-    );
-
-    for (const callback of callbacks) {
-      await actionHandler?.({
-        ack: vi.fn().mockResolvedValue(undefined),
-        body: {
-          channel: { id: 'C1234567890' },
-          user: { id: 'U123', name: 'Alice' },
-        },
-        action: {
-          value: JSON.stringify({ callback, optionIndex: 0 }),
-        },
-      });
-    }
-
-    expect(repository.resolvePendingInteraction).toHaveBeenNthCalledWith(
-      1,
-      expect.objectContaining({
-        idempotencyKey: 'default:question:agent-a:shared-question',
-        resolution: { answers: { 'Preferred option?': 'agent-a' } },
-      }),
-    );
-    expect(repository.resolvePendingInteraction).toHaveBeenNthCalledWith(
-      2,
-      expect.objectContaining({
-        idempotencyKey: 'default:question:agent-b:shared-question',
-        resolution: { answers: { 'Preferred option?': 'agent-b' } },
-      }),
-    );
-  });
-
   it('resolves Slack user question from the Other free-text modal', async () => {
     defaultSlackPermissionApproverIds.add('U123');
     const channel = new SlackChannel(
@@ -5626,96 +5516,6 @@ describe('Slack channel', () => {
     expect(answer.answeredBy).toBe('Alice');
   });
 
-  it('persists a Slack multi-select toggle before ack and replays Done after restart', async () => {
-    defaultSlackPermissionApproverIds.add('U123');
-    const channel = new SlackChannel(
-      'xoxb-token',
-      'xapp-token',
-      createOptsWithApproverHook(['U123']) as any,
-    );
-    await channel.connect();
-
-    const response = requestSlackUserAnswer(channel, 'sl:C1234567890', {
-      requestId: 'userq-restart-multi',
-      sourceAgentFolder: 'slack_main',
-      targetJid: 'sl:C1234567890',
-      questions: [
-        {
-          header: 'Pick many',
-          question: 'Restart choices',
-          options: [
-            { label: 'Alpha', description: 'First option' },
-            { label: 'Beta', description: 'Second option' },
-          ],
-          multiSelect: true,
-        },
-      ],
-    });
-    await flushSlackPromptRegistration();
-
-    const selectValue = latestSlackUserQuestionActionValue(
-      'gantry_userq_select',
-      1,
-    );
-    const ack = vi.fn().mockResolvedValue(undefined);
-    const updatesBeforeToggle =
-      response.repository.updatePendingInteractionPayload.mock.calls.length;
-    await appRef.current.actionHandlers.get('gantry_userq_select')?.({
-      ack,
-      body: {
-        channel: { id: 'C1234567890' },
-        user: { id: 'U123', name: 'Alice' },
-      },
-      action: { value: JSON.stringify(selectValue) },
-    });
-
-    expect(
-      response.repository.updatePendingInteractionPayload.mock.calls.length,
-    ).toBe(updatesBeforeToggle + 1);
-    expect(response.interaction.payload.questionRecoveryEnvelope).toMatchObject(
-      {
-        selections: [{ questionIndex: 0, optionIndexes: [1] }],
-      },
-    );
-    expect(
-      response.repository.updatePendingInteractionPayload.mock.invocationCallOrder.at(
-        -1,
-      ),
-    ).toBeLessThan(ack.mock.invocationCallOrder[0]!);
-    expect(ack.mock.invocationCallOrder[0]).toBeLessThan(
-      vi
-        .mocked(appRef.current.client.chat.update)
-        .mock.invocationCallOrder.at(-1)!,
-    );
-
-    const livePending = [...(channel as any).pendingUserQuestions.values()][0];
-    clearTimeout(livePending.timer);
-    (channel as any).pendingUserQuestions.clear();
-    const recoveredChannel = new SlackChannel(
-      'xoxb-token',
-      'xapp-token',
-      createOptsWithApproverHook(['U123']) as any,
-    );
-    await recoveredChannel.connect();
-    await appRef.current.actionHandlers.get('gantry_userq_done')?.({
-      ack: vi.fn().mockResolvedValue(undefined),
-      body: {
-        channel: { id: 'C1234567890' },
-        user: { id: 'U123', name: 'Alice' },
-      },
-      action: {
-        value: JSON.stringify({ callback: selectValue.callback }),
-      },
-    });
-
-    expect(response.repository.resolvePendingInteraction).toHaveBeenCalledWith(
-      expect.objectContaining({
-        resolution: { answers: { 'Restart choices': ['Beta'] } },
-      }),
-    );
-    void response;
-  });
-
   it('propagates Slack question delivery persistence failure', async () => {
     const channel = new SlackChannel(
       'xoxb-token',
@@ -5819,7 +5619,6 @@ describe('Slack channel', () => {
     ).toMatchObject({
       answers: { 'Will timeout': '' },
       completedQuestionIndexes: [0],
-      nextQuestionIndex: null,
     });
     vi.useRealTimers();
   });

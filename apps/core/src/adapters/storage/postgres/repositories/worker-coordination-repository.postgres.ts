@@ -26,6 +26,7 @@ import { nowIso as currentIso } from '../../../../shared/time/datetime.js';
 import * as pgSchema from '../schema/schema.js';
 import type { CanonicalDb } from './canonical-graph-repository.postgres.js';
 import {
+  cancelPendingQuestionInteractionIfRunLeaseInactiveRow,
   claimPendingPermissionCallbackRows,
   createPendingInteractionRow,
   findPendingPermissionInteractionRows,
@@ -538,6 +539,17 @@ export class PostgresWorkerCoordinationRepository implements WorkerCoordinationR
       });
     }
     return result.resolved;
+  }
+
+  async cancelPendingQuestionInteractionIfRunLeaseInactive(input: {
+    id: string;
+    resolution: Record<string, unknown>;
+    now?: string;
+  }): Promise<boolean> {
+    return cancelPendingQuestionInteractionIfRunLeaseInactiveRow(this.db, {
+      ...input,
+      now: input.now ?? currentIso(),
+    });
   }
 
   async updatePendingInteractionPayload(input: {

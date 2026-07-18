@@ -29,11 +29,6 @@ import {
   telegramThreadOptionsFromString,
   truncateUtf8ToByteLimit,
 } from './channel-shared.js';
-import {
-  resolveDurableTelegramUserQuestionOtherReply,
-  sendTelegramUserQuestionOtherReplyNotice,
-} from './user-question-other-recovery.js';
-import { findDurableQuestionOtherPrompt } from '../../application/interactions/pending-interaction-durability.js';
 import { claimAndSettleTelegramPermissionPrompt } from './permission-prompt-settlement.js';
 const TELEGRAM_PERMISSION_FULL_VIEW_INLINE_MAX = 3200;
 export interface TelegramDownloadedFile {
@@ -525,12 +520,7 @@ export abstract class TelegramChannelPrompts extends TelegramChannelPolling {
     answeredBy: string;
   }): Promise<boolean> {
     const key = `${input.chatId}:${input.replyToMessageId}`;
-    const entry =
-      this.pendingUserQuestionOtherPrompts.get(key) ??
-      (await findDurableQuestionOtherPrompt({
-        appId: this.opts.appId || 'default',
-        promptId: key,
-      }));
+    const entry = this.pendingUserQuestionOtherPrompts.get(key);
     if (!entry) return false;
     const pending = this.pendingUserQuestions.get(
       this.pendingUserQuestionKey(
@@ -541,24 +531,8 @@ export abstract class TelegramChannelPrompts extends TelegramChannelPolling {
       ),
     );
     if (!pending) {
-      const recovered = await resolveDurableTelegramUserQuestionOtherReply({
-        chatId: input.chatId,
-        requestId: entry.requestId,
-        appId: entry.appId,
-        sourceAgentFolder: entry.sourceAgentFolder,
-        questionIndex: entry.questionIndex,
-        text: input.text,
-        userId: input.userId,
-        answeredBy: input.answeredBy,
-        isApproverAuthorized: (chatId, userId, sourceAgentFolder) =>
-          this.isTelegramApproverAuthorized(chatId, userId, sourceAgentFolder),
-        sendNotice: (chatId, text) =>
-          this.sendUserQuestionOtherReplyNotice(chatId, text),
-      });
-      if (recovered.deletePrompt) {
-        this.pendingUserQuestionOtherPrompts.delete(key);
-      }
-      return true;
+      this.pendingUserQuestionOtherPrompts.delete(key);
+      return false;
     }
     const authorized = input.userId
       ? await this.isTelegramApproverAuthorized(
@@ -605,12 +579,15 @@ export abstract class TelegramChannelPrompts extends TelegramChannelPolling {
     chatId: string,
     text: string,
   ): Promise<void> {
-    await sendTelegramUserQuestionOtherReplyNotice({
-      bot: this.bot,
-      chatId,
-      text,
-      sanitizeErrorMessage: (err) => this.sanitizeErrorMessage(err),
-    });
+    if (!this.bot) return;
+    try {
+      await this.bot.api.sendMessage(chatId, text);
+    } catch (err) {
+      logger.debug(
+        { chatId, err: this.sanitizeErrorMessage(err) },
+        'Failed to send Telegram user question reply notice',
+      );
+    }
   }
   protected async downloadFile(
     fileId: string,

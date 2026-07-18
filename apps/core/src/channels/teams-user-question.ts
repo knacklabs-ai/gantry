@@ -9,6 +9,15 @@ export interface TeamsUserQuestionSubmit {
   values: Record<string, string>;
 }
 
+export function teamsDeliveredQuestionIndexes(
+  request: UserQuestionRequest,
+  firstQuestionIndex: number,
+): number[] {
+  return request.questions.flatMap((_, index) =>
+    index >= firstQuestionIndex ? [index] : [],
+  );
+}
+
 export function readTeamsUserQuestionSubmit(
   value: unknown,
 ): TeamsUserQuestionSubmit | null {

@@ -11,8 +11,6 @@ import {
 import {
   claimPermissionInteractionCallback,
   DurableInteractionPersistenceError,
-  findDurableQuestionInteractionByCallbackId,
-  findDurableQuestionInteractionByRequestId,
   recordDurableQuestionAnswerProgress,
   releasePermissionInteractionCallback,
   resolveDurableQuestionInteractionByRequestId,
@@ -437,11 +435,9 @@ export class DiscordInteractionHandler {
     if (result === 'settled') return;
     if (result === 'already_decided') return;
     if (result === 'retryable') {
-      const firstDelay = Math.floor(PERMISSION_APPROVAL_TIMEOUT_MS / 3);
-      for (const delayMs of [
-        firstDelay,
-        PERMISSION_APPROVAL_TIMEOUT_MS - firstDelay,
-      ]) {
+      for (const delayMs of permissionPrompt.timeoutRetryDelays(
+        PERMISSION_APPROVAL_TIMEOUT_MS,
+      )) {
         await new Promise<void>((resolve) => {
           const timer = setTimeout(resolve, delayMs);
           timer.unref?.();
@@ -537,41 +533,7 @@ export class DiscordInteractionHandler {
       await this.ackInteraction(interaction, 'Processing.');
     }
     const user = interaction.member?.user || interaction.user;
-    if (!pending) {
-      const callback = await findDurableQuestionInteractionByCallbackId({
-        callbackId: parsed.providerAlias,
-        appId: this.input.opts.appId || 'default',
-      });
-      if (!callback) return;
-      const durable = await findDurableQuestionInteractionByRequestId({
-        requestId: callback.requestId,
-        appId: callback.appId,
-        sourceAgentFolder: callback.sourceAgentFolder,
-      });
-      const allowed =
-        durable?.targetJid ===
-          `${DISCORD_JID_PREFIX}${interaction.channel_id}` &&
-        (await this.isInteractionApproverAllowed(
-          interaction,
-          user?.id,
-          durable.sourceAgentFolder,
-        ));
-      if (allowed) {
-        await resolveDurableQuestionInteractionByRequestId({
-          requestId: callback.requestId,
-          appId: callback.appId,
-          sourceAgentFolder: callback.sourceAgentFolder,
-          questionIndex: callback.questionIndex,
-          optionIndex: parsed.optionIndex >= 0 ? parsed.optionIndex : undefined,
-          finalize:
-            parsed.optionIndex < 0 ||
-            durable?.request?.questions[callback.questionIndex]?.multiSelect !==
-              true,
-          answeredBy: user?.id,
-        });
-      }
-      return;
-    }
+    if (!pending) return;
     const allowed = await this.isInteractionApproverAllowed(
       interaction,
       user?.id,
@@ -613,7 +575,6 @@ export class DiscordInteractionHandler {
           questionIndex,
           optionIndex: parsed.optionIndex,
           finalize: false,
-          answeredBy: user?.id,
         });
         if (!recorded) {
           throw new DurableInteractionPersistenceError(

@@ -1,17 +1,16 @@
 import type {
   PermissionApprovalDecision,
   PermissionApprovalRequest,
-  QuestionRecoveryEnvelope,
   UserQuestionRequest,
   UserQuestionResponse,
 } from '../../domain/types.js';
 import {
   applyPermissionInteractionDecision,
+  cancelPendingQuestionInteractionIfRunLeaseInactive,
   recordPendingInteractionRequested,
   releasePermissionInteractionCallback,
   resolvePendingInteractionRecord,
 } from './pending-interaction-durability.js';
-import { readQuestionRecoveryEnvelope } from './pending-interaction-prompt-binding.js';
 import { durablePermissionRequestSnapshot } from './pending-interaction-permission-envelope.js';
 
 export { durablePermissionRequestSnapshot } from './pending-interaction-permission-envelope.js';
@@ -19,11 +18,15 @@ export { durablePermissionRequestSnapshot } from './pending-interaction-permissi
 export interface DurableInteractionOperations {
   record: typeof recordPendingInteractionRequested;
   resolve: typeof resolvePendingInteractionRecord;
+  cancelPendingQuestionInteractionIfRunLeaseInactive:
+    typeof cancelPendingQuestionInteractionIfRunLeaseInactive;
 }
 
 const defaultOperations: DurableInteractionOperations = {
   record: recordPendingInteractionRequested,
   resolve: resolvePendingInteractionRecord,
+  cancelPendingQuestionInteractionIfRunLeaseInactive:
+    cancelPendingQuestionInteractionIfRunLeaseInactive,
 };
 
 export async function beginDurablePermissionInteraction(input: {
@@ -160,16 +163,58 @@ export async function beginDurableQuestionInteraction(input: {
   payload?: Record<string, unknown>;
   callbackRoute?: Record<string, unknown> | null;
   operations?: DurableInteractionOperations;
-}): Promise<
-  | {
-      envelope: QuestionRecoveryEnvelope;
-      status: 'pending' | 'resolved';
-      answers: Record<string, string | string[]>;
-      approverRef: string | null;
-    }
-  | undefined
-> {
-  const recorded = await (input.operations ?? defaultOperations).record({
+}): Promise<boolean> {
+  const questionTexts = input.request.questions.map(
+    (question) => question.question,
+  );
+  if (new Set(questionTexts).size !== questionTexts.length) {
+    throw new Error(
+      'ask_user_question requires unique question text; duplicate question labels are not allowed',
+    );
+  }
+  const operations = input.operations ?? defaultOperations;
+  const interactionId = globalThis.crypto.randomUUID();
+  const recorded = await recordQuestionInteraction({
+    ...input,
+    interactionId,
+    operations,
+  });
+  if (!recorded) throw new Error('Question prompt was not durably recorded');
+  if (typeof recorded === 'boolean' || recorded.id === interactionId) {
+    return true;
+  }
+  if (recorded.status === 'pending') {
+    const terminalized =
+      await operations.cancelPendingQuestionInteractionIfRunLeaseInactive({
+        id: recorded.id,
+        resolution: {
+          answers: {},
+          reason:
+            'Runtime restarted while user question was pending; re-ask required.',
+        },
+      });
+    if (!terminalized) return false;
+    const reopened = await recordQuestionInteraction({
+      ...input,
+      interactionId,
+      operations,
+    });
+    if (!reopened) throw new Error('Question prompt was not durably recorded');
+    return typeof reopened !== 'boolean' && reopened.id === interactionId;
+  }
+  return false;
+}
+
+function recordQuestionInteraction(input: {
+  interactionId: string;
+  request: UserQuestionRequest;
+  sourceAgentFolder: string;
+  payload?: Record<string, unknown>;
+  callbackRoute?: Record<string, unknown> | null;
+  operations: DurableInteractionOperations;
+}) {
+  return input.operations.record({
+    interactionId: input.interactionId,
     kind: 'question',
     sourceAgentFolder: input.sourceAgentFolder,
     requestId: input.request.requestId,
@@ -192,7 +237,6 @@ export async function beginDurableQuestionInteraction(input: {
         targetJid: input.request.targetJid ?? null,
         threadId: input.request.threadId ?? null,
         request: input.request,
-        nextQuestionIndex: input.request.questions.length ? 0 : null,
         callbacks: {},
         selections: [],
         answers: {},
@@ -209,60 +253,9 @@ export async function beginDurableQuestionInteraction(input: {
           }
         : input.callbackRoute,
   });
-  if (!recorded) throw new Error('Question prompt was not durably recorded');
-  if (typeof recorded === 'boolean') return undefined;
-  const envelope = readQuestionRecoveryEnvelope(
-    recorded.payload.questionRecoveryEnvelope,
-  );
-  const appId = input.request.appId || 'default';
-  if (
-    recorded.kind !== 'question' ||
-    (recorded.status !== 'pending' && recorded.status !== 'resolved') ||
-    recorded.appId !== appId ||
-    !envelope ||
-    envelope.request.requestId !== input.request.requestId ||
-    envelope.request.sourceAgentFolder !== input.sourceAgentFolder ||
-    (envelope.request.appId || 'default') !== appId ||
-    (envelope.request.targetJid ?? null) !== envelope.targetJid ||
-    (envelope.request.threadId ?? null) !== envelope.threadId
-  ) {
-    throw new Error('Durable question recovery envelope is missing or invalid');
-  }
-  const answers =
-    recorded.status === 'resolved'
-      ? readResolvedQuestionAnswers(recorded.resolution?.answers)
-      : envelope.answers;
-  if (!answers) {
-    throw new Error(
-      'Durable question recovery resolution is missing or invalid',
-    );
-  }
-  return {
-    envelope,
-    status: recorded.status,
-    answers,
-    approverRef: recorded.approverRef,
-  };
 }
 
-function readResolvedQuestionAnswers(
-  value: unknown,
-): Record<string, string | string[]> | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  if (
-    Object.values(value).some(
-      (answer) =>
-        typeof answer !== 'string' &&
-        (!Array.isArray(answer) ||
-          answer.some((entry) => typeof entry !== 'string')),
-    )
-  ) {
-    return null;
-  }
-  return value as Record<string, string | string[]>;
-}
-
-export async function finishDurableQuestionInteraction(input: {
+export function finishDurableQuestionInteraction(input: {
   request: UserQuestionRequest;
   sourceAgentFolder: string;
   response: UserQuestionResponse;
@@ -275,7 +268,7 @@ export async function finishDurableQuestionInteraction(input: {
     appId: input.request.appId ?? null,
     runId: input.request.runId ?? null,
     status: 'resolved',
-    resolution: { answers: input.response.answers || {} },
+    resolution: { answers: input.response.answers },
     approverRef: input.response.answeredBy ?? null,
   });
 }
@@ -287,7 +280,19 @@ export async function runDurableQuestionInteraction(input: {
   beforePrompt?: () => Promise<void> | void;
   operations?: DurableInteractionOperations;
 }): Promise<{ response: UserQuestionResponse; resolved: boolean }> {
-  await beginDurableQuestionInteraction({ ...input, callbackRoute: null });
+  const began = await beginDurableQuestionInteraction({
+    ...input,
+    callbackRoute: null,
+  });
+  if (!began) {
+    return {
+      response: {
+        requestId: input.request.requestId,
+        answers: {},
+      },
+      resolved: false,
+    };
+  }
   await input.beforePrompt?.();
   const response = await input.prompt(input.request);
   const resolved = await finishDurableQuestionInteraction({

@@ -38,11 +38,7 @@ export async function requestSlackUserAnswer(input: {
   const answers: Record<string, string | string[]> = {};
   let answeredBy: string | undefined;
 
-  for (
-    let i = input.request.recoveryStartIndex ?? 0;
-    i < input.request.questions.length;
-    i += 1
-  ) {
+  for (let i = 0; i < input.request.questions.length; i += 1) {
     const question = input.request.questions[i];
     const callback = createDurableQuestionCallback({
       appId: input.request.appId,

@@ -2706,7 +2706,6 @@ describe('TeamsChannel adapter scaffold', () => {
           targetJid: questionRequest.targetJid,
           threadId: null,
           request: questionRequest,
-          nextQuestionIndex: 0,
           callbacks: {},
           selections: [],
           answers: {},
@@ -2774,7 +2773,6 @@ describe('TeamsChannel adapter scaffold', () => {
     expect(pendingQuestion.payload.questionRecoveryEnvelope).toMatchObject({
       answers: { 'Which environment?': 'production' },
       completedQuestionIndexes: [0],
-      nextQuestionIndex: null,
     });
   });
 
@@ -2819,7 +2817,6 @@ describe('TeamsChannel adapter scaffold', () => {
           targetJid: request.targetJid,
           threadId: null,
           request,
-          nextQuestionIndex: 0,
           callbacks: {},
           selections: [],
           answers: {},
@@ -2871,274 +2868,8 @@ describe('TeamsChannel adapter scaffold', () => {
     expect(pendingQuestion.payload.questionRecoveryEnvelope).toMatchObject({
       answers: { 'Continue?': '', 'Which checks?': [] },
       completedQuestionIndexes: [0, 1],
-      nextQuestionIndex: null,
     });
     await channel.disconnect();
-  });
-
-  it('renders only unfinished Teams questions during durable recovery', async () => {
-    let startInput: Parameters<TeamsSdkClient['start']>[0] | undefined;
-    const sdkClient: TeamsSdkClient = {
-      start: vi.fn(async (input) => {
-        startInput = input;
-      }),
-      stop: vi.fn(async () => {}),
-      sendMessage: vi.fn(async () => ({})),
-      sendAdaptiveCard: vi.fn(async () => ({ externalMessageId: 'teams-q-2' })),
-    };
-    const request = {
-      requestId: 'q-teams-recovery-index',
-      sourceAgentFolder: 'teams_engineering',
-      targetJid: 'teams:19:abc@thread.v2',
-      recoveryStartIndex: 1,
-      questions: [
-        {
-          question: 'Already answered?',
-          multiSelect: false,
-          options: [{ label: 'done', description: '' }],
-        },
-        {
-          question: 'Still needed?',
-          multiSelect: false,
-          options: [{ label: 'continue', description: '' }],
-        },
-      ],
-    };
-    const pendingQuestion = {
-      appId: 'default',
-      kind: 'question' as const,
-      status: 'pending' as const,
-      idempotencyKey:
-        'default:question:teams_engineering:q-teams-recovery-index',
-      payload: {
-        requestId: request.requestId,
-        sourceAgentFolder: request.sourceAgentFolder,
-        questionRecoveryEnvelope: {
-          version: 1,
-          targetJid: request.targetJid,
-          threadId: null,
-          request,
-          nextQuestionIndex: 1,
-          callbacks: {},
-          selections: [],
-          answers: { 'Already answered?': 'done' },
-          completedQuestionIndexes: [0],
-          deliveredQuestionIndexes: [0],
-          otherPrompts: {},
-        },
-      } as Record<string, unknown>,
-    };
-    configurePendingInteractionDurability({
-      repository: {
-        listPendingInteractions: vi.fn(async () => [pendingQuestion]),
-        updatePendingInteractionPayload: vi.fn(async ({ update }) => {
-          const payload = update(pendingQuestion.payload);
-          if (!payload) return false;
-          pendingQuestion.payload = payload;
-          return true;
-        }),
-      } as never,
-    });
-    const channel = new TeamsChannel(
-      {
-        clientId: 'client-id',
-        clientSecret: 'client-secret',
-        tenantId: 'tenant-id',
-      },
-      { ...makeOpts(), isControlApproverAllowed: vi.fn(async () => true) },
-      sdkClient,
-    );
-    await channel.connect();
-
-    const answerPromise = channel.requestUserAnswer(
-      'teams:19:abc@thread.v2',
-      request,
-    );
-    await vi.waitFor(() =>
-      expect(sdkClient.sendAdaptiveCard).toHaveBeenCalledOnce(),
-    );
-    const card = vi.mocked(sdkClient.sendAdaptiveCard).mock.calls[0]![0].card;
-    expect(card.body).not.toContainEqual(
-      expect.objectContaining({ text: 'Already answered?' }),
-    );
-    expect(card.body).toContainEqual(
-      expect.objectContaining({ text: 'Still needed?' }),
-    );
-    expect(card.body).toContainEqual(
-      expect.objectContaining({ id: 'gantry_userq_choice_1' }),
-    );
-    const callback = card.actions[0]!.data.callback;
-    expect(callback.questionIndex).toBe(1);
-
-    await startInput?.onMessage({
-      conversationId: '19:abc@thread.v2',
-      from: { id: 'teams-user-1', name: 'Team Admin' },
-      value: {
-        action: 'gantry_userq',
-        callback,
-        gantry_userq_choice_1: '0',
-        gantry_userq_other_1: '',
-      },
-    });
-
-    await expect(answerPromise).resolves.toEqual({
-      requestId: request.requestId,
-      answers: { 'Still needed?': 'continue' },
-      answeredBy: 'Team Admin',
-    });
-    expect(pendingQuestion.payload.questionRecoveryEnvelope).toMatchObject({
-      answers: {
-        'Already answered?': 'done',
-        'Still needed?': 'continue',
-      },
-      completedQuestionIndexes: [0, 1],
-      nextQuestionIndex: null,
-    });
-  });
-
-  it('resolves durable Teams user-question answers after restart', async () => {
-    let startInput: Parameters<TeamsSdkClient['start']>[0] | undefined =
-      undefined;
-    const isControlApproverAllowed = vi.fn(async () => true);
-    const sdkClient: TeamsSdkClient = {
-      start: vi.fn(async (input) => {
-        startInput = input;
-      }),
-      stop: vi.fn(async () => {}),
-      sendMessage: vi.fn(async () => ({})),
-      sendAdaptiveCard: vi.fn(async () => ({ externalMessageId: 'teams-q-1' })),
-    };
-    const request = {
-      requestId: 'q-teams-restart',
-      sourceAgentFolder: 'teams_engineering',
-      targetJid: 'teams:19:abc@thread.v2',
-      questions: [
-        {
-          question: 'Which environment?',
-          header: 'Env',
-          multiSelect: false,
-          options: [
-            { label: 'staging', description: 'pre-prod' },
-            { label: 'production', description: 'live' },
-          ],
-        },
-      ],
-    };
-    const requests = [
-      request,
-      { ...request, sourceAgentFolder: 'teams_operations' },
-    ];
-    const callbacks = requests.map((candidate, index) => ({
-      providerAlias: `teams-question-${index + 1}`,
-      scope: {
-        appId: 'default',
-        sourceAgentFolder: candidate.sourceAgentFolder,
-        interactionId: candidate.requestId,
-      },
-      questionIndex: 0,
-    }));
-    const pending = requests.map((candidate, index) => ({
-      id: `pending-question-${index + 1}`,
-      appId: 'default',
-      runId: 'run-1',
-      kind: 'question',
-      status: 'pending',
-      payload: {
-        requestId: candidate.requestId,
-        sourceAgentFolder: candidate.sourceAgentFolder,
-        targetJid: candidate.targetJid,
-        request: candidate,
-        questionRecoveryEnvelope: {
-          version: 1,
-          targetJid: candidate.targetJid,
-          threadId: null,
-          request: candidate,
-          nextQuestionIndex: 0,
-          callbacks: {
-            [callbacks[index]!.providerAlias]: {
-              appId: 'default',
-              sourceAgentFolder: candidate.sourceAgentFolder,
-              requestId: candidate.requestId,
-              questionIndex: 0,
-            },
-          },
-          selections: [],
-          answers: {},
-          completedQuestionIndexes: [],
-          deliveredQuestionIndexes: [0],
-          otherPrompts: {},
-        },
-      },
-      callbackRoute: null,
-      idempotencyKey: `default:question:${candidate.sourceAgentFolder}:${candidate.requestId}`,
-      approverRef: null,
-      resolution: null,
-      createdAt: '2026-06-18T00:00:00.000Z',
-      expiresAt: '2026-06-19T00:00:00.000Z',
-      resolvedAt: null,
-    }));
-    const repository = {
-      listPendingInteractions: vi.fn(async () => pending),
-      updatePendingInteractionPayload: vi.fn(
-        async ({ idempotencyKey, update }) => {
-          const interaction = pending.find(
-            (candidate) => candidate.idempotencyKey === idempotencyKey,
-          );
-          if (!interaction) return false;
-          const payload = update(interaction.payload);
-          if (!payload) return false;
-          interaction.payload = payload;
-          return true;
-        },
-      ),
-      resolvePendingInteraction: vi.fn(async () => true),
-    };
-    configurePendingInteractionDurability({ repository: repository as never });
-    const channel = new TeamsChannel(
-      {
-        clientId: 'client-id',
-        clientSecret: 'client-secret',
-        tenantId: 'tenant-id',
-      },
-      { ...makeOpts(), isControlApproverAllowed },
-      sdkClient,
-    );
-    await channel.connect();
-
-    for (const [index, callback] of callbacks.entries()) {
-      await startInput?.onMessage({
-        conversationId: '19:abc@thread.v2',
-        from: { id: 'teams-user-1', name: 'Team Admin' },
-        value: {
-          action: 'gantry_userq',
-          callback,
-          gantry_userq_choice_0: String(index),
-          gantry_userq_other_0: '',
-        },
-      });
-    }
-
-    expect(repository.resolvePendingInteraction).toHaveBeenNthCalledWith(
-      1,
-      expect.objectContaining({
-        idempotencyKey: 'default:question:teams_engineering:q-teams-restart',
-        resolution: { answers: { 'Which environment?': 'staging' } },
-      }),
-    );
-    expect(repository.resolvePendingInteraction).toHaveBeenNthCalledWith(
-      2,
-      expect.objectContaining({
-        idempotencyKey: 'default:question:teams_operations:q-teams-restart',
-        resolution: { answers: { 'Which environment?': 'production' } },
-      }),
-    );
-    expect(isControlApproverAllowed).toHaveBeenCalledWith(
-      expect.objectContaining({
-        providerId: 'teams',
-        conversationJid: 'teams:19:abc@thread.v2',
-        userId: 'teams-user-1',
-      }),
-    );
   });
 
   it('keeps pending Teams permission prompts unresolved when decision user is unauthorized', async () => {

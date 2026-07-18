@@ -11,10 +11,7 @@ import {
   claimPermissionInteractionCallback,
   DurableInteractionPersistenceError,
   findDurablePermissionInteractionByRequestId,
-  findDurableQuestionInteractionByCallbackId,
-  findDurableQuestionInteractionByRequestId,
   resolveDurablePermissionInteractionByRequestId,
-  resolveDurableQuestionAnswersByRequestId,
   recordDurableQuestionAnswerProgress,
   releasePermissionInteractionCallback,
 } from '../application/interactions/pending-interaction-durability.js';
@@ -92,10 +89,7 @@ export async function handleTeamsUserQuestionSubmit(input: {
     candidate && sameTeamsQuestionCallback(candidate.callback, submit.callback)
       ? candidate
       : undefined;
-  if (!pending) {
-    await resolveDurableTeamsUserQuestionSubmit({ ...input, submit });
-    return true;
-  }
+  if (!pending) return true;
   if (pending.settled) return true;
   const conversationId = teamsConversationIdFromJid(input.jid);
   if (!conversationId || conversationId !== pending.conversationId) {
@@ -483,53 +477,6 @@ async function terminalizeTeamsPermissionPrompt(
     }
   }
   return true;
-}
-
-async function resolveDurableTeamsUserQuestionSubmit(input: {
-  submit: TeamsUserQuestionSubmit;
-  jid: string;
-  userId: string;
-  userName: string;
-  context: TeamsInteractionContext;
-}): Promise<void> {
-  const conversationId = teamsConversationIdFromJid(input.jid);
-  if (!conversationId) return;
-  const callback = await findDurableQuestionInteractionByCallbackId({
-    callbackId: input.submit.callback.providerAlias,
-    scope: input.submit.callback.scope,
-    questionIndex: input.submit.callback.questionIndex,
-  });
-  if (!callback) return;
-  const durable = await findDurableQuestionInteractionByRequestId({
-    requestId: callback.requestId,
-    appId: callback.appId,
-    sourceAgentFolder: callback.sourceAgentFolder,
-  });
-  if (!durable || durable.targetJid !== input.jid || !durable.request) {
-    return;
-  }
-  const authorized = await canDecideTeamsPermission(
-    input.context,
-    input.userId,
-    durable.sourceAgentFolder,
-    undefined,
-    input.jid,
-  );
-  if (!authorized) {
-    await sendDeniedTeamsDecisionFeedback(
-      input.context,
-      conversationId,
-      'You are not allowed to answer this question.',
-    );
-    return;
-  }
-  await resolveDurableQuestionAnswersByRequestId({
-    requestId: callback.requestId,
-    appId: callback.appId,
-    sourceAgentFolder: callback.sourceAgentFolder,
-    answers: mapTeamsUserQuestionAnswers(durable.request, input.submit.values),
-    answeredBy: input.userName,
-  });
 }
 
 function sameTeamsQuestionCallback(

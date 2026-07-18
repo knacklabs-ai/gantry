@@ -9,7 +9,6 @@ import type {
 import type {
   PermissionCallbackClaimReference,
   QuestionRecoveryEnvelope,
-  UserQuestionRequest,
 } from '../../domain/types.js';
 import { nowMs, toIso } from '../../shared/time/datetime.js';
 import {
@@ -43,17 +42,6 @@ interface InteractionDurabilityBackend extends PendingInteractionResolutionBacke
 }
 let backend: InteractionDurabilityBackend | null = null;
 let permissionPersistence: PermissionPersistenceBackend | null = null;
-let questionRecoveryDispatcher:
-  | ((request: UserQuestionRequest, startIndex: number) => Promise<void>)
-  | null = null;
-
-export function configureQuestionRecoveryDispatcher(
-  dispatcher:
-    | ((request: UserQuestionRequest, startIndex: number) => Promise<void>)
-    | null,
-): void {
-  questionRecoveryDispatcher = dispatcher;
-}
 export function configurePendingInteractionDurability(
   next: InteractionDurabilityBackend | null,
 ): void {
@@ -90,6 +78,7 @@ export function pendingInteractionIdempotencyKey(input: {
 }
 
 export async function recordPendingInteractionRequested(input: {
+  interactionId?: string;
   kind: PendingInteractionKind;
   sourceAgentFolder: string;
   requestId: string;
@@ -105,7 +94,7 @@ export async function recordPendingInteractionRequested(input: {
   if (!active) return true;
   try {
     return await active.repository.createPendingInteraction({
-      id: globalThis.crypto.randomUUID(),
+      id: input.interactionId ?? globalThis.crypto.randomUUID(),
       appId: input.appId || DEFAULT_APP_ID,
       runId: input.runId ?? null,
       kind: input.kind,
@@ -129,6 +118,18 @@ export async function recordPendingInteractionRequested(input: {
     );
     throw err;
   }
+}
+
+export async function cancelPendingQuestionInteractionIfRunLeaseInactive(input: {
+  id: string;
+  resolution: Record<string, unknown>;
+  now?: string;
+}): Promise<boolean> {
+  const active = backend;
+  if (!active) return true;
+  return active.repository.cancelPendingQuestionInteractionIfRunLeaseInactive(
+    input,
+  );
 }
 
 export async function resolvePendingInteractionRecord(input: {
@@ -156,8 +157,6 @@ export {
   bindPendingQuestionInteractionCallback,
   bindPendingQuestionOtherPrompt,
   createDurableQuestionCallback,
-  findDurableQuestionInteractionByCallbackId,
-  findDurableQuestionOtherPrompt,
   findDurablePermissionInteractionByPromptMessage,
 } from './pending-interaction-prompt-binding.js';
 export type {
@@ -184,48 +183,19 @@ export function applyPermissionInteractionDecision(
   });
 }
 
-export interface DurableQuestionInteractionContext {
-  sourceAgentFolder: string;
-  targetJid: string | null;
-  request: UserQuestionRequest | null;
-}
-
-export async function findDurableQuestionInteractionByRequestId(input: {
-  requestId: string;
-  sourceAgentFolder?: string;
-  appId?: string | null;
-}): Promise<DurableQuestionInteractionContext | null> {
-  const active = backend;
-  if (!active) return null;
-  try {
-    const pending = (
-      await active.repository.listPendingInteractions({
-        appId: input.appId || DEFAULT_APP_ID,
-      })
-    ).find(
-      (interaction) =>
-        interaction.kind === 'question' &&
-        interaction.status === 'pending' &&
-        interaction.payload?.requestId === input.requestId &&
-        (!input.sourceAgentFolder ||
-          interaction.payload?.sourceAgentFolder === input.sourceAgentFolder),
-    );
-    const envelope = readQuestionRecoveryEnvelope(
-      pending?.payload.questionRecoveryEnvelope,
-    );
-    if (!pending || !envelope) return null;
-    return {
-      sourceAgentFolder: envelope.request.sourceAgentFolder,
-      targetJid: envelope.targetJid,
-      request: envelope.request,
-    };
-  } catch (err) {
-    active.warn?.(
-      { err, requestId: input.requestId },
-      'Failed to find durable question interaction',
-    );
-    return null;
-  }
+async function findPendingQuestionRecord(
+  active: InteractionDurabilityBackend,
+  appId: string,
+  input: { requestId: string; sourceAgentFolder?: string },
+) {
+  return (await active.repository.listPendingInteractions({ appId })).find(
+    (interaction) =>
+      interaction.kind === 'question' &&
+      interaction.status === 'pending' &&
+      interaction.payload?.requestId === input.requestId &&
+      (!input.sourceAgentFolder ||
+        interaction.payload?.sourceAgentFolder === input.sourceAgentFolder),
+  );
 }
 
 export async function resolveDurableQuestionInteractionByRequestId(input: {
@@ -234,27 +204,16 @@ export async function resolveDurableQuestionInteractionByRequestId(input: {
   questionIndex: number;
   optionIndex?: number;
   finalize?: boolean;
-  answeredBy?: string | null;
   appId?: string | null;
 }): Promise<boolean> {
   const active = backend;
   if (!active) return false;
   const appId = input.appId || DEFAULT_APP_ID;
   try {
-    const pending = (
-      await active.repository.listPendingInteractions({ appId })
-    ).find(
-      (interaction) =>
-        interaction.kind === 'question' &&
-        interaction.status === 'pending' &&
-        interaction.payload?.requestId === input.requestId &&
-        (!input.sourceAgentFolder ||
-          interaction.payload?.sourceAgentFolder === input.sourceAgentFolder),
-    );
+    const pending = await findPendingQuestionRecord(active, appId, input);
     if (!pending) return false;
     return await persistQuestionProgress({
       pending,
-      answeredBy: input.answeredBy,
       update: (envelope, payload) => {
         const question = envelope.request.questions[input.questionIndex];
         if (
@@ -266,7 +225,7 @@ export async function resolveDurableQuestionInteractionByRequestId(input: {
         }
         const selections = questionSelectionsFromPayload(payload);
         if (envelope.completedQuestionIndexes.includes(input.questionIndex)) {
-          return { envelope, advance: true };
+          return envelope;
         }
         if (typeof input.optionIndex === 'number') {
           if (
@@ -292,11 +251,8 @@ export async function resolveDurableQuestionInteractionByRequestId(input: {
         }
         if (question.multiSelect && !input.finalize) {
           return {
-            envelope: {
-              ...envelope,
-              selections: serializeQuestionSelections(selections),
-            },
-            advance: false,
+            ...envelope,
+            selections: serializeQuestionSelections(selections),
           };
         }
         if (question.multiSelect) {
@@ -312,23 +268,20 @@ export async function resolveDurableQuestionInteractionByRequestId(input: {
           .map((index) => question.options[index]?.label?.trim())
           .filter((label): label is string => Boolean(label));
         return {
-          envelope: {
-            ...envelope,
-            selections: serializeQuestionSelections(selections),
-            answers: {
-              ...envelope.answers,
-              [question.question]: question.multiSelect
-                ? labels
-                : (labels[0] ?? ''),
-            },
-            completedQuestionIndexes: [
-              ...new Set([
-                ...envelope.completedQuestionIndexes,
-                input.questionIndex,
-              ]),
-            ].sort((a, b) => a - b),
+          ...envelope,
+          selections: serializeQuestionSelections(selections),
+          answers: {
+            ...envelope.answers,
+            [question.question]: question.multiSelect
+              ? labels
+              : (labels[0] ?? ''),
           },
-          advance: true,
+          completedQuestionIndexes: [
+            ...new Set([
+              ...envelope.completedQuestionIndexes,
+              input.questionIndex,
+            ]),
+          ].sort((a, b) => a - b),
         };
       },
     });
@@ -336,63 +289,6 @@ export async function resolveDurableQuestionInteractionByRequestId(input: {
     active.warn?.(
       { err, requestId: input.requestId },
       'Failed to resolve durable question interaction',
-    );
-    return false;
-  }
-}
-
-export async function resolveDurableQuestionAnswersByRequestId(input: {
-  requestId: string;
-  sourceAgentFolder?: string;
-  answers: Record<string, string | string[]>;
-  completedQuestionIndexes?: number[];
-  answeredBy?: string | null;
-  appId?: string | null;
-}): Promise<boolean> {
-  const active = backend;
-  if (!active) return false;
-  const appId = input.appId || DEFAULT_APP_ID;
-  try {
-    const pending = (
-      await active.repository.listPendingInteractions({ appId })
-    ).find(
-      (interaction) =>
-        interaction.kind === 'question' &&
-        interaction.status === 'pending' &&
-        interaction.payload?.requestId === input.requestId &&
-        (!input.sourceAgentFolder ||
-          interaction.payload?.sourceAgentFolder === input.sourceAgentFolder),
-    );
-    if (!pending) return false;
-    return await persistQuestionProgress({
-      pending,
-      answeredBy: input.answeredBy,
-      update: (envelope) => ({
-        envelope: {
-          ...envelope,
-          answers: { ...envelope.answers, ...input.answers },
-          completedQuestionIndexes: [
-            ...new Set([
-              ...envelope.completedQuestionIndexes,
-              ...envelope.request.questions.flatMap((question, index) =>
-                Object.prototype.hasOwnProperty.call(
-                  input.answers,
-                  question.question,
-                )
-                  ? [index]
-                  : [],
-              ),
-              ...(input.completedQuestionIndexes ?? []),
-            ]),
-          ].sort((a, b) => a - b),
-        },
-        advance: true,
-      }),
-    });
-  } catch (err) {
-    active.warn?.(
-      { err, requestId: input.requestId },
-      'Failed to resolve durable question interaction answers',
     );
     return false;
   }
@@ -408,55 +304,43 @@ export async function recordDurableQuestionAnswerProgress(input: {
   const active = backend;
   if (!active) return false;
   const appId = input.appId || DEFAULT_APP_ID;
-  const pending = (
-    await active.repository.listPendingInteractions({ appId })
-  ).find(
-    (interaction) =>
-      interaction.kind === 'question' &&
-      interaction.status === 'pending' &&
-      interaction.payload.requestId === input.requestId &&
-      interaction.payload.sourceAgentFolder === input.sourceAgentFolder,
-  );
+  const pending = await findPendingQuestionRecord(active, appId, input);
   if (!pending) return false;
-  return active.repository.updatePendingInteractionPayload({
-    idempotencyKey: pending.idempotencyKey,
-    update: (payload) => {
-      const envelope = readQuestionRecoveryEnvelope(
-        payload.questionRecoveryEnvelope,
-      );
-      if (!envelope) return null;
-      const answers = Object.fromEntries(
-        Object.entries(input.answers).filter(
-          ([answerKey]) =>
-            !envelope.request.questions.some(
-              (question, index) =>
-                question.question === answerKey &&
-                envelope.completedQuestionIndexes.includes(index),
-            ),
-        ),
-      );
-      const completedQuestionIndexes = [
-        ...new Set([
-          ...envelope.completedQuestionIndexes,
-          ...envelope.request.questions.flatMap((question, index) =>
-            Object.prototype.hasOwnProperty.call(answers, question.question)
-              ? [index]
-              : [],
-          ),
-          ...(input.completedQuestionIndexes ?? []),
-        ]),
-      ].sort((a, b) => a - b);
-      const nextQuestionIndex = envelope.request.questions.findIndex(
-        (_, index) => !completedQuestionIndexes.includes(index),
-      );
-      return questionPayload(payload, {
-        ...envelope,
-        answers: { ...envelope.answers, ...answers },
-        completedQuestionIndexes,
-        nextQuestionIndex: nextQuestionIndex < 0 ? null : nextQuestionIndex,
-      });
-    },
+  return persistQuestionProgress({
+    pending,
+    update: (envelope) => mergeQuestionAnswerProgress(envelope, input),
   });
+}
+
+function mergeQuestionAnswerProgress(
+  envelope: QuestionRecoveryEnvelope,
+  input: {
+    answers: Record<string, string | string[]>;
+    completedQuestionIndexes?: number[];
+  },
+): QuestionRecoveryEnvelope {
+  const answers = Object.fromEntries(
+    Object.entries(input.answers).filter(([answerKey]) =>
+      envelope.request.questions.some(
+        (question, index) =>
+          question.question === answerKey &&
+          !envelope.completedQuestionIndexes.includes(index),
+      ),
+    ),
+  );
+  return {
+    ...envelope,
+    answers: { ...envelope.answers, ...answers },
+    completedQuestionIndexes: [
+      ...new Set([
+        ...envelope.completedQuestionIndexes,
+        ...envelope.request.questions.flatMap((question, index) =>
+          Object.hasOwn(answers, question.question) ? [index] : [],
+        ),
+        ...(input.completedQuestionIndexes ?? []),
+      ]),
+    ].sort((a, b) => a - b),
+  };
 }
 
 export async function recordDurableQuestionPromptDelivered(input: {
@@ -473,15 +357,7 @@ export async function recordDurableQuestionPromptDelivered(input: {
   }
   try {
     const appId = input.appId || DEFAULT_APP_ID;
-    const pending = (
-      await active.repository.listPendingInteractions({ appId })
-    ).find(
-      (interaction) =>
-        interaction.kind === 'question' &&
-        interaction.status === 'pending' &&
-        interaction.payload.requestId === input.requestId &&
-        interaction.payload.sourceAgentFolder === input.sourceAgentFolder,
-    );
+    const pending = await findPendingQuestionRecord(active, appId, input);
     if (!pending) {
       throw new DurableInteractionPersistenceError(
         'Pending question delivery record is missing',
@@ -494,15 +370,18 @@ export async function recordDurableQuestionPromptDelivered(input: {
           payload.questionRecoveryEnvelope,
         );
         if (!envelope) return null;
-        return questionPayload(payload, {
-          ...envelope,
-          deliveredQuestionIndexes: [
-            ...new Set([
-              ...envelope.deliveredQuestionIndexes,
-              ...input.questionIndexes,
-            ]),
-          ].sort((a, b) => a - b),
-        });
+        return {
+          ...payload,
+          questionRecoveryEnvelope: {
+            ...envelope,
+            deliveredQuestionIndexes: [
+              ...new Set([
+                ...envelope.deliveredQuestionIndexes,
+                ...input.questionIndexes,
+              ]),
+            ].sort((a, b) => a - b),
+          },
+        };
       },
     });
     if (!updated) {
@@ -527,14 +406,11 @@ async function persistQuestionProgress(input: {
   update: (
     envelope: QuestionRecoveryEnvelope,
     payload: Record<string, unknown>,
-  ) => { envelope: QuestionRecoveryEnvelope; advance: boolean } | null;
-  answeredBy?: string | null;
+  ) => QuestionRecoveryEnvelope | null;
 }): Promise<boolean> {
   const active = backend;
   if (!active) return false;
-  const state: {
-    updated?: { envelope: QuestionRecoveryEnvelope; advance: boolean };
-  } = {};
+  let updated = false;
   const persisted = await active.repository.updatePendingInteractionPayload({
     idempotencyKey: input.pending.idempotencyKey,
     update: (payload) => {
@@ -542,67 +418,16 @@ async function persistQuestionProgress(input: {
         payload.questionRecoveryEnvelope,
       );
       if (!envelope) return null;
-      const result = input.update(envelope, payload);
-      if (!result) return null;
-      const nextQuestionIndex = result.envelope.request.questions.findIndex(
-        (_, index) => !result.envelope.completedQuestionIndexes.includes(index),
-      );
-      state.updated = {
-        advance: result.advance,
-        envelope: {
-          ...result.envelope,
-          nextQuestionIndex: nextQuestionIndex < 0 ? null : nextQuestionIndex,
-        },
+      const next = input.update(envelope, payload);
+      if (!next) return null;
+      updated = true;
+      return {
+        ...payload,
+        questionRecoveryEnvelope: next,
       };
-      return questionPayload(payload, state.updated.envelope);
     },
   });
-  if (!persisted || !state.updated) return false;
-  const nextEnvelope = state.updated.envelope;
-  if (!state.updated.advance) return true;
-  const nextIndex = nextEnvelope.nextQuestionIndex;
-  if (nextIndex !== null) {
-    const alreadyDispatched =
-      nextEnvelope.deliveredQuestionIndexes.includes(nextIndex);
-    if (!alreadyDispatched) {
-      const dispatcher = questionRecoveryDispatcher;
-      if (!dispatcher) return false;
-      setImmediate(() => {
-        void dispatcher(nextEnvelope.request, nextIndex).catch((err) => {
-          active.warn?.(
-            {
-              err,
-              requestId: nextEnvelope.request.requestId,
-              nextQuestionIndex: nextIndex,
-            },
-            'Failed to dispatch the next durable question prompt',
-          );
-        });
-      });
-    }
-    return true;
-  }
-  return resolvePendingInteractionRecord({
-    kind: 'question',
-    sourceAgentFolder: nextEnvelope.request.sourceAgentFolder,
-    requestId: nextEnvelope.request.requestId,
-    appId: nextEnvelope.request.appId || DEFAULT_APP_ID,
-    runId: input.pending.runId,
-    status: 'resolved',
-    resolution: { answers: nextEnvelope.answers },
-    approverRef: input.answeredBy ?? null,
-  });
-}
-
-function questionPayload(
-  payload: Record<string, unknown>,
-  envelope: QuestionRecoveryEnvelope,
-  patch?: Partial<QuestionRecoveryEnvelope>,
-): Record<string, unknown> {
-  return {
-    ...payload,
-    questionRecoveryEnvelope: { ...envelope, ...patch },
-  };
+  return persisted && updated;
 }
 
 export async function isActiveRunLeaseForInteraction(input: {

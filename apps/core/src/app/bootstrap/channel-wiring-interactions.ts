@@ -8,11 +8,7 @@ import type {
   AgentTodoCardStatus,
   AgentTodoRender,
 } from '../../domain/ports/task-lifecycle.js';
-import {
-  configureQuestionRecoveryDispatcher,
-  DurableInteractionPersistenceError,
-  resolveDurableQuestionAnswersByRequestId,
-} from '../../application/interactions/pending-interaction-durability.js';
+import { DurableInteractionPersistenceError } from '../../application/interactions/pending-interaction-durability.js';
 
 type ChannelLike = object;
 
@@ -146,34 +142,6 @@ export function createUserQuestionResponder(input: {
       return { requestId: request.requestId, answers: {} };
     }
   }
-
-  configureQuestionRecoveryDispatcher(async (request, startIndex) => {
-    const delivered = new Set<number>();
-    const response = await dispatchUserAnswer(
-      {
-        ...request,
-        recoveryStartIndex: startIndex,
-      },
-      (_messageId, questionIndex) => {
-        if (questionIndex !== undefined) delivered.add(questionIndex);
-      },
-    );
-    const attempted = request.questions.flatMap((_, index) =>
-      index >= startIndex ? [index] : [],
-    );
-    if (attempted.some((index) => !delivered.has(index))) {
-      throw new Error('Recovered user question prompt delivery was incomplete');
-    }
-    const resolved = await resolveDurableQuestionAnswersByRequestId({
-      requestId: request.requestId,
-      appId: request.appId,
-      sourceAgentFolder: request.sourceAgentFolder,
-      answers: response.answers,
-      completedQuestionIndexes: attempted,
-      answeredBy: response.answeredBy,
-    });
-    if (!resolved) throw new Error('Recovered user question did not resolve');
-  });
 
   async function requestUserAnswer(
     request: UserQuestionRequest,

@@ -24,8 +24,6 @@ const durabilityMocks = vi.hoisted(() => ({
   })),
   findDurablePermissionInteractionByPromptMessage: vi.fn(),
   findDurablePermissionInteractionByRequestId: vi.fn(),
-  findDurableQuestionInteractionByRequestId: vi.fn(),
-  findDurableQuestionInteractionByCallbackId: vi.fn(),
   recordDurableQuestionAnswerProgress: vi.fn(async () => true),
   recordDurableQuestionPromptDelivered: vi.fn(async () => true),
   releasePermissionInteractionCallback: vi.fn(async () => true),
@@ -120,8 +118,6 @@ describe('DiscordChannel', () => {
     vi.useRealTimers();
     vi.restoreAllMocks();
     durabilityMocks.findDurablePermissionInteractionByRequestId.mockReset();
-    durabilityMocks.findDurableQuestionInteractionByRequestId.mockReset();
-    durabilityMocks.findDurableQuestionInteractionByCallbackId.mockReset();
     durabilityMocks.bindPendingPermissionInteractionMessage.mockReset();
     durabilityMocks.bindPendingPermissionInteractionMessage.mockResolvedValue(
       true,
@@ -3643,82 +3639,6 @@ describe('DiscordChannel', () => {
       'https://discord.com/api/v10/channels/thread-1/messages/message-1',
       expect.objectContaining({ method: 'DELETE' }),
     );
-    await channel.disconnect();
-    vi.restoreAllMocks();
-  });
-
-  it('finalizes persisted multi-select state through the durable resolver after restart', async () => {
-    let socket!: FakeWebSocket;
-    vi.spyOn(globalThis, 'fetch')
-      .mockResolvedValueOnce(
-        jsonResponse({ url: 'wss://gateway.discord.test' }),
-      )
-      .mockResolvedValue(jsonResponse({}));
-    durabilityMocks.findDurableQuestionInteractionByCallbackId.mockResolvedValue(
-      {
-        appId: 'default',
-        sourceAgentFolder: 'main_agent',
-        requestId: 'question-1',
-        questionIndex: 0,
-      },
-    );
-    durabilityMocks.findDurableQuestionInteractionByRequestId.mockResolvedValue(
-      {
-        sourceAgentFolder: 'main_agent',
-        targetJid: 'dc:channel-1',
-        request: {
-          questions: [
-            {
-              question: 'Which checks?',
-              multiSelect: true,
-              options: [
-                { label: 'Unit', description: 'Run unit tests' },
-                { label: 'Typecheck', description: 'Run typecheck' },
-              ],
-            },
-          ],
-        },
-      },
-    );
-    durabilityMocks.resolveDurableQuestionInteractionByRequestId.mockResolvedValue(
-      true,
-    );
-    const channel = new DiscordChannel(
-      'bot-token',
-      'app-id',
-      opts({ isControlApproverAllowed: vi.fn(async () => true) }),
-      (url) => {
-        socket = new FakeWebSocket(url);
-        return socket;
-      },
-    );
-
-    await channel.connect();
-    socket.receive({
-      op: 0,
-      t: 'INTERACTION_CREATE',
-      d: {
-        id: 'interaction-1',
-        token: 'token-1',
-        type: 3,
-        channel_id: 'channel-1',
-        data: { custom_id: 'gantry:q:question-alias:-1' },
-        member: { user: { id: 'user-1', username: 'Ravi' } },
-      },
-    });
-    await new Promise((resolve) => setTimeout(resolve, 0));
-
-    expect(
-      durabilityMocks.resolveDurableQuestionInteractionByRequestId,
-    ).toHaveBeenCalledWith({
-      requestId: 'question-1',
-      appId: 'default',
-      sourceAgentFolder: 'main_agent',
-      questionIndex: 0,
-      optionIndex: undefined,
-      finalize: true,
-      answeredBy: 'user-1',
-    });
     await channel.disconnect();
     vi.restoreAllMocks();
   });

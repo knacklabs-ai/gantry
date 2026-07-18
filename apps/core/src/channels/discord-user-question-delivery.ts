@@ -133,18 +133,13 @@ export async function requestDiscordUserAnswer(input: {
     callbacks,
     request,
     answers: {},
-    finalizedQuestions: new Set<number>(
-      Array.from(
-        { length: request.recoveryStartIndex ?? 0 },
-        (_, index) => index,
-      ),
-    ),
+    finalizedQuestions: new Set<number>(),
     resolve: resolveResponse,
     timeout,
   };
   try {
     for (
-      let questionIndex = request.recoveryStartIndex ?? 0;
+      let questionIndex = 0;
       questionIndex < request.questions.length;
       questionIndex += 1
     ) {

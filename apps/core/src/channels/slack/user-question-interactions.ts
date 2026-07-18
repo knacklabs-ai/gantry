@@ -1,11 +1,6 @@
 import type { App } from '@slack/bolt';
 
-import {
-  findDurableQuestionInteractionByCallbackId,
-  findDurableQuestionInteractionByRequestId,
-  resolveDurableQuestionAnswersByRequestId,
-  resolveDurableQuestionInteractionByRequestId,
-} from '../../application/interactions/pending-interaction-durability.js';
+import { resolveDurableQuestionInteractionByRequestId } from '../../application/interactions/pending-interaction-durability.js';
 import type { DurableQuestionCallback } from '../../application/interactions/pending-interaction-durability.js';
 import { logger } from '../../infrastructure/logging/logger.js';
 import type { PendingUserQuestionState } from './channel-state.js';
@@ -60,39 +55,7 @@ export function registerSlackUserQuestionHandlers(input: {
       if (!userId) return;
       const answeredBy =
         body.user?.name || body.user?.username || body.user?.id || 'unknown';
-      if (!pending) {
-        const callback = await findDurableQuestionInteractionByCallbackId({
-          callbackId: parsed.callback.providerAlias,
-          scope: parsed.callback.scope,
-          questionIndex: parsed.callback.questionIndex,
-        });
-        if (!callback) return;
-        const durable = await findDurableQuestionInteractionByRequestId({
-          requestId: callback.requestId,
-          appId: callback.appId,
-          sourceAgentFolder: callback.sourceAgentFolder,
-        });
-        if (!durable || durable.targetJid !== `sl:${callbackChannelId}`) return;
-        if (
-          !(await input.canAnswer(
-            userId,
-            durable.sourceAgentFolder,
-            durable.targetJid,
-          ))
-        ) {
-          return;
-        }
-        await resolveDurableQuestionInteractionByRequestId({
-          requestId: callback.requestId,
-          appId: callback.appId,
-          sourceAgentFolder: callback.sourceAgentFolder,
-          questionIndex: callback.questionIndex,
-          optionIndex: parsed.optionIndex,
-          finalize: false,
-          answeredBy,
-        });
-        return;
-      }
+      if (!pending) return;
       if (pending.settled) return;
       if (!callbackChannelId || callbackChannelId !== pending.channelId) return;
       if (
@@ -132,7 +95,6 @@ export function registerSlackUserQuestionHandlers(input: {
         questionIndex: pending.questionIndex,
         optionIndex: parsed.optionIndex,
         finalize: false,
-        answeredBy,
       });
       if (!persisted) return;
       if (pending.selectedOptionIndexes.has(parsed.optionIndex)) {
@@ -167,38 +129,7 @@ export function registerSlackUserQuestionHandlers(input: {
     if (!userId) return;
     const answeredBy =
       body.user?.name || body.user?.username || body.user?.id || 'unknown';
-    if (!pending) {
-      const callback = await findDurableQuestionInteractionByCallbackId({
-        callbackId: parsed.callback.providerAlias,
-        scope: parsed.callback.scope,
-        questionIndex: parsed.callback.questionIndex,
-      });
-      if (!callback) return;
-      const durable = await findDurableQuestionInteractionByRequestId({
-        requestId: callback.requestId,
-        appId: callback.appId,
-        sourceAgentFolder: callback.sourceAgentFolder,
-      });
-      if (!durable || durable.targetJid !== `sl:${callbackChannelId}`) return;
-      if (
-        !(await input.canAnswer(
-          userId,
-          durable.sourceAgentFolder,
-          durable.targetJid,
-        ))
-      ) {
-        return;
-      }
-      await resolveDurableQuestionInteractionByRequestId({
-        requestId: callback.requestId,
-        appId: callback.appId,
-        sourceAgentFolder: callback.sourceAgentFolder,
-        questionIndex: callback.questionIndex,
-        finalize: true,
-        answeredBy,
-      });
-      return;
-    }
+    if (!pending) return;
     if (pending.settled || !pending.question.multiSelect) return;
     if (!callbackChannelId || callbackChannelId !== pending.channelId) return;
     if (
@@ -249,46 +180,17 @@ export function registerSlackUserQuestionHandlers(input: {
     const callbackChannelId = body.channel?.id || '';
     const userId = body.user?.id || '';
     if (!userId || !callbackChannelId || pending?.settled) return;
-    let questionHeader: string;
-    if (pending) {
-      if (callbackChannelId !== pending.channelId) return;
-      if (
-        !(await input.canAnswer(
-          userId,
-          pending.sourceAgentFolder,
-          `sl:${pending.channelId}`,
-        ))
-      ) {
-        return;
-      }
-      questionHeader = pending.question.header || 'Your answer';
-    } else {
-      const callback = await findDurableQuestionInteractionByCallbackId({
-        callbackId: parsed.callback.providerAlias,
-        scope: parsed.callback.scope,
-        questionIndex: parsed.callback.questionIndex,
-      });
-      if (!callback) return;
-      const durable = await findDurableQuestionInteractionByRequestId({
-        requestId: callback.requestId,
-        appId: callback.appId,
-        sourceAgentFolder: callback.sourceAgentFolder,
-      });
-      const question = durable?.request?.questions[callback.questionIndex];
-      if (
-        !durable ||
-        !question ||
-        durable.targetJid !== `sl:${callbackChannelId}` ||
-        !(await input.canAnswer(
-          userId,
-          durable.sourceAgentFolder,
-          durable.targetJid,
-        ))
-      ) {
-        return;
-      }
-      questionHeader = question.header || 'Your answer';
+    if (!pending || callbackChannelId !== pending.channelId) return;
+    if (
+      !(await input.canAnswer(
+        userId,
+        pending.sourceAgentFolder,
+        `sl:${pending.channelId}`,
+      ))
+    ) {
+      return;
     }
+    const questionHeader = pending.question.header || 'Your answer';
     try {
       await input.app.client.views.open({
         trigger_id: triggerId,
@@ -373,39 +275,6 @@ export function registerSlackUserQuestionHandlers(input: {
       await input.finalizePrompt(pending, text, answeredBy);
       return;
     }
-    const callback = await findDurableQuestionInteractionByCallbackId({
-      callbackId: meta.callback.providerAlias,
-      scope: meta.callback.scope,
-      questionIndex: meta.callback.questionIndex,
-    });
-    if (!callback || !meta.channelId || !userId) return;
-    const durable = await findDurableQuestionInteractionByRequestId({
-      requestId: callback.requestId,
-      appId: callback.appId,
-      sourceAgentFolder: callback.sourceAgentFolder,
-    });
-    const question = durable?.request?.questions[callback.questionIndex];
-    if (
-      !durable ||
-      !question ||
-      durable.targetJid !== `sl:${meta.channelId}` ||
-      !(await input.canAnswer(
-        userId,
-        durable.sourceAgentFolder,
-        durable.targetJid,
-      ))
-    ) {
-      return;
-    }
-    await resolveDurableQuestionAnswersByRequestId({
-      requestId: callback.requestId,
-      appId: callback.appId,
-      sourceAgentFolder: callback.sourceAgentFolder,
-      answers: {
-        [question.question]: question.multiSelect ? [text] : text,
-      },
-      answeredBy,
-    });
   });
 }
 

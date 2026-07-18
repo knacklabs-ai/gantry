@@ -849,6 +849,100 @@ maybeDescribe('multi-worker coordination acceptance gates', () => {
     expect(pendingAfter.map((row) => row.id)).not.toContain('interaction-1');
   });
 
+  it('reopens only cancelled questions and admits one concurrent re-ask', async () => {
+    const cancelledKey =
+      'test-default:question:scheduler_agent:req-question-reask';
+    await coordination.createPendingInteraction({
+      id: 'question-orphan',
+      appId: 'default',
+      kind: 'question',
+      payload: { question: 'Old payload' },
+      idempotencyKey: cancelledKey,
+      expiresAt: toIso(nowMs() + 60_000),
+    });
+    await coordination.resolvePendingInteraction({
+      idempotencyKey: cancelledKey,
+      status: 'cancelled',
+      resolution: { answers: {}, reason: 'restart' },
+    });
+
+    const reopened = await coordination.createPendingInteraction({
+      id: 'question-reopened',
+      appId: 'default',
+      kind: 'question',
+      payload: { question: 'Fresh payload' },
+      idempotencyKey: cancelledKey,
+      expiresAt: toIso(nowMs() + 120_000),
+    });
+    expect(reopened).toMatchObject({
+      id: 'question-reopened',
+      status: 'pending',
+      payload: { question: 'Fresh payload' },
+      resolution: null,
+      resolvedAt: null,
+    });
+
+    await coordination.resolvePendingInteraction({
+      idempotencyKey: cancelledKey,
+      status: 'resolved',
+      resolution: { answers: { question: 'Answered' } },
+    });
+    const answeredCollision = await coordination.createPendingInteraction({
+      id: 'question-after-answer',
+      appId: 'default',
+      kind: 'question',
+      payload: { question: 'Must not replace the answer' },
+      idempotencyKey: cancelledKey,
+      expiresAt: toIso(nowMs() + 180_000),
+    });
+    expect(answeredCollision).toMatchObject({
+      id: 'question-reopened',
+      status: 'resolved',
+      payload: { question: 'Fresh payload' },
+      resolution: { answers: { question: 'Answered' } },
+    });
+
+    const concurrentKey =
+      'test-default:question:scheduler_agent:req-question-concurrent';
+    await coordination.createPendingInteraction({
+      id: 'question-concurrent-orphan',
+      appId: 'default',
+      kind: 'question',
+      payload: { attempt: 'orphan' },
+      idempotencyKey: concurrentKey,
+      expiresAt: toIso(nowMs() + 60_000),
+    });
+    await coordination.resolvePendingInteraction({
+      idempotencyKey: concurrentKey,
+      status: 'cancelled',
+      resolution: { answers: {}, reason: 'restart' },
+    });
+    const attempts = ['question-concurrent-a', 'question-concurrent-b'];
+    const results = await Promise.all(
+      attempts.map((id) =>
+        coordination.createPendingInteraction({
+          id,
+          appId: 'default',
+          kind: 'question',
+          payload: { attempt: id },
+          idempotencyKey: concurrentKey,
+          expiresAt: toIso(nowMs() + 120_000),
+        }),
+      ),
+    );
+    expect(new Set(results.map((row) => row.id))).toEqual(
+      new Set([results[0]!.id]),
+    );
+    expect(attempts).toContain(results[0]!.id);
+    expect(
+      results.filter((row, index) => row.id === attempts[index]).length,
+    ).toBe(1);
+    expect(results).toEqual([
+      expect.objectContaining({ status: 'pending' }),
+      expect.objectContaining({ status: 'pending' }),
+    ]);
+  });
+
   it('restores a claimed batch alias on release and rejects it while claimed', async () => {
     const callbackId = 'batch:req-atomic-1:2';
     const providerCallbackId = 'opaque-batch-callback';

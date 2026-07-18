@@ -666,7 +666,7 @@ export async function processUserQuestionInteractionIpc(input: {
   logger: IpcInteractionLogger;
 }): Promise<void> {
   try {
-    const recovery = await beginDurableQuestionInteraction({
+    const began = await beginDurableQuestionInteraction({
       request: input.request,
       sourceAgentFolder: input.sourceAgentFolder,
       payload: {
@@ -693,68 +693,61 @@ export async function processUserQuestionInteractionIpc(input: {
           ) ?? null,
       },
     });
-    const recoveryEnvelope = recovery?.envelope;
-    const request = recoveryEnvelope
-      ? {
-          ...recoveryEnvelope.request,
-          targetJid: recoveryEnvelope.targetJid ?? undefined,
-          threadId: recoveryEnvelope.threadId ?? undefined,
-          recoveryStartIndex: recoveryEnvelope.nextQuestionIndex ?? undefined,
-        }
-      : input.request;
-    const processingInput = { ...input, request };
-    let response: UserQuestionResponse;
-    if (recovery?.status === 'resolved') {
-      response = {
-        requestId: request.requestId,
-        answers: recovery.answers,
-        ...(recovery.approverRef ? { answeredBy: recovery.approverRef } : {}),
-      };
-    } else {
-      await publishPendingInteractionRuntimeEvent(
-        input.deps,
-        request,
-        'question',
-        input.sourceAgentFolder,
-      );
-      await assertActiveScheduledQuestionLease(processingInput);
-      const promptedResponse =
-        recoveryEnvelope?.nextQuestionIndex === null
-          ? null
-          : await processUserQuestionIpcRequest(request, {
-              requestUserAnswer: input.deps.requestUserAnswer,
-            });
-      response = {
-        requestId: request.requestId,
-        answers: {
-          ...(recoveryEnvelope?.answers ?? {}),
-          ...(promptedResponse?.answers ?? {}),
+    if (!began) {
+      input.logger.warn(
+        {
+          requestId: input.request.requestId,
+          sourceAgentFolder: input.sourceAgentFolder,
         },
-        ...(promptedResponse?.answeredBy
-          ? { answeredBy: promptedResponse.answeredBy }
-          : {}),
-      };
-      await assertActiveScheduledQuestionLease(processingInput);
-      const resolved = await finishDurableQuestionInteraction({
-        request,
-        sourceAgentFolder: input.sourceAgentFolder,
-        response,
-      });
-      if (!resolved) {
-        incrementOperationalError('interaction', 'user_question_request');
-        input.logger.warn(
-          {
-            sourceAgentFolder: input.sourceAgentFolder,
-            requestId: request.requestId,
-            appId: request.appId,
-            agentId: request.agentId,
-            runId: request.runId,
-            jobId: request.jobId,
-          },
-          'Withholding user question IPC response because durable resolution failed',
-        );
-        return;
-      }
+        'Withholding orphaned user question IPC after restart',
+      );
+      archiveIpcErrorFile(
+        input.ipcBaseDir,
+        input.sourceAgentFolder,
+        input.file,
+        input.claimedPath,
+      );
+      return;
+    }
+    const request = input.request;
+    const processingInput = { ...input, request };
+    await publishPendingInteractionRuntimeEvent(
+      input.deps,
+      request,
+      'question',
+      input.sourceAgentFolder,
+    );
+    await assertActiveScheduledQuestionLease(processingInput);
+    const promptedResponse = await processUserQuestionIpcRequest(request, {
+      requestUserAnswer: input.deps.requestUserAnswer,
+    });
+    const response: UserQuestionResponse = {
+      requestId: request.requestId,
+      answers: promptedResponse.answers,
+      ...(promptedResponse.answeredBy
+        ? { answeredBy: promptedResponse.answeredBy }
+        : {}),
+    };
+    await assertActiveScheduledQuestionLease(processingInput);
+    const resolved = await finishDurableQuestionInteraction({
+      request,
+      sourceAgentFolder: input.sourceAgentFolder,
+      response,
+    });
+    if (!resolved) {
+      incrementOperationalError('interaction', 'user_question_request');
+      input.logger.warn(
+        {
+          sourceAgentFolder: input.sourceAgentFolder,
+          requestId: request.requestId,
+          appId: request.appId,
+          agentId: request.agentId,
+          runId: request.runId,
+          jobId: request.jobId,
+        },
+        'Withholding user question IPC response because durable resolution failed',
+      );
+      return;
     }
     await assertActiveScheduledQuestionLease(processingInput);
     writeUserQuestionIpcResponse(

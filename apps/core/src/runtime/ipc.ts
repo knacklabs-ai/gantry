@@ -1,7 +1,6 @@
 import path from 'path';
 
 import { DATA_DIR, IPC_POLL_INTERVAL } from '../config/index.js';
-import { isValidWorkspaceFolder } from '../platform/workspace-folder.js';
 import { logger } from '../infrastructure/logging/logger.js';
 import { DurableInteractionPersistenceError } from '../application/interactions/pending-interaction-persistence-error.js';
 // prettier-ignore
@@ -24,8 +23,11 @@ import { processBrowserRequestDirectory } from './ipc-browser-requests.js';
 import { canProcessIpcFile, clearIpcRateLimitState } from './ipc-rate-limit.js';
 // prettier-ignore
 import { validatePermissionIpcJobExecutionTarget, validateUserQuestionIpcJobExecutionTarget } from './ipc-scheduled-interaction-validation.js';
-import type { ConversationRoute as RuntimeGroupRecord } from '../domain/types.js';
 import { deliverIpcMessage } from './ipc-message-delivery.js';
+import {
+  resolveIpcFoldersFromGroups,
+  resolveIpcTargetJidForSourceGroup,
+} from './ipc-folder-resolve.js';
 import { FilesystemRunnerControlPort } from './filesystem-runner-control-port.js';
 // prettier-ignore
 import { IpcRequestWakeupRegistry, type IpcRequestWakeupHint } from './ipc-request-wakeup-registry.js';
@@ -36,6 +38,7 @@ import { incrementOperationalError } from '../shared/operational-error-counters.
 export type { IpcDeps } from './ipc-domain-types.js';
 export { processTaskIpc } from '../jobs/ipc-handler.js';
 export { validateIpcAuthRequest } from './ipc-auth-validation.js';
+export { resolveIpcFoldersFromGroups, resolveIpcTargetJidForSourceGroup };
 export {
   validatePermissionIpcJobExecutionTarget,
   validateUserQuestionIpcJobExecutionTarget,
@@ -47,28 +50,6 @@ let activeRunnerControlPort: FilesystemRunnerControlPort | undefined;
 let activeRequestWakeups: IpcRequestWakeupRegistry | undefined;
 const MAX_IN_FLIGHT_INTERACTION_IPC = 100;
 const inFlightInteractionIpc = new Set<string>();
-
-export function resolveIpcFoldersFromGroups(
-  groupRegistry: Record<string, RuntimeGroupRecord>,
-): string[] {
-  return Array.from(
-    new Set(
-      Object.values(groupRegistry)
-        .map((group) => group.folder)
-        .filter((folder): folder is string => isValidWorkspaceFolder(folder)),
-    ),
-  );
-}
-
-export function resolveIpcTargetJidForSourceGroup(
-  groupRegistry: Record<string, RuntimeGroupRecord>,
-  sourceAgentFolder: string,
-): string | undefined {
-  for (const [jid, group] of Object.entries(groupRegistry)) {
-    if (group.folder === sourceAgentFolder) return jid;
-  }
-  return undefined;
-}
 
 function releaseIpcRootLock(): void {
   if (!ipcRootLockPath) return;

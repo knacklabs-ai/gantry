@@ -592,11 +592,7 @@ export abstract class TelegramChannelDelivery extends TelegramChannelConnect {
     const answers: Record<string, string | string[]> = {};
     let answeredBy: string | undefined;
 
-    for (
-      let i = request.recoveryStartIndex ?? 0;
-      i < request.questions.length;
-      i += 1
-    ) {
+    for (let i = 0; i < request.questions.length; i += 1) {
       const question = request.questions[i];
       const pendingKey = this.pendingUserQuestionKey(
         request.appId || 'default',

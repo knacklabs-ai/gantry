@@ -44,14 +44,19 @@ import {
   type DiscordConversationContextCache,
 } from './discord-conversation-context.js';
 import { DiscordInteractionHandler } from './discord-interactions.js';
+import {
+  discordHeaders,
+  discordRateLimitRetryDelayMs,
+  discordReactionEmoji,
+  userName,
+  waitDiscordRetryDelay,
+} from './discord-http-helpers.js';
 import { StreamResetEpochs } from './stream-reset-epochs.js';
 
 export const DISCORD_JID_PREFIX = 'dc:';
 
 const DISCORD_API_ROOT = 'https://discord.com/api/v10';
 const DISCORD_GATEWAY_INTENTS = (1 << 0) | (1 << 9) | (1 << 12) | (1 << 15);
-const DISCORD_RETRY_DELAY_FALLBACK_MS = 1000;
-const DISCORD_RETRY_DELAY_MAX_MS = 5000;
 const DISCORD_MESSAGE_CHANNEL_CACHE_TTL_MS = 10 * 60 * 1000;
 const DISCORD_MESSAGE_CHANNEL_CACHE_MAX_ENTRIES = 5000;
 
@@ -71,57 +76,6 @@ export function normalizeDiscordJid(raw: string): string | null {
 export function discordChannelIdFromJid(jid: string): string | null {
   const normalized = normalizeDiscordJid(jid);
   return normalized ? normalized.slice(DISCORD_JID_PREFIX.length) : null;
-}
-
-function discordHeaders(token: string): Record<string, string> {
-  return {
-    authorization: `Bot ${token}`,
-    accept: 'application/json',
-    'content-type': 'application/json',
-  };
-}
-
-function discordReactionEmoji(emoji: string): string {
-  if (emoji === 'seen') return '👀';
-  if (emoji === 'running') return '⏳';
-  return emoji;
-}
-
-function discordRateLimitRetryDelayMs(response: Response): number | null {
-  if (response.status !== 429) return null;
-  const retryAfter =
-    response.headers.get('retry-after') ??
-    response.headers.get('x-ratelimit-reset-after');
-  if (retryAfter) {
-    const seconds = Number.parseFloat(retryAfter);
-    if (Number.isFinite(seconds) && seconds > 0) {
-      return Math.min(
-        DISCORD_RETRY_DELAY_MAX_MS,
-        Math.max(1, Math.round(seconds * 1000)),
-      );
-    }
-  }
-  const resetSeconds = Number.parseFloat(
-    response.headers.get('x-ratelimit-reset') ?? '',
-  );
-  if (Number.isFinite(resetSeconds) && resetSeconds > 0) {
-    const delayMs = resetSeconds * 1000 - Date.now();
-    if (delayMs > 0) {
-      return Math.min(DISCORD_RETRY_DELAY_MAX_MS, Math.round(delayMs));
-    }
-  }
-  return DISCORD_RETRY_DELAY_FALLBACK_MS;
-}
-
-async function waitDiscordRetryDelay(delayMs: number): Promise<void> {
-  await new Promise<void>((resolve) => {
-    const timer = setTimeout(resolve, delayMs);
-    timer.unref?.();
-  });
-}
-
-function userName(user: DiscordUser | undefined, fallback = 'unknown'): string {
-  return user?.username || user?.id || fallback;
 }
 
 function websocketFactory(url: string): WebSocketLike {

@@ -11,7 +11,10 @@ import { createIpcAuthEnvelope } from '@core/runtime/ipc-auth.js';
 import { agentIdForFolder } from '@core/domain/agent/agent-folder-id.js';
 import { semanticCapabilityInputSchema } from '@core/shared/semantic-capabilities.js';
 import { makeAgentThreadQueueKey } from '@core/shared/thread-queue-key.js';
-import type { PendingInteraction } from '@core/domain/ports/worker-coordination.js';
+import type {
+  PendingInteraction,
+  PendingInteractionRepository,
+} from '@core/domain/ports/worker-coordination.js';
 import type {
   QuestionRecoveryEnvelope,
   UserQuestionRequest,
@@ -1953,12 +1956,12 @@ describe('ipc-interaction-handler', () => {
     ).toBe(false);
   });
 
-  it('resumes a durable question from its persisted next index and merges prior answers', async () => {
+  it('dispatches and resolves a single question through the live loop', async () => {
     const signing = createIpcAuthEnvelope('main_agent', 'persisted-thread');
-    const claimedPath = path.join(tempDir, 'claimed-recovered-question.json');
+    const claimedPath = path.join(tempDir, 'claimed-single-question.json');
     fs.writeFileSync(claimedPath, '{}');
     const persistedRequest: UserQuestionRequest = {
-      requestId: 'question-restart-partial',
+      requestId: 'question-live-single',
       appId: 'app:test',
       sourceAgentFolder: 'main_agent',
       targetJid: 'slack:persisted',
@@ -1971,12 +1974,6 @@ describe('ipc-interaction-handler', () => {
           options: [{ label: 'Alpha', description: 'Choose alpha' }],
           multiSelect: false,
         },
-        {
-          header: 'Second',
-          question: 'Second question?',
-          options: [{ label: 'Beta', description: 'Choose beta' }],
-          multiSelect: false,
-        },
       ],
     };
     const persisted = durableQuestionInteraction({
@@ -1986,11 +1983,10 @@ describe('ipc-interaction-handler', () => {
         targetJid: 'slack:persisted',
         threadId: 'persisted-thread',
         request: persistedRequest,
-        nextQuestionIndex: 1,
         callbacks: {},
         selections: [],
-        answers: { 'First question?': 'Alpha' },
-        completedQuestionIndexes: [0],
+        answers: {},
+        completedQuestionIndexes: [],
         deliveredQuestionIndexes: [0],
         otherPrompts: {},
       },
@@ -1998,54 +1994,36 @@ describe('ipc-interaction-handler', () => {
     const resolvePendingInteraction = vi.fn(async () => true);
     configurePendingInteractionDurability({
       repository: {
-        createPendingInteraction: vi.fn(async () => persisted),
+        createPendingInteraction: vi.fn(async (input) => ({
+          ...persisted,
+          id: input.id,
+        })),
         resolvePendingInteraction,
         createTransientGrant: vi.fn(async () => true),
       } as never,
     });
     const requestUserAnswer = vi.fn(async () => ({
       requestId: persistedRequest.requestId,
-      answers: { 'Second question?': 'Beta' },
+      answers: { 'First question?': 'Alpha' },
       answeredBy: 'owner',
     }));
 
     await processUserQuestionInteractionIpc({
-      request: {
-        requestId: persistedRequest.requestId,
-        appId: 'app:test',
-        sourceAgentFolder: 'main_agent',
-        targetJid: 'slack:incoming',
-        threadId: 'incoming-thread',
-        responseKeyId: signing.responseKeyId,
-        questions: [
-          {
-            header: 'Wrong',
-            question: 'Incoming question?',
-            options: [],
-            multiSelect: false,
-          },
-        ],
-      },
+      request: persistedRequest,
       sourceAgentFolder: 'main_agent',
       deps: { requestUserAnswer },
       ipcBaseDir: tempDir,
-      file: 'claimed-recovered-question.json',
+      file: 'claimed-single-question.json',
       claimedPath,
       logger: { warn: vi.fn(), error: vi.fn(), info: vi.fn() },
     });
 
-    expect(requestUserAnswer).toHaveBeenCalledWith({
-      ...persistedRequest,
-      recoveryStartIndex: 1,
-    });
+    expect(requestUserAnswer).toHaveBeenCalledOnce();
+    expect(requestUserAnswer).toHaveBeenCalledWith(persistedRequest);
     expect(resolvePendingInteraction).toHaveBeenCalledWith(
       expect.objectContaining({
-        resolution: {
-          answers: {
-            'First question?': 'Alpha',
-            'Second question?': 'Beta',
-          },
-        },
+        status: 'resolved',
+        resolution: { answers: { 'First question?': 'Alpha' } },
       }),
     );
     const response = JSON.parse(
@@ -2061,22 +2039,105 @@ describe('ipc-interaction-handler', () => {
     );
     expect(response).toMatchObject({
       requestId: persistedRequest.requestId,
-      answers: {
-        'First question?': 'Alpha',
-        'Second question?': 'Beta',
-      },
+      answers: { 'First question?': 'Alpha' },
       answeredBy: 'owner',
     });
   });
 
-  it('replays a resolved durable question without opening a fresh prompt', async () => {
-    const signing = createIpcAuthEnvelope('main_agent', 'persisted-thread');
-    const claimedPath = path.join(tempDir, 'claimed-complete-question.json');
+  it('dispatches a fresh multi-question interaction once through the live loop', async () => {
+    const signing = createIpcAuthEnvelope('main_agent', 'multi-thread');
+    const claimedPath = path.join(tempDir, 'claimed-multi-question.json');
+    fs.writeFileSync(claimedPath, '{}');
+    const request: UserQuestionRequest = {
+      requestId: 'question-live-multi',
+      sourceAgentFolder: 'main_agent',
+      threadId: 'multi-thread',
+      responseKeyId: signing.responseKeyId,
+      questions: [
+        {
+          header: 'First',
+          question: 'First question?',
+          options: [{ label: 'Alpha', description: '' }],
+          multiSelect: false,
+        },
+        {
+          header: 'Second',
+          question: 'Second question?',
+          options: [{ label: 'Beta', description: '' }],
+          multiSelect: false,
+        },
+      ],
+    };
+    const pending = durableQuestionInteraction({
+      request,
+      envelope: {
+        version: 1,
+        targetJid: null,
+        threadId: 'multi-thread',
+        request,
+        callbacks: {},
+        selections: [],
+        answers: {},
+        completedQuestionIndexes: [],
+        deliveredQuestionIndexes: [],
+        otherPrompts: {},
+      },
+    });
+    const resolvePendingInteraction = vi.fn(async () => true);
+    configurePendingInteractionDurability({
+      repository: {
+        createPendingInteraction: vi.fn(async (input) => ({
+          ...pending,
+          id: input.id,
+        })),
+        resolvePendingInteraction,
+        createTransientGrant: vi.fn(async () => true),
+      } as never,
+    });
+    const requestUserAnswer = vi.fn(async () => ({
+      requestId: request.requestId,
+      answers: {
+        'First question?': 'Alpha',
+        'Second question?': 'Beta',
+      },
+    }));
+
+    await processUserQuestionInteractionIpc({
+      request,
+      sourceAgentFolder: 'main_agent',
+      deps: { requestUserAnswer },
+      ipcBaseDir: tempDir,
+      file: 'claimed-multi-question.json',
+      claimedPath,
+      logger: { warn: vi.fn(), error: vi.fn(), info: vi.fn() },
+    });
+
+    expect(requestUserAnswer).toHaveBeenCalledOnce();
+    expect(requestUserAnswer).toHaveBeenCalledWith(request);
+    expect(resolvePendingInteraction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: 'resolved',
+        resolution: {
+          answers: {
+            'First question?': 'Alpha',
+            'Second question?': 'Beta',
+          },
+        },
+      }),
+    );
+  });
+
+  it('cancels and reopens an orphaned question under the incoming active lease', async () => {
+    const signing = createIpcAuthEnvelope('main_agent', 'incoming-thread');
+    const claimedPath = path.join(tempDir, 'claimed-recovered-question.json');
     fs.writeFileSync(claimedPath, '{}');
     const persistedRequest: UserQuestionRequest = {
-      requestId: 'question-restart-complete',
+      requestId: 'question-restart-partial',
       appId: 'app:test',
       sourceAgentFolder: 'main_agent',
+      runId: 'run:test',
+      runLeaseToken: 'test-lease-old-token',
+      runLeaseFencingVersion: 7,
       targetJid: 'slack:persisted',
       threadId: 'persisted-thread',
       responseKeyId: signing.responseKeyId,
@@ -2095,56 +2156,149 @@ describe('ipc-interaction-handler', () => {
         },
       ],
     };
-    const persisted = durableQuestionInteraction({
+    const persistedBase = durableQuestionInteraction({
       request: persistedRequest,
-      status: 'resolved',
-      resolvedAnswers: {
-        'First question?': 'Alpha',
-        'Second question?': 'Beta',
-      },
       envelope: {
         version: 1,
         targetJid: 'slack:persisted',
         threadId: 'persisted-thread',
         request: persistedRequest,
-        nextQuestionIndex: 0,
         callbacks: {},
         selections: [],
-        answers: {},
-        completedQuestionIndexes: [],
-        deliveredQuestionIndexes: [0, 1],
+        answers: { 'First question?': 'Alpha' },
+        completedQuestionIndexes: [0],
+        deliveredQuestionIndexes: [0],
         otherPrompts: {},
       },
     });
+    const persisted = {
+      ...persistedBase,
+      runId: 'run:test',
+      payload: {
+        ...persistedBase.payload,
+        runLeaseToken: 'test-lease-old-token',
+        runLeaseFencingVersion: 7,
+      },
+    } satisfies PendingInteraction;
+    const incomingRequest: UserQuestionRequest = {
+      requestId: persistedRequest.requestId,
+      appId: 'app:test',
+      sourceAgentFolder: 'main_agent',
+      runId: 'run:test',
+      runLeaseToken: 'test-lease-new-token',
+      runLeaseFencingVersion: 8,
+      targetJid: 'slack:incoming',
+      threadId: 'incoming-thread',
+      responseKeyId: signing.responseKeyId,
+      questions: [
+        {
+          header: 'Current',
+          question: 'Incoming question?',
+          options: [{ label: 'Gamma', description: 'Choose gamma' }],
+          multiSelect: false,
+        },
+      ],
+    };
+    let row = persisted;
+    let reopenCount = 0;
+    const createPendingInteraction = vi.fn(
+      async (
+        input: Parameters<
+          PendingInteractionRepository['createPendingInteraction']
+        >[0],
+      ) => {
+        if (row.status === 'cancelled') {
+          reopenCount += 1;
+          row = {
+            ...row,
+            id: input.id,
+            runId: input.runId ?? null,
+            status: 'pending',
+            payload: input.payload,
+            callbackRoute: input.callbackRoute ?? null,
+            resolution: null,
+            approverRef: null,
+            resolvedAt: null,
+          };
+        }
+        return row;
+      },
+    );
+    const cancelPendingQuestionInteractionIfRunLeaseInactive = vi.fn(
+      async ({
+        id,
+        resolution,
+      }: Parameters<
+        PendingInteractionRepository['cancelPendingQuestionInteractionIfRunLeaseInactive']
+      >[0]) => {
+        if (
+          row.id !== id ||
+          row.status !== 'pending' ||
+          row.payload.runLeaseToken !== 'test-lease-old-token' ||
+          row.payload.runLeaseFencingVersion !== 7
+        ) {
+          return false;
+        }
+        row = {
+          ...row,
+          status: 'cancelled',
+          resolution,
+          resolvedAt: '2026-07-17T00:01:00.000Z',
+        };
+        return true;
+      },
+    );
     const resolvePendingInteraction = vi.fn(async () => true);
     configurePendingInteractionDurability({
       repository: {
-        createPendingInteraction: vi.fn(async () => persisted),
+        getActiveRunLease: vi.fn(async () => ({
+          runId: 'run:test',
+          jobId: null,
+          workerInstanceId: 'worker-2',
+          leaseToken: 'test-lease-new-token',
+          fencingVersion: 8,
+          status: 'active',
+          claimedAt: '2026-07-17T00:01:00.000Z',
+          expiresAt: '2026-07-18T00:00:00.000Z',
+          heartbeatAt: '2026-07-17T00:01:00.000Z',
+        })),
+        createPendingInteraction,
+        cancelPendingQuestionInteractionIfRunLeaseInactive,
         resolvePendingInteraction,
         createTransientGrant: vi.fn(async () => true),
       } as never,
     });
-    const requestUserAnswer = vi.fn();
-    const publishRuntimeEvent = vi.fn();
+    const requestUserAnswer = vi.fn(async () => ({
+      requestId: incomingRequest.requestId,
+      answers: { 'Incoming question?': 'Gamma' },
+      answeredBy: 'incoming-owner',
+    }));
 
     await processUserQuestionInteractionIpc({
-      request: {
-        ...persistedRequest,
-        targetJid: 'slack:incoming',
-        threadId: 'incoming-thread',
-        questions: [],
-      },
+      request: incomingRequest,
       sourceAgentFolder: 'main_agent',
-      deps: { requestUserAnswer, publishRuntimeEvent },
+      deps: { requestUserAnswer },
       ipcBaseDir: tempDir,
-      file: 'claimed-complete-question.json',
+      file: 'claimed-recovered-question.json',
       claimedPath,
       logger: { warn: vi.fn(), error: vi.fn(), info: vi.fn() },
     });
 
-    expect(requestUserAnswer).not.toHaveBeenCalled();
-    expect(publishRuntimeEvent).not.toHaveBeenCalled();
-    expect(resolvePendingInteraction).not.toHaveBeenCalled();
+    expect(
+      cancelPendingQuestionInteractionIfRunLeaseInactive,
+    ).toHaveBeenCalledOnce();
+    expect(createPendingInteraction).toHaveBeenCalledTimes(2);
+    expect(reopenCount).toBe(1);
+    expect(requestUserAnswer).toHaveBeenCalledOnce();
+    expect(requestUserAnswer).toHaveBeenCalledWith(incomingRequest);
+    expect(resolvePendingInteraction).toHaveBeenCalledOnce();
+    expect(resolvePendingInteraction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: 'resolved',
+        resolution: { answers: { 'Incoming question?': 'Gamma' } },
+      }),
+    );
+    expect(fs.existsSync(claimedPath)).toBe(false);
     const response = JSON.parse(
       fs.readFileSync(
         path.join(
@@ -2157,12 +2311,9 @@ describe('ipc-interaction-handler', () => {
       ),
     );
     expect(response).toMatchObject({
-      requestId: persistedRequest.requestId,
-      answers: {
-        'First question?': 'Alpha',
-        'Second question?': 'Beta',
-      },
-      answeredBy: 'owner',
+      requestId: incomingRequest.requestId,
+      answers: { 'Incoming question?': 'Gamma' },
+      answeredBy: 'incoming-owner',
     });
   });
 

@@ -26,6 +26,11 @@ export interface PendingDiscordPermission {
 
 const settling = new WeakSet<object>();
 
+export function timeoutRetryDelays(timeoutMs: number): [number, number] {
+  const firstDelay = Math.floor(timeoutMs / 3);
+  return [firstDelay, timeoutMs - firstDelay];
+}
+
 export function pending(
   callback: PendingDiscordPermission['callback'],
   request: PermissionApprovalRequest,

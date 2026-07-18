@@ -40,6 +40,23 @@ export const TELEGRAM_USER_QUESTION_CALLBACK_PATTERN =
 export const TELEGRAM_DEAD_LETTER_ACTION_CALLBACK_PATTERN =
   /^dl:(retry|logs|pause|open)(?::(.+))?$/;
 
+export function sanitizeTelegramErrorMessage(
+  err: unknown,
+  botToken: string,
+): string {
+  const message =
+    err instanceof Error
+      ? err.message
+      : typeof err === 'object' &&
+          err !== null &&
+          'message' in err &&
+          typeof (err as { message?: unknown }).message === 'string'
+        ? ((err as { message: string }).message ?? '')
+        : String(err);
+  if (!message) return message;
+  return message.split(botToken).join('[REDACTED_BOT_TOKEN]');
+}
+
 export type TelegramContext = StreamFlavor<Context>;
 export type TelegramStreamApi = ReturnType<typeof streamApi>;
 export type ActiveDraftStreamState = {

@@ -1,4 +1,13 @@
-import { and, eq, exists, notExists, or, sql } from 'drizzle-orm';
+import {
+  and,
+  eq,
+  exists,
+  isNotNull,
+  not,
+  notExists,
+  or,
+  sql,
+} from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 
 import type {
@@ -18,6 +27,7 @@ import type {
 import * as pgSchema from '../schema/schema.js';
 import type { CanonicalDb } from './canonical-graph-repository.postgres.js';
 import { appendLiveTurnCommandInTransaction } from './live-turn-command-row.postgres.js';
+import { activeRunLeaseTokenFence } from './run-lease-fence.postgres.js';
 import { isUniqueViolation } from './worker-coordination-lease.postgres.js';
 
 export function toPendingInteraction(
@@ -58,6 +68,42 @@ export async function createPendingInteractionRow(
   },
 ): Promise<PendingInteraction> {
   const table = pgSchema.pendingInteractionsPostgres;
+  if (input.kind === 'question') {
+    const values = {
+      id: input.id,
+      appId: input.appId,
+      runId: input.runId ?? null,
+      kind: input.kind,
+      status: 'pending' as const,
+      payloadJson: input.payload,
+      callbackRouteJson: input.callbackRoute ?? null,
+      idempotencyKey: input.idempotencyKey,
+      approverRef: null,
+      resolutionJson: null,
+      createdAt: input.now,
+      expiresAt: input.expiresAt,
+      resolvedAt: null,
+    };
+    const rows = await db
+      .insert(table)
+      .values(values)
+      .onConflictDoUpdate({
+        target: table.idempotencyKey,
+        set: values,
+        setWhere: and(
+          eq(table.kind, 'question'),
+          eq(table.status, 'cancelled'),
+        ),
+      })
+      .returning();
+    if (rows[0]) return toPendingInteraction(rows[0]);
+    const existing = await db
+      .select()
+      .from(table)
+      .where(eq(table.idempotencyKey, input.idempotencyKey))
+      .limit(1);
+    return toPendingInteraction(existing[0]!);
+  }
   const incomingPayload = JSON.stringify(input.payload);
   try {
     const rows = await db
@@ -193,6 +239,50 @@ export async function resolvePendingInteractionRow(
     }
     return { resolved: true, command: appended.command };
   });
+}
+
+export async function cancelPendingQuestionInteractionIfRunLeaseInactiveRow(
+  db: CanonicalDb,
+  input: {
+    id: string;
+    resolution: Record<string, unknown>;
+    now: string;
+  },
+): Promise<boolean> {
+  const table = pgSchema.pendingInteractionsPostgres;
+  const leaseToken = sql`${table.payloadJson} ->> 'runLeaseToken'`;
+  const fencingVersionText = sql`${table.payloadJson} ->> 'runLeaseFencingVersion'`;
+  const fencingVersion = sql`(${fencingVersionText})::numeric`;
+  const rows = await db
+    .update(table)
+    .set({
+      status: 'cancelled',
+      resolutionJson: input.resolution,
+      approverRef: null,
+      resolvedAt: input.now,
+    })
+    .where(
+      and(
+        eq(table.id, input.id),
+        eq(table.kind, 'question'),
+        eq(table.status, 'pending'),
+        isNotNull(table.runId),
+        sql`jsonb_typeof(${table.payloadJson} -> 'runLeaseToken') = 'string'`,
+        sql`length(${leaseToken}) > 0`,
+        sql`jsonb_typeof(${table.payloadJson} -> 'runLeaseFencingVersion') = 'number'`,
+        sql`${fencingVersionText} ~ '^[1-9][0-9]*$'`,
+        not(
+          activeRunLeaseTokenFence({
+            runId: sql`${table.runId}`,
+            leaseToken,
+            fencingVersion,
+            now: input.now,
+          }),
+        ),
+      ),
+    )
+    .returning({ id: table.id });
+  return rows.length > 0;
 }
 
 export async function updatePendingInteractionPayloadRow(

@@ -1,8 +1,6 @@
 import { ASSISTANT_NAME, TRIGGER_PATTERN } from '../../config/index.js';
 import {
   bindPendingQuestionOtherPrompt,
-  findDurableQuestionInteractionByCallbackId,
-  findDurableQuestionInteractionByRequestId,
   resolveDurableQuestionInteractionByRequestId,
 } from '../../application/interactions/pending-interaction-durability.js';
 import { logger } from '../../infrastructure/logging/logger.js';
@@ -68,148 +66,32 @@ export abstract class TelegramChannelConnect extends TelegramChannelPrompts {
       if (userQuestionMatch) {
         const action = userQuestionMatch[1] as 'select' | 'done' | 'other';
         const callbackId = userQuestionMatch[2];
-        let callbackTarget =
+        const callbackTarget =
           this.pendingUserQuestionCallbackIds.get(callbackId);
-        let recoveredCallbackTarget:
-          | Awaited<
-              ReturnType<typeof findDurableQuestionInteractionByCallbackId>
-            >
-          | undefined;
-        if (!callbackTarget && callbackId.startsWith('q')) {
-          recoveredCallbackTarget =
-            (await findDurableQuestionInteractionByCallbackId({
-              callbackId,
-              appId: this.opts.appId || 'default',
-            })) ?? undefined;
-          callbackTarget = recoveredCallbackTarget;
+        if (!callbackTarget) {
+          await ctx.answerCallbackQuery({
+            text: 'Question is no longer active.',
+            show_alert: true,
+          });
+          return;
         }
-        const requestId = callbackTarget?.requestId ?? callbackId;
-        const questionIndex =
-          callbackTarget?.questionIndex ??
-          Number.parseInt(userQuestionMatch[3] ?? '', 10);
-        const optionIndex = callbackTarget
-          ? userQuestionMatch[3]
-            ? Number.parseInt(userQuestionMatch[3], 10)
-            : undefined
-          : userQuestionMatch[4]
-            ? Number.parseInt(userQuestionMatch[4], 10)
-            : undefined;
+        const requestId = callbackTarget.requestId;
+        const questionIndex = callbackTarget.questionIndex;
+        const optionIndex = userQuestionMatch[3]
+          ? Number.parseInt(userQuestionMatch[3], 10)
+          : undefined;
         if (!Number.isInteger(questionIndex)) return;
-        const key = callbackTarget
-          ? this.pendingUserQuestionKey(
-              callbackTarget.appId,
-              callbackTarget.sourceAgentFolder,
-              requestId,
-              questionIndex,
-            )
-          : '';
+        const key = this.pendingUserQuestionKey(
+          callbackTarget.appId,
+          callbackTarget.sourceAgentFolder,
+          requestId,
+          questionIndex,
+        );
         const pending = this.pendingUserQuestions.get(key);
         if (!pending) {
-          const callbackChatId =
-            ctx.callbackQuery?.message?.chat?.id?.toString() ||
-            ctx.chat?.id?.toString() ||
-            '';
-          const userId = ctx.from?.id?.toString() || '';
-          const durable = await findDurableQuestionInteractionByRequestId({
-            requestId,
-            appId: callbackTarget?.appId,
-            sourceAgentFolder: callbackTarget?.sourceAgentFolder,
-          });
-          const authorized =
-            durable?.targetJid === `tg:${callbackChatId}` &&
-            userId &&
-            (await this.isTelegramApproverAuthorized(
-              callbackChatId,
-              userId,
-              durable.sourceAgentFolder,
-            ));
-          const answeredBy =
-            ctx.from?.first_name || ctx.from?.username || userId || 'unknown';
-          if (authorized && action === 'other') {
-            const threadId = (
-              ctx.callbackQuery?.message as
-                | { message_thread_id?: number }
-                | undefined
-            )?.message_thread_id;
-            let promptMessageId: number | undefined;
-            try {
-              const prompt = await ctx.api.sendMessage(
-                callbackChatId,
-                'Reply to this message with your answer.',
-                {
-                  ...(typeof threadId === 'number'
-                    ? { message_thread_id: threadId }
-                    : {}),
-                  reply_markup: {
-                    force_reply: true,
-                    input_field_placeholder: 'Type your answer…',
-                  },
-                },
-              );
-              promptMessageId = prompt.message_id;
-            } catch (err) {
-              logger.debug(
-                { requestId, err: this.sanitizeErrorMessage(err) },
-                'Failed to send Telegram durable Other free-text prompt',
-              );
-            }
-            if (promptMessageId === undefined) {
-              await ctx.answerCallbackQuery({
-                text: 'Could not start a free-text reply.',
-                show_alert: true,
-              });
-              return;
-            }
-            const otherPromptBound = await bindPendingQuestionOtherPrompt({
-              callback: {
-                providerAlias: callbackId,
-                scope: {
-                  appId: callbackTarget!.appId,
-                  sourceAgentFolder: callbackTarget!.sourceAgentFolder,
-                  interactionId: requestId,
-                },
-                questionIndex,
-              },
-              promptId: `${callbackChatId}:${promptMessageId}`,
-            });
-            if (!otherPromptBound) {
-              await ctx.answerCallbackQuery({
-                text: 'Could not durably start a free-text reply.',
-                show_alert: true,
-              });
-              return;
-            }
-            this.pendingUserQuestionOtherPrompts.set(
-              `${callbackChatId}:${promptMessageId}`,
-              {
-                appId: callbackTarget!.appId,
-                sourceAgentFolder: callbackTarget!.sourceAgentFolder,
-                requestId,
-                questionIndex,
-              },
-            );
-            await ctx.answerCallbackQuery({ text: 'Reply with your answer.' });
-            return;
-          }
-          const resolved =
-            authorized &&
-            (action === 'done' ||
-              (optionIndex !== undefined && Number.isInteger(optionIndex)))
-              ? await resolveDurableQuestionInteractionByRequestId({
-                  requestId,
-                  appId: callbackTarget?.appId,
-                  sourceAgentFolder: callbackTarget?.sourceAgentFolder,
-                  questionIndex,
-                  optionIndex,
-                  finalize: action === 'done',
-                  answeredBy,
-                })
-              : false;
           await ctx.answerCallbackQuery({
-            text: resolved
-              ? 'Answer recorded. Details will update in chat.'
-              : 'Question is no longer active.',
-            show_alert: !resolved,
+            text: 'Question is no longer active.',
+            show_alert: true,
           });
           return;
         }
@@ -354,7 +236,6 @@ export abstract class TelegramChannelConnect extends TelegramChannelPrompts {
             questionIndex,
             optionIndex,
             finalize: false,
-            answeredBy,
           });
           if (!persisted) {
             await ctx.answerCallbackQuery({

@@ -22,11 +22,9 @@ import {
 import { DurableInteractionPersistenceError } from './pending-interaction-persistence-error.js';
 import {
   createDurableQuestionCallback,
-  questionCallback,
   questionCallbacks,
   readQuestionRecoveryEnvelope,
   type DurableQuestionCallback,
-  type DurableQuestionCallbackContext,
 } from './pending-interaction-question-recovery.js';
 
 export {
@@ -39,10 +37,7 @@ export {
   createDurableQuestionCallback,
   readQuestionRecoveryEnvelope,
 } from './pending-interaction-question-recovery.js';
-export type {
-  DurableQuestionCallback,
-  DurableQuestionCallbackContext,
-} from './pending-interaction-question-recovery.js';
+export type { DurableQuestionCallback } from './pending-interaction-question-recovery.js';
 
 const DEFAULT_APP_ID = 'default';
 
@@ -302,61 +297,6 @@ export async function bindPendingQuestionInteractionCallback(input: {
   }
 }
 
-export async function findDurableQuestionInteractionByCallbackId(input: {
-  callbackId: string;
-  appId?: string | null;
-  scope?: DurableQuestionCallback['scope'];
-  questionIndex?: number;
-}): Promise<DurableQuestionCallbackContext | null> {
-  const active = backend;
-  if (!active) return null;
-  const appId = input.scope?.appId || input.appId || DEFAULT_APP_ID;
-  try {
-    const pending = (
-      await active.repository.listPendingInteractions({
-        appId,
-      })
-    ).find((interaction) => {
-      const callback = questionCallback(
-        readQuestionRecoveryEnvelope(
-          interaction.payload.questionRecoveryEnvelope,
-        )?.callbacks,
-        input.callbackId,
-      );
-      return (
-        interaction.kind === 'question' &&
-        interaction.status === 'pending' &&
-        callback?.appId === appId &&
-        interaction.idempotencyKey ===
-          idempotencyKey({
-            kind: 'question',
-            sourceAgentFolder: callback.sourceAgentFolder,
-            requestId: callback.requestId,
-            appId: callback.appId,
-          }) &&
-        (!input.scope ||
-          (callback.sourceAgentFolder === input.scope.sourceAgentFolder &&
-            callback.requestId === input.scope.interactionId)) &&
-        (input.questionIndex === undefined ||
-          callback.questionIndex === input.questionIndex)
-      );
-    });
-    return pending
-      ? questionCallback(
-          readQuestionRecoveryEnvelope(pending.payload.questionRecoveryEnvelope)
-            ?.callbacks,
-          input.callbackId,
-        )
-      : null;
-  } catch (err) {
-    active.warn?.(
-      { err, callbackId: input.callbackId },
-      'Failed to find durable question interaction callback',
-    );
-    return null;
-  }
-}
-
 export async function bindPendingQuestionOtherPrompt(input: {
   callback: DurableQuestionCallback;
   promptId: string;
@@ -414,31 +354,6 @@ export async function bindPendingQuestionOtherPrompt(input: {
       err,
     );
   }
-}
-
-export async function findDurableQuestionOtherPrompt(input: {
-  appId?: string | null;
-  promptId: string;
-}): Promise<DurableQuestionCallbackContext | null> {
-  const active = backend;
-  if (!active) return null;
-  const appId = input.appId || DEFAULT_APP_ID;
-  const pending = (
-    await active.repository.listPendingInteractions({ appId })
-  ).find((interaction) => {
-    const envelope = readQuestionRecoveryEnvelope(
-      interaction.payload.questionRecoveryEnvelope,
-    );
-    return (
-      interaction.kind === 'question' &&
-      interaction.status === 'pending' &&
-      Boolean(envelope?.otherPrompts[input.promptId])
-    );
-  });
-  const envelope = readQuestionRecoveryEnvelope(
-    pending?.payload.questionRecoveryEnvelope,
-  );
-  return envelope?.otherPrompts[input.promptId] ?? null;
 }
 
 export interface DurablePermissionPromptMessageContext {

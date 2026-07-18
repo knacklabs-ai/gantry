@@ -6,12 +6,9 @@ import {
   bindPendingQuestionOtherPrompt,
   claimPermissionInteractionCallback,
   configurePendingInteractionDurability,
-  findDurableQuestionInteractionByCallbackId,
-  findDurableQuestionInteractionByRequestId,
   findDurablePermissionInteractionByPromptMessage,
   findDurablePermissionInteractionByRequestId,
   configurePermissionReviewEachDispatcher,
-  configureQuestionRecoveryDispatcher,
   recordDurableQuestionAnswerProgress,
   recordDurableQuestionPromptDelivered,
   isActiveRunLeaseForInteraction,
@@ -23,7 +20,12 @@ import {
   replayPersistedPermissionDecisionForRequest,
 } from '@core/application/interactions/pending-interaction-durability.js';
 import { configurePendingInteractionPermissionCallbacks } from '@core/application/interactions/pending-interaction-permission-callback.js';
-import { finishDurablePermissionInteraction } from '@core/application/interactions/durable-interaction-handler.js';
+import {
+  beginDurableQuestionInteraction,
+  finishDurablePermissionInteraction,
+  finishDurableQuestionInteraction,
+  runDurableQuestionInteraction,
+} from '@core/application/interactions/durable-interaction-handler.js';
 
 function permissionRow(input: {
   id: string;
@@ -80,7 +82,6 @@ function questionRecoveryEnvelope(
     targetJid,
     threadId: request.threadId ?? null,
     request,
-    nextQuestionIndex: request.questions.length ? 0 : null,
     callbacks,
     selections: [],
     answers: {},
@@ -90,10 +91,37 @@ function questionRecoveryEnvelope(
   };
 }
 
+function pendingQuestionRow(request: any) {
+  return {
+    id: `pending-${request.requestId}`,
+    appId: request.appId || 'default',
+    runId: request.runId ?? null,
+    kind: 'question',
+    status: 'pending',
+    payload: {
+      requestId: request.requestId,
+      sourceAgentFolder: request.sourceAgentFolder,
+      request,
+      questionRecoveryEnvelope: questionRecoveryEnvelope(
+        request,
+        request.targetJid ?? null,
+      ),
+    } as Record<string, unknown>,
+    callbackRoute: null,
+    idempotencyKey: `test-${request.appId || 'default'}:question:${request.sourceAgentFolder}:${request.requestId}`,
+    approverRef: null,
+    resolution: null,
+    createdAt: '2026-07-17T00:00:00.000Z',
+    expiresAt: '2026-07-18T00:00:00.000Z',
+    resolvedAt: null,
+  } as any;
+}
+
 function payloadUpdater(rows: any[]) {
   return vi.fn(
     async (input: {
       idempotencyKey: string;
+      approverRef?: string | null;
       update: (
         payload: Record<string, unknown>,
       ) => Record<string, unknown> | null;
@@ -106,6 +134,9 @@ function payloadUpdater(rows: any[]) {
       const next = input.update(row.payload);
       if (!next) return false;
       row.payload = next;
+      if (input.approverRef !== undefined) {
+        row.approverRef = input.approverRef;
+      }
       return true;
     },
   );
@@ -357,7 +388,6 @@ describe('pending interaction durability', () => {
   afterEach(() => {
     configurePendingInteractionDurability(null);
     configurePermissionReviewEachDispatcher(null);
-    configureQuestionRecoveryDispatcher(null);
   });
 
   it.each(['', '   '])(
@@ -2103,59 +2133,7 @@ describe('pending interaction durability', () => {
     expect(resolve).not.toHaveBeenCalled();
   });
 
-  it('returns the full durable question callback scope', async () => {
-    const request = {
-      appId: 'app:two',
-      requestId: 'question-scoped',
-      sourceAgentFolder: 'agent-b',
-      targetJid: 'sl:C123',
-      questions: [
-        { question: 'First?', options: [] },
-        { question: 'Second?', options: [] },
-      ],
-    };
-    const repository = {
-      listPendingInteractions: vi.fn(async () => [
-        {
-          appId: 'app:two',
-          kind: 'question',
-          status: 'pending',
-          payload: {
-            requestId: 'question-scoped',
-            sourceAgentFolder: 'agent-b',
-            questionRecoveryEnvelope: questionRecoveryEnvelope(
-              request,
-              'sl:C123',
-              {
-                'callback-scoped': {
-                  appId: 'app:two',
-                  sourceAgentFolder: 'agent-b',
-                  requestId: 'question-scoped',
-                  questionIndex: 1,
-                },
-              },
-            ),
-          },
-          idempotencyKey: 'app:two:question:agent-b:question-scoped',
-        },
-      ]),
-    };
-    configurePendingInteractionDurability({ repository: repository as never });
-
-    await expect(
-      findDurableQuestionInteractionByCallbackId({
-        appId: 'app:two',
-        callbackId: 'callback-scoped',
-      }),
-    ).resolves.toEqual({
-      appId: 'app:two',
-      sourceAgentFolder: 'agent-b',
-      requestId: 'question-scoped',
-      questionIndex: 1,
-    });
-  });
-
-  it('finds and resolves a colliding question only in the requested agent scope', async () => {
+  it('records a colliding live question only in the requested agent scope', async () => {
     const rows = ['agent-a', 'agent-b'].map((sourceAgentFolder) => {
       const request = {
         requestId: 'question-collision',
@@ -2196,21 +2174,11 @@ describe('pending interaction durability', () => {
     configurePendingInteractionDurability({ repository: repository as never });
 
     await expect(
-      findDurableQuestionInteractionByRequestId({
-        requestId: 'question-collision',
-        sourceAgentFolder: 'agent-b',
-      }),
-    ).resolves.toMatchObject({
-      sourceAgentFolder: 'agent-b',
-      targetJid: 'tg:agent-b',
-    });
-    await expect(
       resolveDurableQuestionInteractionByRequestId({
         requestId: 'question-collision',
         sourceAgentFolder: 'agent-b',
         questionIndex: 0,
         optionIndex: 0,
-        answeredBy: 'user:approver',
       }),
     ).resolves.toBe(true);
 
@@ -2219,11 +2187,174 @@ describe('pending interaction durability', () => {
         idempotencyKey: 'default:question:agent-b:question-collision',
       }),
     );
+    expect(repository.resolvePendingInteraction).not.toHaveBeenCalled();
+    expect(rows[1]!.payload.questionRecoveryEnvelope).toMatchObject({
+      answers: { 'Choose one': 'agent-b' },
+      completedQuestionIndexes: [0],
+    });
+  });
+
+  it('leaves a final live answer pending until finish resolves it once with the actor', async () => {
+    const request = {
+      requestId: 'question-live-final',
+      sourceAgentFolder: 'agent-a',
+      targetJid: 'sl:C123',
+      runId: 'run-live-final',
+      questions: [
+        {
+          question: 'Continue?',
+          options: [{ label: 'Yes', description: '' }],
+        },
+      ],
+    };
+    const pending = pendingQuestionRow(request);
+    const repository = {
+      createPendingInteraction: vi.fn(async (input) => ({
+        ...pending,
+        id: input.id,
+      })),
+      listPendingInteractions: vi.fn(async () => [pending]),
+      updatePendingInteractionPayload: payloadUpdater([pending]),
+      resolvePendingInteraction: vi.fn(async () => true),
+    };
+    configurePendingInteractionDurability({ repository: repository as never });
+    await beginDurableQuestionInteraction({
+      request,
+      sourceAgentFolder: request.sourceAgentFolder,
+    });
+
+    await expect(
+      resolveDurableQuestionInteractionByRequestId({
+        requestId: request.requestId,
+        sourceAgentFolder: request.sourceAgentFolder,
+        questionIndex: 0,
+        optionIndex: 0,
+      }),
+    ).resolves.toBe(true);
+    expect(repository.resolvePendingInteraction).not.toHaveBeenCalled();
+
+    await expect(
+      finishDurableQuestionInteraction({
+        request,
+        sourceAgentFolder: request.sourceAgentFolder,
+        response: {
+          requestId: request.requestId,
+          answers: { 'Continue?': 'Yes' },
+          answeredBy: 'callback-user',
+        },
+      }),
+    ).resolves.toBe(true);
+    expect(repository.resolvePendingInteraction).toHaveBeenCalledTimes(1);
     expect(repository.resolvePendingInteraction).toHaveBeenCalledWith(
       expect.objectContaining({
-        idempotencyKey: 'default:question:agent-b:question-collision',
+        resolution: { answers: { 'Continue?': 'Yes' } },
+        approverRef: 'callback-user',
       }),
     );
+  });
+
+  it('records multi-question progress without resolving a continuation', async () => {
+    const request = {
+      requestId: 'question-live-sequence',
+      sourceAgentFolder: 'agent-a',
+      targetJid: 'sl:C123',
+      runId: 'run-live-sequence',
+      questions: [
+        { question: 'First?', options: [{ label: 'A', description: '' }] },
+        { question: 'Second?', options: [{ label: 'B', description: '' }] },
+      ],
+    };
+    const pending = pendingQuestionRow(request);
+    const repository = {
+      createPendingInteraction: vi.fn(async (input) => ({
+        ...pending,
+        id: input.id,
+      })),
+      listPendingInteractions: vi.fn(async () => [pending]),
+      updatePendingInteractionPayload: payloadUpdater([pending]),
+      resolvePendingInteraction: vi.fn(async () => true),
+    };
+    configurePendingInteractionDurability({ repository: repository as never });
+    await beginDurableQuestionInteraction({
+      request,
+      sourceAgentFolder: request.sourceAgentFolder,
+    });
+
+    await expect(
+      resolveDurableQuestionInteractionByRequestId({
+        requestId: request.requestId,
+        sourceAgentFolder: request.sourceAgentFolder,
+        questionIndex: 0,
+        optionIndex: 0,
+      }),
+    ).resolves.toBe(true);
+    expect(repository.resolvePendingInteraction).not.toHaveBeenCalled();
+    expect(pending.payload.questionRecoveryEnvelope).toMatchObject({
+      completedQuestionIndexes: [0],
+    });
+  });
+
+  it('completes every question represented by a bulk answer object', async () => {
+    const request = {
+      requestId: 'question-bulk-answers',
+      sourceAgentFolder: 'agent-a',
+      targetJid: 'sl:C123',
+      questions: [
+        { question: 'First?', options: [{ label: 'A', description: '' }] },
+        { question: 'Second?', options: [{ label: 'B', description: '' }] },
+      ],
+    };
+    const pending = pendingQuestionRow(request);
+    const repository = {
+      createPendingInteraction: vi.fn(async () => pending),
+      listPendingInteractions: vi.fn(async () => [pending]),
+      updatePendingInteractionPayload: payloadUpdater([pending]),
+      resolvePendingInteraction: vi.fn(async () => true),
+    };
+    configurePendingInteractionDurability({ repository: repository as never });
+
+    await expect(
+      recordDurableQuestionAnswerProgress({
+        requestId: request.requestId,
+        sourceAgentFolder: request.sourceAgentFolder,
+        answers: { 'First?': 'A', 'Second?': 'B' },
+      }),
+    ).resolves.toBe(true);
+
+    expect(pending.payload.questionRecoveryEnvelope).toMatchObject({
+      answers: { 'First?': 'A', 'Second?': 'B' },
+      completedQuestionIndexes: [0, 1],
+    });
+    expect(repository.resolvePendingInteraction).not.toHaveBeenCalled();
+  });
+
+  it('rejects duplicate question labels before persistence', async () => {
+    const request = {
+      requestId: 'question-same-text',
+      sourceAgentFolder: 'agent-a',
+      targetJid: 'sl:C123',
+      questions: [
+        { question: 'Choose?', options: [{ label: 'A', description: '' }] },
+        { question: 'Choose?', options: [{ label: 'B', description: '' }] },
+      ],
+    };
+    const createPendingInteraction = vi.fn();
+    const repository = {
+      createPendingInteraction,
+    };
+    configurePendingInteractionDurability({
+      repository: repository as never,
+    });
+
+    await expect(
+      beginDurableQuestionInteraction({
+        request,
+        sourceAgentFolder: request.sourceAgentFolder,
+      }),
+    ).rejects.toThrow(
+      'ask_user_question requires unique question text; duplicate question labels are not allowed',
+    );
+    expect(createPendingInteraction).not.toHaveBeenCalled();
   });
 
   it('preserves sibling question-envelope writes through the atomic updater', async () => {
@@ -2311,7 +2442,6 @@ describe('pending interaction durability', () => {
       selections: [{ questionIndex: 0, optionIndexes: [0] }],
       answers: { 'Continue?': 'Yes' },
       completedQuestionIndexes: [1],
-      nextQuestionIndex: 0,
     });
   });
 
@@ -2382,6 +2512,7 @@ describe('pending interaction durability', () => {
       resolvedAt: null,
     };
     const repository = {
+      createPendingInteraction: vi.fn(async () => pending),
       listPendingInteractions: vi.fn(async () => [pending]),
       updatePendingInteractionPayload: payloadUpdater([pending]),
       resolvePendingInteraction: vi.fn(async () => true),
@@ -2411,10 +2542,19 @@ describe('pending interaction durability', () => {
         requestId: 'question-1',
         questionIndex: 0,
         finalize: true,
-        answeredBy: 'user:approver',
       }),
     ).resolves.toBe(true);
 
+    expect(repository.resolvePendingInteraction).not.toHaveBeenCalled();
+    await finishDurableQuestionInteraction({
+      request: payload.request as never,
+      sourceAgentFolder: 'agent-folder',
+      response: {
+        requestId: 'question-1',
+        answers: { 'Choose tools': ['Browser'] },
+        answeredBy: 'user:approver',
+      },
+    });
     expect(repository.resolvePendingInteraction).toHaveBeenCalledWith({
       idempotencyKey: 'default:question:agent-folder:question-1',
       status: 'resolved',
@@ -2439,7 +2579,6 @@ describe('pending interaction durability', () => {
     const envelope = questionRecoveryEnvelope(request, request.targetJid);
     envelope.answers = { 'First?': 'A' };
     envelope.completedQuestionIndexes = [0];
-    envelope.nextQuestionIndex = null;
     const pending = {
       appId: 'default',
       kind: 'question',
@@ -2472,150 +2611,495 @@ describe('pending interaction durability', () => {
     });
   });
 
-  it('recovers Q1 after a restart without redispatching completed Q0', async () => {
+  it('cancels a superseded question lease and reopens the same request for the new lease', async () => {
     const request = {
-      requestId: 'question-restart-between',
+      requestId: 'question-reask-after-restart',
       sourceAgentFolder: 'agent-a',
       targetJid: 'sl:C123',
+      runId: 'run-question-reask',
+      runLeaseToken: 'test-lease-new',
+      runLeaseFencingVersion: 8,
       questions: [
         {
-          question: 'First?',
-          options: [{ label: 'A', description: '' }],
-        },
-        {
-          question: 'Second?',
-          options: [{ label: 'B', description: '' }],
+          question: 'Continue?',
+          options: [{ label: 'Yes', description: '' }],
         },
       ],
     };
-    const payload: Record<string, unknown> = {
-      requestId: request.requestId,
-      sourceAgentFolder: request.sourceAgentFolder,
-      request,
-      questionRecoveryEnvelope: questionRecoveryEnvelope(
-        request,
-        request.targetJid,
-      ),
+    const oldRequest = {
+      ...request,
+      runLeaseToken: 'test-lease-old',
+      runLeaseFencingVersion: 7,
     };
-    const pending = {
-      appId: 'default',
-      runId: null,
-      kind: 'question',
-      status: 'pending',
-      idempotencyKey: `default:question:agent-a:${request.requestId}`,
-      payload,
+    const oldPending = pendingQuestionRow(oldRequest);
+    let row: any = {
+      ...oldPending,
+      id: 'question-old-owner',
+      runId: oldRequest.runId,
+      payload: {
+        ...oldPending.payload,
+        runLeaseToken: oldRequest.runLeaseToken,
+        runLeaseFencingVersion: oldRequest.runLeaseFencingVersion,
+      },
     };
-    const repository = {
-      listPendingInteractions: vi.fn(async () => [pending]),
-      updatePendingInteractionPayload: payloadUpdater([pending]),
-      resolvePendingInteraction: vi.fn(async () => true),
+    const activeLease = {
+      runId: request.runId,
+      leaseToken: request.runLeaseToken,
+      fencingVersion: request.runLeaseFencingVersion,
     };
-    const dispatch = vi.fn(async () => undefined);
-    configurePendingInteractionDurability({ repository: repository as never });
-    configureQuestionRecoveryDispatcher(dispatch);
-
-    await recordDurableQuestionAnswerProgress({
-      requestId: request.requestId,
-      sourceAgentFolder: request.sourceAgentFolder,
-      answers: {},
-      completedQuestionIndexes: [0],
+    let cancelledRow: any = null;
+    const createPendingInteraction = vi.fn(async (input: any) => {
+      if (row.status !== 'cancelled') return row;
+      row = {
+        ...row,
+        id: input.id,
+        status: 'pending',
+        payload: input.payload,
+        callbackRoute: input.callbackRoute,
+        resolution: null,
+        resolvedAt: null,
+      };
+      return row;
     });
-    expect(pending.payload.questionRecoveryEnvelope).toMatchObject({
-      answers: {},
-      completedQuestionIndexes: [0],
-      nextQuestionIndex: 1,
-    });
-    configurePendingInteractionDurability({ repository: repository as never });
-    await recordDurableQuestionPromptDelivered({
-      requestId: request.requestId,
-      sourceAgentFolder: request.sourceAgentFolder,
-      questionIndexes: [1],
-    });
-    await expect(
-      resolveDurableQuestionInteractionByRequestId({
-        requestId: request.requestId,
-        sourceAgentFolder: request.sourceAgentFolder,
-        questionIndex: 1,
-        optionIndex: 0,
-        answeredBy: 'user:a',
-      }),
-    ).resolves.toBe(true);
-
-    expect(dispatch).not.toHaveBeenCalled();
-    expect(repository.resolvePendingInteraction).toHaveBeenCalledWith(
-      expect.objectContaining({
-        resolution: { answers: { 'Second?': 'B' } },
-      }),
+    const cancelPendingQuestionInteractionIfRunLeaseInactive = vi.fn(
+      async (input: any) => {
+        if (row.id !== input.id || row.status !== 'pending') return false;
+        const owningLeaseIsActive =
+          row.runId === activeLease.runId &&
+          row.payload.runLeaseToken === activeLease.leaseToken &&
+          row.payload.runLeaseFencingVersion === activeLease.fencingVersion;
+        if (owningLeaseIsActive) return false;
+        cancelledRow = {
+          ...row,
+          status: 'cancelled',
+          resolution: input.resolution,
+        };
+        row = cancelledRow;
+        return true;
+      },
     );
-  });
-
-  it('retries a missing next question delivery from an already completed callback', async () => {
-    const request = {
-      requestId: 'question-retry-next',
-      sourceAgentFolder: 'agent-a',
-      targetJid: 'sl:C123',
-      questions: [
-        { question: 'First?', options: [{ label: 'A', description: '' }] },
-        { question: 'Second?', options: [{ label: 'B', description: '' }] },
-      ],
-    };
-    const envelope = questionRecoveryEnvelope(request, request.targetJid);
-    envelope.answers = { 'First?': 'A' };
-    envelope.completedQuestionIndexes = [0];
-    envelope.deliveredQuestionIndexes = [0];
-    envelope.nextQuestionIndex = 1;
-    const payload: Record<string, unknown> = {
-      requestId: request.requestId,
-      sourceAgentFolder: request.sourceAgentFolder,
-      request,
-      questionRecoveryEnvelope: envelope,
-    };
-    const pending = {
-      appId: 'default',
-      runId: null,
-      kind: 'question',
-      status: 'pending',
-      idempotencyKey: `default:question:agent-a:${request.requestId}`,
-      payload,
-    };
-    const repository = {
-      listPendingInteractions: vi.fn(async () => [pending]),
-      updatePendingInteractionPayload: payloadUpdater([pending]),
-    };
-    const dispatch = vi
-      .fn()
-      .mockRejectedValueOnce(new Error('send failed'))
-      .mockResolvedValueOnce(undefined);
-    const warn = vi.fn();
+    const resolvePendingInteraction = vi.fn(async (input: any) => {
+      if (row.status !== 'pending') return false;
+      row = {
+        ...row,
+        status: input.status,
+        resolution: input.resolution,
+      };
+      return true;
+    });
     configurePendingInteractionDurability({
-      repository: repository as never,
-      warn,
+      repository: {
+        createPendingInteraction,
+        cancelPendingQuestionInteractionIfRunLeaseInactive,
+        resolvePendingInteraction,
+      } as never,
     });
-    configureQuestionRecoveryDispatcher(dispatch);
 
-    const resolveAgain = () =>
-      resolveDurableQuestionInteractionByRequestId({
-        requestId: request.requestId,
+    const prompt = vi.fn(async () => ({
+      requestId: request.requestId,
+      answers: { 'Continue?': 'Yes' },
+      answeredBy: 'user:approver',
+    }));
+    await expect(
+      runDurableQuestionInteraction({
+        request,
         sourceAgentFolder: request.sourceAgentFolder,
-        questionIndex: 0,
-        optionIndex: 0,
-      });
-    await expect(resolveAgain()).resolves.toBe(true);
-    expect(dispatch).not.toHaveBeenCalled();
-    await new Promise<void>((resolve) => setImmediate(resolve));
-    expect(dispatch).toHaveBeenCalledTimes(1);
-    expect(warn).toHaveBeenCalledWith(
-      expect.objectContaining({
-        err: expect.objectContaining({ message: 'send failed' }),
-        requestId: request.requestId,
-        nextQuestionIndex: 1,
+        prompt,
       }),
-      'Failed to dispatch the next durable question prompt',
+    ).resolves.toEqual({
+      response: {
+        requestId: request.requestId,
+        answers: { 'Continue?': 'Yes' },
+        answeredBy: 'user:approver',
+      },
+      resolved: true,
+    });
+    expect(
+      cancelPendingQuestionInteractionIfRunLeaseInactive,
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'question-old-owner' }),
     );
-    await expect(resolveAgain()).resolves.toBe(true);
-    expect(dispatch).toHaveBeenCalledTimes(1);
-    await new Promise<void>((resolve) => setImmediate(resolve));
-    expect(dispatch).toHaveBeenCalledTimes(2);
-    expect(dispatch).toHaveBeenLastCalledWith(request, 1);
+    expect(cancelledRow).toMatchObject({
+      id: 'question-old-owner',
+      status: 'cancelled',
+      runId: oldRequest.runId,
+      payload: {
+        runLeaseToken: oldRequest.runLeaseToken,
+        runLeaseFencingVersion: oldRequest.runLeaseFencingVersion,
+      },
+    });
+    expect(createPendingInteraction).toHaveBeenCalledTimes(2);
+    expect(prompt).toHaveBeenCalledOnce();
+    expect(row).toMatchObject({
+      status: 'resolved',
+      runId: request.runId,
+      payload: {
+        runLeaseToken: request.runLeaseToken,
+        runLeaseFencingVersion: request.runLeaseFencingVersion,
+      },
+      resolution: { answers: { 'Continue?': 'Yes' } },
+    });
+    expect(row.id).not.toBe('question-old-owner');
   });
+
+  it('defers a concurrent duplicate while the winning question lease is active', async () => {
+    const request = {
+      requestId: 'question-live-duplicate',
+      sourceAgentFolder: 'agent-a',
+      targetJid: 'sl:C123',
+      runId: 'run-live-duplicate',
+      runLeaseToken: 'test-lease-live-duplicate',
+      runLeaseFencingVersion: 7,
+      questions: [{ question: 'Continue?', options: [] }],
+    };
+    let row: any = null;
+    const createPendingInteraction = vi.fn(async (input: any) => {
+      if (!row) {
+        row = {
+          ...pendingQuestionRow(request),
+          id: input.id,
+          runId: input.runId,
+          payload: input.payload,
+          callbackRoute: input.callbackRoute,
+        };
+      }
+      return row;
+    });
+    const cancelPendingQuestionInteractionIfRunLeaseInactive = vi.fn(
+      async () => {
+        const ownedByActiveLease =
+          row?.status === 'pending' &&
+          row.runId === request.runId &&
+          row.payload.runLeaseToken === request.runLeaseToken &&
+          row.payload.runLeaseFencingVersion ===
+            request.runLeaseFencingVersion;
+        if (ownedByActiveLease || row?.status !== 'pending') return false;
+        row = { ...row, status: 'cancelled' };
+        return true;
+      },
+    );
+    const resolvePendingInteraction = vi.fn(async (input: any) => {
+      if (row?.status !== 'pending') return false;
+      row = {
+        ...row,
+        status: input.status,
+        resolution: input.resolution,
+      };
+      return true;
+    });
+    configurePendingInteractionDurability({
+      repository: {
+        createPendingInteraction,
+        cancelPendingQuestionInteractionIfRunLeaseInactive,
+        resolvePendingInteraction,
+      } as never,
+    });
+    let answerPrompt!: (response: any) => void;
+    const promptResponse = new Promise<any>((resolve) => {
+      answerPrompt = resolve;
+    });
+    const prompt = vi.fn(async () => promptResponse);
+
+    const runs = [0, 1].map(() =>
+      runDurableQuestionInteraction({
+        request,
+        sourceAgentFolder: request.sourceAgentFolder,
+        prompt,
+      }),
+    );
+    await vi.waitFor(() => {
+      expect(prompt).toHaveBeenCalledTimes(1);
+      expect(
+        cancelPendingQuestionInteractionIfRunLeaseInactive,
+      ).toHaveBeenCalledTimes(1);
+    });
+    expect(row).toMatchObject({ status: 'pending', resolution: null });
+    expect(resolvePendingInteraction).not.toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'cancelled' }),
+    );
+
+    answerPrompt({
+      requestId: request.requestId,
+      answers: { 'Continue?': 'Yes' },
+      answeredBy: 'user:approver',
+    });
+    const results = await Promise.all(runs);
+    expect(results.filter((result) => result.resolved)).toHaveLength(1);
+    expect(results.filter((result) => !result.resolved)).toHaveLength(1);
+    expect(prompt).toHaveBeenCalledTimes(1);
+    expect(row).toMatchObject({
+      status: 'resolved',
+      resolution: { answers: { 'Continue?': 'Yes' } },
+    });
+  });
+
+  it('does not reopen or dispatch an already-resolved question', async () => {
+    const request = {
+      requestId: 'question-already-resolved',
+      sourceAgentFolder: 'agent-a',
+      targetJid: 'sl:C123',
+      questions: [{ question: 'Continue?', options: [] }],
+    };
+    const resolved = {
+      ...pendingQuestionRow(request),
+      status: 'resolved',
+      resolution: { answers: { 'Continue?': 'No' } },
+      resolvedAt: '2026-07-17T00:01:00.000Z',
+    };
+    const resolvePendingInteraction = vi.fn();
+    configurePendingInteractionDurability({
+      repository: {
+        createPendingInteraction: vi.fn(async () => resolved),
+        resolvePendingInteraction,
+      } as never,
+    });
+    const prompt = vi.fn();
+
+    await expect(
+      runDurableQuestionInteraction({
+        request,
+        sourceAgentFolder: request.sourceAgentFolder,
+        prompt,
+      }),
+    ).resolves.toEqual({
+      response: { requestId: request.requestId, answers: {} },
+      resolved: false,
+    });
+    expect(prompt).not.toHaveBeenCalled();
+    expect(resolvePendingInteraction).not.toHaveBeenCalled();
+  });
+
+  it('admits exactly one concurrent re-ask after cancelling a superseded question lease', async () => {
+    const request = {
+      requestId: 'question-concurrent-reask',
+      sourceAgentFolder: 'agent-a',
+      targetJid: 'sl:C123',
+      runId: 'run-concurrent-reask',
+      runLeaseToken: 'test-lease-new',
+      runLeaseFencingVersion: 8,
+      questions: [{ question: 'Continue?', options: [] }],
+    };
+    const oldRequest = {
+      ...request,
+      runLeaseToken: 'test-lease-old',
+      runLeaseFencingVersion: 7,
+    };
+    const oldPending = pendingQuestionRow(oldRequest);
+    let row: any = {
+      ...oldPending,
+      id: 'question-concurrent-old-owner',
+      runId: oldRequest.runId,
+      payload: {
+        ...oldPending.payload,
+        runLeaseToken: oldRequest.runLeaseToken,
+        runLeaseFencingVersion: oldRequest.runLeaseFencingVersion,
+      },
+    };
+    let reopenCount = 0;
+    let reopenedId: string | null = null;
+    const createPendingInteraction = vi.fn(async (input: any) => {
+      if (row.status === 'cancelled') {
+        reopenCount += 1;
+        reopenedId = input.id;
+        row = {
+          ...row,
+          id: input.id,
+          status: 'pending',
+          runId: input.runId,
+          payload: input.payload,
+          callbackRoute: input.callbackRoute,
+          resolution: null,
+          resolvedAt: null,
+        };
+      }
+      return row;
+    });
+    const activeLease = {
+      runId: request.runId,
+      leaseToken: request.runLeaseToken,
+      fencingVersion: request.runLeaseFencingVersion,
+    };
+    const successfulCancelIds: string[] = [];
+    const cancelAttemptIds: string[] = [];
+    const cancelPendingQuestionInteractionIfRunLeaseInactive = vi.fn(
+      async (input: any) => {
+        cancelAttemptIds.push(input.id);
+        if (row.id !== input.id || row.status !== 'pending') return false;
+        const owningLeaseIsActive =
+          row.runId === activeLease.runId &&
+          row.payload.runLeaseToken === activeLease.leaseToken &&
+          row.payload.runLeaseFencingVersion === activeLease.fencingVersion;
+        if (owningLeaseIsActive) return false;
+        successfulCancelIds.push(input.id);
+        row = {
+          ...row,
+          status: 'cancelled',
+          resolution: input.resolution,
+        };
+        return true;
+      },
+    );
+    const resolvePendingInteraction = vi.fn(async (input: any) => {
+      if (row.status !== 'pending') return false;
+      row = {
+        ...row,
+        status: input.status,
+        resolution: input.resolution,
+      };
+      return true;
+    });
+    configurePendingInteractionDurability({
+      repository: {
+        createPendingInteraction,
+        cancelPendingQuestionInteractionIfRunLeaseInactive,
+        resolvePendingInteraction,
+      } as never,
+    });
+    const prompt = vi.fn(async () => ({
+      requestId: request.requestId,
+      answers: { 'Continue?': 'Yes' },
+      answeredBy: 'user:approver',
+    }));
+
+    const results = await Promise.all(
+      [0, 1].map(() =>
+        runDurableQuestionInteraction({
+          request,
+          sourceAgentFolder: request.sourceAgentFolder,
+          prompt,
+        }),
+      ),
+    );
+
+    expect(successfulCancelIds).toEqual(['question-concurrent-old-owner']);
+    expect(reopenCount).toBe(1);
+    expect(createPendingInteraction).toHaveBeenCalledTimes(3);
+    expect(prompt).toHaveBeenCalledTimes(1);
+    expect(results.filter((result) => result.resolved)).toHaveLength(1);
+    expect(results.filter((result) => !result.resolved)).toHaveLength(1);
+    expect(reopenedId).not.toBeNull();
+    expect(reopenedId).not.toBe('question-concurrent-old-owner');
+    expect(cancelAttemptIds).not.toContain(reopenedId);
+    expect(row).toMatchObject({
+      id: reopenedId,
+      status: 'resolved',
+      runId: request.runId,
+      payload: {
+        runLeaseToken: request.runLeaseToken,
+        runLeaseFencingVersion: request.runLeaseFencingVersion,
+      },
+      resolution: { answers: { 'Continue?': 'Yes' } },
+    });
+    expect(resolvePendingInteraction).not.toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'cancelled' }),
+    );
+  });
+
+  it.each([1, 2])(
+    'terminalizes an orphaned %i-question row without recovering answers',
+    async (questionCount) => {
+      const request = {
+        requestId: `question-restart-${questionCount}`,
+        sourceAgentFolder: 'agent-a',
+        targetJid: 'sl:C123',
+        runId: `run-question-restart-${questionCount}`,
+        runLeaseToken: 'test-lease-new',
+        runLeaseFencingVersion: 2,
+        questions: Array.from({ length: questionCount }, (_, index) => ({
+          question: `Question ${index + 1}?`,
+          options: [{ label: 'A', description: '' }],
+        })),
+      };
+      const oldRequest = {
+        ...request,
+        runLeaseToken: 'test-lease-old',
+        runLeaseFencingVersion: 1,
+      };
+      const oldPending = pendingQuestionRow(oldRequest);
+      const oldId = `question-restart-old-${questionCount}`;
+      let row: any = {
+        ...oldPending,
+        id: oldId,
+        runId: oldRequest.runId,
+        payload: {
+          ...oldPending.payload,
+          runLeaseToken: oldRequest.runLeaseToken,
+          runLeaseFencingVersion: oldRequest.runLeaseFencingVersion,
+        },
+      };
+      row.payload.questionRecoveryEnvelope.answers = {
+        'Question 1?': 'A',
+      };
+      row.payload.questionRecoveryEnvelope.completedQuestionIndexes = [0];
+      const createPendingInteraction = vi.fn(async (input: any) => {
+        if (row.status !== 'cancelled') return row;
+        row = {
+          ...row,
+          id: input.id,
+          runId: input.runId,
+          status: 'pending',
+          payload: input.payload,
+          callbackRoute: input.callbackRoute,
+          resolution: null,
+          resolvedAt: null,
+        };
+        return row;
+      });
+      let conditionalCancelCount = 0;
+      const cancelPendingQuestionInteractionIfRunLeaseInactive = vi.fn(
+        async (input: any) => {
+          const ownsOldPendingRow =
+            input.id === oldId &&
+            row.id === oldId &&
+            row.status === 'pending' &&
+            row.payload.runLeaseToken === oldRequest.runLeaseToken &&
+            row.payload.runLeaseFencingVersion ===
+              oldRequest.runLeaseFencingVersion;
+          if (!ownsOldPendingRow) return false;
+          conditionalCancelCount += 1;
+          row = {
+            ...row,
+            status: 'cancelled',
+            resolution: input.resolution,
+          };
+          return true;
+        },
+      );
+      const resolvePendingInteraction = vi.fn();
+      configurePendingInteractionDurability({
+        repository: {
+          createPendingInteraction,
+          cancelPendingQuestionInteractionIfRunLeaseInactive,
+          resolvePendingInteraction,
+        } as never,
+      });
+
+      await expect(
+        beginDurableQuestionInteraction({
+          request,
+          sourceAgentFolder: request.sourceAgentFolder,
+        }),
+      ).resolves.toBe(true);
+      expect(conditionalCancelCount).toBe(1);
+      expect(
+        cancelPendingQuestionInteractionIfRunLeaseInactive,
+      ).toHaveBeenCalledOnce();
+      expect(createPendingInteraction).toHaveBeenCalledTimes(2);
+      expect(row).toMatchObject({
+        status: 'pending',
+        runId: request.runId,
+        payload: {
+          runLeaseToken: request.runLeaseToken,
+          runLeaseFencingVersion: request.runLeaseFencingVersion,
+          questionRecoveryEnvelope: {
+            answers: {},
+            completedQuestionIndexes: [],
+          },
+        },
+        resolution: null,
+      });
+      expect(row.id).not.toBe(oldId);
+      expect(resolvePendingInteraction).not.toHaveBeenCalled();
+    },
+  );
 });

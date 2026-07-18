@@ -28,6 +28,7 @@ import {
   formatTelegramStreamingText,
   sendTelegramMessageWithResult,
   editTelegramMessage,
+  sanitizeTelegramErrorMessage,
   splitTelegramDeliveryText,
 } from './channel-shared.js';
 import { logger } from '../../infrastructure/logging/logger.js';
@@ -115,21 +116,8 @@ export abstract class TelegramChannelState implements ChannelAdapter {
   supportsInteractionCallbacks(): boolean {
     return this.interactionCallbacksEnabled;
   }
-  protected redactBotToken(input: string): string {
-    if (!input) return input;
-    return input.split(this.botToken).join('[REDACTED_BOT_TOKEN]');
-  }
   protected sanitizeErrorMessage(err: unknown): string {
-    const message =
-      err instanceof Error
-        ? err.message
-        : typeof err === 'object' &&
-            err !== null &&
-            'message' in err &&
-            typeof (err as { message?: unknown }).message === 'string'
-          ? ((err as { message: string }).message ?? '')
-          : String(err);
-    return this.redactBotToken(message);
+    return sanitizeTelegramErrorMessage(err, this.botToken);
   }
   protected sanitizeTelegramFilePath(rawPath: string): string | null {
     const normalized = rawPath.replace(/\\/g, '/').trim();

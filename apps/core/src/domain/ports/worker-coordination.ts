@@ -282,6 +282,11 @@ export interface PendingInteractionRepository {
     liveTurnCommand?: LiveTurnCommandAppendInput | null;
     now?: string;
   }): Promise<boolean>;
+  cancelPendingQuestionInteractionIfRunLeaseInactive(input: {
+    id: string;
+    resolution: Record<string, unknown>;
+    now?: string;
+  }): Promise<boolean>;
   updatePendingInteractionPayload(input: {
     idempotencyKey: string;
     update: (
