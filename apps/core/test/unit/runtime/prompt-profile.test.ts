@@ -290,6 +290,27 @@ describe('PromptProfileService', () => {
     }
   });
 
+  it('maps casual controls to reviewed tools and one-line progress', async () => {
+    const { service } = createService();
+
+    const prompt = await service.compileSystemPrompt({ agentFolder: 'team' });
+
+    expect(prompt).toContain('"stop asking me so much"');
+    expect(prompt).toContain('request_settings_update permission_mode: auto');
+    expect(prompt).toContain(
+      "Done — I'll only check with you for risky actions now.",
+    );
+    expect(prompt).toContain('"be extra careful with deletes"');
+    expect(prompt).toContain('permissions.yolo_mode.denylist');
+    expect(prompt).toContain('"pause everything" / "resume"');
+    expect(prompt).toContain('scheduler_list_jobs to list visible jobs');
+    expect(prompt).toContain('existing pause controls');
+    expect(prompt).toContain('report what was paused');
+    expect(prompt).toContain('scheduler_list_jobs then pause/resume each');
+    expect(prompt).toContain('no generic rollback exists');
+    expect(prompt).toContain('repeated calls edit one compact line');
+  });
+
   it('does not overwrite existing per-agent prompt artifacts', async () => {
     const { store, service } = createService();
 

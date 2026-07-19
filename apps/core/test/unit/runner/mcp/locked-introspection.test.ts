@@ -544,7 +544,7 @@ describe('deployment-mode aware install guidance', () => {
         ([name]) => name === 'request_skill_dependency_install',
       )?.[1],
     ).toBe(
-      'Request host-installed dependencies needed by a reviewed skill source. Approval records setup inventory; the agent never runs install commands directly.',
+      'Request host-installed dependencies needed by a reviewed skill source. Approval records setup inventory; the agent never runs install commands directly. Keep the wait visible with one render_progress line.',
     );
   });
 });

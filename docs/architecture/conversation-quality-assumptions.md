@@ -63,3 +63,59 @@ Capability lifecycle impact: `sources`, durable `capabilities`, `inventory`,
 transient approval, persistent capability selection, and runtime authority
 projection are all unchanged. Permission option ordering at the existing
 promotion threshold is unchanged; only its explanatory copy changes.
+
+## Stages V3 and V4 — current-code validation and implementation
+
+Stage V2 remains excluded. The Credential Center UI and deep-link contract it
+depends on do not exist, and V3/V4 do not add a chat substitute for that UI.
+
+### Corrected seats
+
+| Area | Current seat | V3/V4 choice |
+| --- | --- | --- |
+| Casual control interpretation | Full-access agent guidance in `prompt-profile-service.ts`, reinforced by the live runner prompt | Add an explicit phrase map to existing agent tools. Do not add a host-side natural-language parser or new authority surface. |
+| Permission posture | `permission_mode` on a conversation's installed-agent entry, with agent-level fallback; desired state is read with `settings_desired_state` and replaced with `request_settings_update` | "Stop asking me so much" sets `auto` for the current conversation install when present, otherwise the current agent. The existing full-document, revision-fenced, same-channel reviewed settings flow remains the only mutation path. |
+| Delete caution | Existing `permissions.yolo_mode.denylist` in desired state | "Be extra careful with deletes" adds the existing command pattern `rm *` through the same reviewed settings flow. This changes posture, not sandbox rules or durable capability authority. |
+| Job pause/resume | Existing conversation-scoped `scheduler_list_jobs`, `scheduler_pause_job`, and `scheduler_resume_job` tools | "Pause everything" and "resume everything" list visible jobs and invoke the existing per-job controls. No bulk job authority or cross-conversation visibility is added. |
+| Undo | Settings revisions have a read-only CLI list; internal compensation helpers are operation-specific. No agent-facing generic restore/rollback tool exists. | Generic "undo that" is deferred. The agent may use an existing inverse only when the immediately preceding action makes it unambiguous, such as resume after pause. Building action history or revision restore would add behavior and authority beyond this cycle. |
+| Settings confirmation | `request_settings_update` settles through the requesting agent task response and previously also sent a technical success message directly to chat | As an intended consolidation and a behavior change for pre-existing flows, all successful updates now route through the reply classifier and return `Done — I updated the settings.` or the posture-specific variant. The duplicate direct host success send is deliberately suppressed; tests assert the unified response and absence of the duplicate send. Rejections retain their existing same-channel notice. |
+| Progress lifecycle | `render_progress` emits a rich interaction; `AgentTodoSink` already owns one cached, edit-in-place message per conversation/thread/card kind across Telegram, Slack, Teams, and Discord | Route progress descriptors into `AgentTodoSink` with `cardKind: progress`; retain rich-render/fallback behavior when that sink is unavailable. Provider renderers show only the compact progress line while reusing their existing message handle. |
+| Long operational flows | Agent guidance and service-tool descriptions for skill install and dependency install; shared `render_progress` also covers renders | Tell the agent to render before the slow step and update only at meaningful boundaries. No flow-specific progress state machine is added. |
+
+### Stage assumptions and deferrals
+
+| # | Assumption | Missing info that forced it | Choice taken | Impact if wrong | Validated |
+| --- | --- | --- | --- | --- | --- |
+| V3.1 | `permission_mode: auto` is the existing less-interruptive posture intended by "stop asking me so much" | The casual phrase does not specify `auto` versus `auto_strict`; the runtime already defines both | Choose `auto`, scoped to the current conversation install when available, with agent fallback | The phrase remains conservative for classifier-marked risky actions and does not weaken security rails | verified by focused and full unit suites |
+| V3.2 | Adding `rm *` is the narrowest existing denylist expression for extra delete caution | No separate semantic delete policy exists | Add the existing shell-command denylist pattern through reviewed desired state | All shell `rm` commands prompt rather than only recursive deletes | verified by focused and full unit suites |
+| V3.3 | Generic undo cannot be implemented safely on the current agent-facing foundation | There is no agent-facing action history or settings revision restore command | Defer generic undo; allow only an unambiguous existing inverse | Users must name the desired reversal when context is ambiguous | verified by focused and full unit suites |
+| V4.1 | The existing `AgentTodoSink` cache is the canonical in-place lifecycle seam | `render_progress` previously used one-shot rich interaction rendering, while every live channel already edits cached todo cards | Translate progress descriptors to a dedicated progress card kind and keep the rich fallback | Progress gains stable edit-in-place behavior without a second channel lifecycle | verified by focused and full unit suites |
+| V4.2 | Prompt and tool affordances are sufficient to apply the shared seam to installs, dependencies, and renders | Those workflows are agent-invoked tools with different host implementations and no common host-owned progress counter | Guide the agent to call `render_progress` around meaningful boundaries instead of adding flow-specific counters | Cadence remains agent-authored; the host guarantees one editing line, not synthetic step counts | verified by focused and full unit suites |
+
+### Surface Impact Matrix
+
+| Surface | Impact | Reason |
+| --- | --- | --- |
+| Runtime behavior | Changed | Natural-language intent maps to existing mutation tools, settings success copy is agent-routed, and progress descriptors reuse the live edit-in-place card lifecycle. |
+| `settings.yaml` | Changed | V3 can change existing non-secret `permission_mode` and `permissions.yolo_mode.denylist` values. `request_settings_update` still syncs the complete canonical file after appending the authoritative revision. No schema is added. |
+| Postgres/runtime projection | Changed | The existing settings import appends `settings_revisions` and immediately reconciles runtime projection. Scheduler controls keep their existing durable job writes. No schema or repository contract changes. |
+| Control API | Unchanged by design | V3 uses existing agent MCP/settings and scheduler services; no owner/admin endpoint or chat-control API is added. |
+| SDK/contracts | Unchanged by design | Existing rich-interaction and `AgentTodoRender.cardKind` contracts already represent progress; no public contract shape changes. |
+| CLI | Unchanged by design | CLI settings revision listing is not promoted into a restore path, and no CLI chat-control equivalent is added. |
+| Gantry MCP tools/admin skill | Changed | Existing tool descriptions and agent guidance document the phrase map and long-operation progress affordance; tool authority, schemas, and approver requirements are unchanged. |
+| Channel/provider adapters | Changed | Telegram, Slack, Teams, and Discord render progress cards as one compact line while using their existing cached message-edit paths. |
+| Docs/prompts | Changed | Full-access and live-runner guidance now covers the V3 phrase map, undo boundary, and V4 cadence; this ledger records the seats and deferrals. |
+| Audit/events | Read-only/observable | Existing settings revision, approval, and scheduler audit/event paths continue unchanged; no new audit shape is needed. |
+| Tests/verification | Changed | Focused tests assert prompt mappings, canonical settings revision writes and confirmation copy, progress IPC routing, and single-message edit-in-place behavior. |
+
+Settings classification: both V3 values are existing non-secret desired-state
+configuration. The reviewed update appends a revision, reconciles runtime
+projection, and syncs `settings.yaml`; no Control API, CLI, MCP schema, or admin
+skill surface needs a new field.
+
+Capability lifecycle impact: V3/V4 change neither transient approval nor
+persistent capability selection. They add no capability, inventory item, tool
+grant, security rail, or provider permission. `request_settings_update` keeps
+its selected-admin-tool check, lost-update revision fence, validation, and
+same-channel approval; scheduler controls retain their existing conversation
+authorization.
