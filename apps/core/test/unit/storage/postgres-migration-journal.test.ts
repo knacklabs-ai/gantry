@@ -1706,7 +1706,7 @@ describe('Postgres migration journal', () => {
   it('backfills direct conversations without triggers and non-direct conversations with triggers', () => {
     const migration = fs.readFileSync(
       path.resolve(
-        'apps/core/src/adapters/storage/postgres/schema/migrations/0103_settings_authority_cutover.sql',
+        'apps/core/src/adapters/storage/postgres/schema/migrations/0104_settings_authority_cutover.sql',
       ),
       'utf8',
     );
