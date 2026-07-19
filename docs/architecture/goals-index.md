@@ -37,6 +37,7 @@ state in privateCorrelationJson) — which is why goal 5 now precedes Group C.
 6. **Permission durable-storage simplification** — APPROVED 2026-07-19, IN PROGRESS: sweep → one recovery orchestrator → merged envelope-row schema; 12-invariant test contract. `permission-durable-storage-goal-prompt.md` (validated by `permission-durable-storage-plan-validation.md` + `permission-storage-fable-codex-verification.md`)
 
 **Then — medium, scoped:**
+6b. **Outbound attachments fix (all providers)** — QUEUED for lane 2 after the ponytail audit converges (live incident 2026-07-19): loud reason-bearing failures, workspace-direct file resolution in send_message, Slack upload adapter, Teams line-rewrite fix. `outbound-attachments-audit-2026-07-19.md`
 7. **Jobs recovery-intent → columns + CAS.** `coordination-representation-audit-2026-07-18.md` (B1) — may fold into goal 5.
 8. **Coordination hardening batch** — skill-install advisory lock, session-compaction Set, TOCTOU fallback, canonical-serializer unify, stringify dedup keys. `coordination-representation-audit-2026-07-18.md` (B2 + low) — may fold into goal 5.
 9. **`desired-state-current-export` rewrite** — schema-driven merge, fail-loud on unknown fields. `coordination-representation-audit-2026-07-18.md` (Group C)
