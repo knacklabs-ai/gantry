@@ -304,7 +304,9 @@ describe('jobs/execution-notifications', () => {
 
     const message = String(sendMessage.mock.calls[0]?.[1]);
     expect(message).toContain('Missing Browser access for this job.');
-    expect(message).toContain('Approve the missing access, then retry the job.');
+    expect(message).toContain(
+      'Approve the missing access, then retry the job.',
+    );
     expect(message).not.toContain('Needs attention:');
     expect(message).not.toContain('Diagnostics:');
     expect(message).not.toContain('lastTool=');

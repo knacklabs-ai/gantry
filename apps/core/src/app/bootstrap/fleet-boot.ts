@@ -319,8 +319,7 @@ export function buildBakeOutcomeNotice(
     sendFailureNotice: async ({ dependency }) =>
       deliver({
         dependency,
-        text:
-          "I couldn't prepare that dependency. I left it unavailable; try again after the setup issue is fixed.",
+        text: "I couldn't prepare that dependency. I left it unavailable; try again after the setup issue is fixed.",
         missingConversationMessage:
           'Toolchain bake failed but has no approval conversation to notify',
         deliveryFailureMessage:

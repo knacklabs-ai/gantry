@@ -883,9 +883,7 @@ describe('approved command skill installs', () => {
     expect(sendMessage.mock.calls[0]?.[1]).toContain('Credential Center');
     expect(sendMessage.mock.calls[0]?.[1]).not.toContain('ALPHA_TOKEN');
     expect(sendMessage.mock.calls[0]?.[1]).not.toContain('ZETA_TOKEN');
-    expect(sendMessage.mock.calls[0]?.[1]).not.toContain(
-      'gantry credentials',
-    );
+    expect(sendMessage.mock.calls[0]?.[1]).not.toContain('gantry credentials');
   });
 
   it('does not overwrite a skill when two roots share a materialization name', async () => {
@@ -908,9 +906,7 @@ describe('approved command skill installs', () => {
 
     await vi.waitFor(() => expect(sendMessage).toHaveBeenCalledTimes(1));
     expect(skills.skills.size).toBe(1);
-    expect(sendMessage.mock.calls[0]?.[1]).toBe(
-      "I installed writer's-tool.",
-    );
+    expect(sendMessage.mock.calls[0]?.[1]).toBe("I installed writer's-tool.");
   });
 
   it('reconciles an active binding when rollback fails after settings sync', async () => {

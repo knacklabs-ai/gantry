@@ -267,9 +267,7 @@ describe('PromptProfileService', () => {
     expect(prompt).toContain(
       'Lead with the outcome in plain prose. Give details only when useful or requested; do not append labeled receipts.',
     );
-    expect(prompt).toContain(
-      'If it shapes the answer, briefly acknowledge it',
-    );
+    expect(prompt).toContain('If it shapes the answer, briefly acknowledge it');
     for (const receiptHeading of [
       'Completed:',
       'Used:',
