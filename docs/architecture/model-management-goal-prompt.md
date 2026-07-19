@@ -49,11 +49,14 @@ the "which model runs this turn" fact has N readers each with its own merge.
   This is the inbound mirror of the outbound-attachments incident — today a
   modality mismatch either silently drops the media or surfaces an opaque
   provider 400; both are the silent-failure family.
-- Settings shape stays; only the READ side unifies. No knob removal in Stage A
-  (knob simplification falls out later if the service shows some knobs unread).
+- Settings shape COLLAPSES per locked decision 3 (aggressive; no old users):
+  `models.default` + sparse `models.overrides.*` purpose map + per-install
+  override. `agent.defaultModel`, both job defaults, the three memory model
+  knobs, and `autoMode.model` are deleted — their values move into the new
+  shape. Parser rejects the dead keys loudly (strict unknown-key rule).
 - Invariant tests: precedence fixtures per purpose; a settings round-trip per
-  knob proving the service is the only reader (grep-proof: no other call site
-  parses model settings directly).
+  surviving knob proving the service is the only reader (grep-proof: no other
+  call site parses model settings directly).
 
 ## Stage B — UX (cheap once Stage A lands)
 
