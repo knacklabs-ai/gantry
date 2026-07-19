@@ -7,7 +7,6 @@ Postgres state instead of upgrading through migration history — implement the
 FULL scope (~19,400 lines) including migration baselining and legacy-shape
 reader removal; script and run the local baseline step for this machine.
 
-
 This is a follow-up, audit-only review after the July 14 dead-code cleanup. It
 focuses on remaining legacy state readers, backward-compatibility aliases,
 duplicate projections, orphan scripts, and incomplete clean cuts.
@@ -158,7 +157,7 @@ were discovered after the ranked confidence pass and were not renumbered.
 - Tag: `shrink`
 - Estimated reduction: approximately 100 lines after replacement
 - Primary paths:
-  - `apps/core/src/config/settings/runtime-settings-binding-derivation.ts`
+  - `apps/core/src/application/settings/desired-state-service-helpers.ts`
   - `apps/core/src/config/settings/runtime-settings-parser.ts`
   - `apps/core/src/config/index.ts`
   - `packages/contracts/src/settings/index.ts`
@@ -182,10 +181,10 @@ were discovered after the ranked confidence pass and were not renumbered.
 - Estimated reduction: approximately 55 lines; active vocabulary renames are
   additional zero-net cleanup
 - Primary paths:
-  - `apps/core/src/config/settings/runtime-settings-types.ts`
+  - `apps/core/src/shared/runtime-settings.ts`
   - `apps/core/src/config/settings/runtime-settings-parser.ts`
   - `apps/core/src/config/index.ts`
-  - `apps/core/src/config/settings/desired-state-current-export.ts`
+  - `apps/core/src/application/settings/desired-state-current-export.ts`
 - Evidence:
   - `RuntimeConfiguredConversation.providerConnection` shadows
     `providerAccount`, and the parser writes both with the same value.
@@ -315,7 +314,7 @@ were discovered after the ranked confidence pass and were not renumbered.
 - Tag: `shrink`
 - Estimated reduction: approximately 15 net lines, excluding finding 6
 - Primary paths:
-  - `apps/core/src/config/settings/runtime-settings-types.ts`
+  - `apps/core/src/shared/runtime-settings.ts`
   - `apps/core/src/config/settings/runtime-settings-parser.ts`
   - `apps/core/src/config/settings/runtime-settings-renderer.ts`
   - `packages/contracts/src/settings/index.ts`
@@ -418,7 +417,7 @@ were discovered after the ranked confidence pass and were not renumbered.
   - `apps/core/src/adapters/storage/postgres/schema/providers.ts`
   - `apps/core/src/adapters/storage/postgres/repositories/domain-repositories.postgres.ts`
   - `apps/core/src/application/provider-conversations/provider-conversation-control-use-cases.ts`
-  - `apps/core/src/config/settings/desired-state-service.ts`
+  - `apps/core/src/application/settings/desired-state-service.ts`
   - focused domain, application, control, and Postgres tests
 - Evidence:
   - `ConversationInstall.senderPolicy` can only be `provider_native` and

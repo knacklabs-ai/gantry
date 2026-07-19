@@ -10,7 +10,7 @@ import {
   loadDesiredRuntimeSettingsForWrite,
   writeDesiredRuntimeSettings,
 } from './desired-settings-writer.js';
-import type { RuntimeSettings } from './runtime-settings-types.js';
+import type { RuntimeSettings } from '../../shared/runtime-settings.js';
 import {
   SettingsRevisionConflictError,
   SettingsStaleMutationError,

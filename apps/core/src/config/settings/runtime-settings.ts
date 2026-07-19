@@ -32,7 +32,7 @@ import type {
   RuntimeSettings,
   AgentRuntime,
   RuntimeSettingsValidationResult,
-} from './runtime-settings-types.js';
+} from '../../shared/runtime-settings.js';
 import { validateReadableAgentToolRule } from '../../shared/agent-tool-references.js';
 import {
   containsGeneratedRuntimeSkillPath,
@@ -42,7 +42,7 @@ import {
   normalizeConfiguredCapabilities,
   settingsCapabilityIdToToolRule,
   toolRuleToSettingsCapability,
-} from './configured-capability-normalization.js';
+} from '../../shared/configured-capabilities.js';
 import { nowIso, nowMs as currentTimeMs } from '../../shared/time/datetime.js';
 import {
   configureCustomModelCatalogEntries,
@@ -97,7 +97,7 @@ export type {
   RuntimeSettingsValidationResult,
   RuntimeStorageSettings,
   RuntimeStorageSettingsSnapshot,
-} from './runtime-settings-types.js';
+} from '../../shared/runtime-settings.js';
 
 export {
   applyModelDefaults,

@@ -1,11 +1,11 @@
 import type { AgentId } from '../../domain/agent/agent.js';
 import type { AppId } from '../../domain/app/app.js';
 import type { McpServerId } from '../../domain/mcp/mcp-servers.js';
-import type { SettingsDesiredStateRepositories } from '../../application/settings/desired-state-service.js';
+import type { SettingsDesiredStateRepositories } from '../../domain/ports/settings-desired-state.js';
 import type {
   RuntimeConfiguredAgent,
   RuntimeSettings,
-} from './runtime-settings-types.js';
+} from '../../shared/runtime-settings.js';
 import { ensureAgentToolCatalogItem } from '../../domain/tools/agent-tool-catalog-references.js';
 import { resolveAgentToolReference } from '../../domain/tools/agent-tool-catalog-references.js';
 import type { AgentToolSource } from '../../domain/tools/tools.js';
@@ -20,12 +20,14 @@ import {
   skillMaterializationCollisions,
 } from '../../domain/skills/skill-identity.js';
 import {
-  normalizeConfiguredCapabilities,
   semanticCapabilityDefinitionsById,
   semanticCapabilityDefinitionsFromCatalogTools,
-  settingsCapabilityIdToToolRule,
   skillActionDefinitionsForSkills,
 } from './configured-capability-normalization.js';
+import {
+  normalizeConfiguredCapabilities,
+  settingsCapabilityIdToToolRule,
+} from '../../shared/configured-capabilities.js';
 import type { SemanticCapabilityDefinition } from '../../shared/semantic-capabilities.js';
 import { projectToolCatalogItemToRuntimeRules } from '../../shared/semantic-capabilities.js';
 import {
@@ -38,7 +40,7 @@ import {
   inlineWorkerOnlyConfiguredCapabilityLabels,
   inlineWorkerOnlyToolRuleLabels,
   resolveConfiguredAgentRuntime,
-} from './runtime-settings-agent-runtime.js';
+} from '../../shared/configured-agent-runtime.js';
 
 export async function replaceDesiredStateCapabilities(input: {
   appId: AppId;

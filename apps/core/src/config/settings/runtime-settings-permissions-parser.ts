@@ -1,4 +1,4 @@
-import type { RuntimePermissionSettings } from './runtime-settings-types.js';
+import type { RuntimePermissionSettings } from '../../shared/runtime-settings.js';
 import { validateEgressDenylistPattern } from '../../shared/egress-policy.js';
 import {
   parseBooleanValue,

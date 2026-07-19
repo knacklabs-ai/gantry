@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 
 import type { Conversation } from '../../domain/conversation/conversation.js';
 import { triggerForRoute } from '../../shared/trigger-pattern.js';
-import type { RuntimeSettings } from './runtime-settings-types.js';
+import type { RuntimeSettings } from '../../shared/runtime-settings.js';
 
 export function applyConversationInstallToSettings(input: {
   settings: RuntimeSettings;

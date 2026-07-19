@@ -1,7 +1,7 @@
 import type { AgentPersona } from '../../shared/agent-persona.js';
 import type { AgentRelationshipMode } from '../../shared/agent-relationship-mode.js';
 import type { PermissionMode } from '../../shared/permission-mode.js';
-import type { AppId } from '../../domain/app/app.js';
+import type { AppId } from '../app/app.js';
 import type {
   AgentRepository,
   ConversationRepository,
@@ -9,8 +9,11 @@ import type {
   ProviderAccountRepository,
   SkillCatalogRepository,
   ToolCatalogRepository,
-} from '../../domain/ports/repositories.js';
-import type { RuntimeConfiguredConversation } from '../../config/settings/runtime-settings-types.js';
+} from './repositories.js';
+import type {
+  RuntimeConfiguredConversation,
+  RuntimeSettings,
+} from '../../shared/runtime-settings.js';
 
 export interface StoredAgentBinding {
   name: string;
@@ -62,6 +65,12 @@ export interface SettingsDesiredStateRepositories {
   mcpServers: McpServerRepository;
 }
 
+export interface SettingsDesiredStateActions {
+  exportCurrent(settings: RuntimeSettings): Promise<RuntimeSettings>;
+  reconcile(settings: RuntimeSettings): Promise<SettingsReconcileResult>;
+  validateCapabilityReferences(settings: RuntimeSettings): Promise<string[]>;
+}
+
 export interface SettingsDesiredStateServiceDeps {
   appId?: AppId;
   ops: SettingsDesiredStateOps;
@@ -79,9 +88,4 @@ export interface SettingsReconcileResult {
   applied: string[];
   skipped: string[];
   invalidReferences: string[];
-}
-
-export interface SettingsChangeClassification {
-  liveApplied: string[];
-  restartRequired: string[];
 }

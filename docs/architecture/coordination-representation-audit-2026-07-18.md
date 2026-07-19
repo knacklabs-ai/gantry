@@ -1,7 +1,7 @@
 # Coordination-Representation Audit — 2026-07-18
 
 Read-only audit triggered by the C+D (#228) durable-question churn: ~9 review
-rounds kept finding the *same class* of bug (concurrent writers lose a sibling;
+rounds kept finding the _same class_ of bug (concurrent writers lose a sibling;
 a reader's key-path doesn't match the writer's). Root cause turned out to be a
 **representation** choice, not a logic bug — so we swept the rest of the tree
 for siblings ("check anything over-complicated causing the errors").
@@ -9,7 +9,7 @@ for siblings ("check anything over-complicated causing the errors").
 ## Root-cause pattern
 
 Three shapes of the same disease — durable coordination state represented
-*informally* instead of with a primitive the database enforces:
+_informally_ instead of with a primitive the database enforces:
 
 1. **State machine encoded as which jsonb keys are present** in a blob column,
    with the SQL writer and N TypeScript readers as two hand-kept copies of one
@@ -33,23 +33,25 @@ indexes + `FOR UPDATE SKIP LOCKED` + fencing-token leases + advisory locks +
 inventing one.** The clean tables are listed at the bottom so they are not
 re-audited.
 
-Nothing below is a live single-host data-loss bug *today*. These are the
+Nothing below is a live single-host data-loss bug _today_. These are the
 bug-generators that produce the churn under concurrency / restart / multi-host.
 
 ---
 
 ## Group A — Permission durable-storage subsystem
 
-The C+D churn root cause. The app-layer claim *call* is already consolidated
+The C+D churn root cause. The app-layer claim _call_ is already consolidated
 (one `claimPendingPermissionCallbackRows`); the problem is the **SQL
 representation** and the **provider-side recovery wrappers**. Sequence these as
 one cycle: **Permission durable-storage simplification** (distinct from the
-permission *decision* simplification in `permission-simplification-goal-prompt.md`).
+permission _decision_ simplification in `permission-simplification-goal-prompt.md`).
 
 ### A1 · HIGH — recovery protocol hand-copied across all four providers (drift started)
+
 The "recover a permission decision after channel restart" protocol is
 byte-duplicated per provider, including a decision-reconstruction fn and a
 claim-equality fn, and re-implements the shared `samePermissionClaim`:
+
 - `apps/core/src/channels/discord-permission-callback.ts:100-219` (+ `recoveredDiscordPermissionDecision:205-219`)
 - `apps/core/src/channels/telegram/permission-callback.ts:62-187` (+ `recoveredTelegramPermissionDecision:243-257`)
 - `apps/core/src/channels/slack/channel-interactions.ts:~310-389` (+ `recoveredSlackPermissionDecision:636-654`, `samePermissionCallback:623-634`)
@@ -68,6 +70,7 @@ application layer taking provider transport hooks (`ack`/`terminalize`/
 `samePermissionClaim` instead of the four re-coded scope-equality helpers.
 
 ### A2 · MED — second `JSON.stringify`-identity comparison of the recovery envelope
+
 `apps/core/src/application/interactions/pending-interaction-permission-callback.ts:122-123`
 groups review-each batch rows by
 `JSON.stringify(interaction.payload.permissionRecoveryEnvelope) === JSON.stringify(envelope)`.
@@ -85,6 +88,7 @@ get their persisted decision dispatched → that permission silently sticks.
 Retro-applies to the line-120 comparison.
 
 ### A3 · LOW — review-prompt dedup `Set`s (new copies of the `reviewEachReplays` shape)
+
 - `apps/core/src/jobs/ipc-admin-handlers.ts:89` `pendingRequestOnlyCapabilityReviews` (used 318-319, 639)
 - `apps/core/src/jobs/ipc-skill-install-handlers.ts:38-39` `pendingSkillInstallCommandReviews`/`pendingSkillPackageReviews` (used 158-165, 395-402; cleared 330/420/471/475)
 
@@ -96,6 +100,7 @@ this is prompt-dup/UX, not double-install.
 on the durable pending-review/interaction table; dedup off that row.
 
 ### Carried from the original 10-smell audit (same subsystem)
+
 - **#1 HIGH — claim state machine as jsonb key presence/absence:**
   `apps/core/src/adapters/storage/postgres/repositories/worker-coordination-interaction.postgres.ts`
   (`claimPendingPermissionCallbackRows:240-392` deletes/re-adds
@@ -128,6 +133,7 @@ The genuine sibling of the permission jsonb disease, in the jobs layer. The job
 recovery state machine (+ failure counter, pause reason, setup/notify-dedup
 flags) lives as nested keys in an unconstrained jsonb blob, mutated by an
 **unlocked full-document read-modify-write**:
+
 - Schema: `apps/core/src/adapters/storage/postgres/schema/jobs.ts:43` (`target_json jsonb`, no column/CHECK/unique for the coordination fields).
 - Writer: `canonical-job-ops-service.ts:486-500`, `:514-543`. Readers (2nd copy, return `undefined` on any unrecognized shape): `canonical-job-target-state.ts:48-104` (`parseRecoveryIntent`), `:3-35` (`parseSetupState`).
 - Claim guard reads `target.recoveryIntent?.state === 'running'`: `canonical-job-claim.postgres.ts:41-48`; also `application/jobs/job-permission-recovery.ts:67`, `application/jobs/job-recovery-intent-service.ts:42,78,92-119,100-101`.
@@ -156,7 +162,7 @@ separable.
 ## Group B2 + low — Coordination hardening (batch)
 
 - **MED — `apps/core/src/shared/skill-install-lock.ts:7`** — an in-process `Map`
-  mutex is the *only* serialization for durable skill file writes + rollback; a
+  mutex is the _only_ serialization for durable skill file writes + rollback; a
   shared S3 skill-artifact store exists, so two hosts installing the same key
   interleave check-then-write and clobber each other. Self-documented as a
   follow-up. **Target:** `pg_advisory_xact_lock(hashtextextended(key,0))` (pattern
@@ -168,7 +174,7 @@ separable.
   always route through the durable (advisory-locked) admit path; delete the Set.
 - **LOW — `apps/core/src/jobs/async-task-admission.ts:34-50`
   `createTaskWithLocalAdmission`** — lock-free count-then-insert (TOCTOU) that
-  overshoots the backlog cap. It is a *fallback*; the Postgres repo already
+  overshoots the backlog cap. It is a _fallback_; the Postgres repo already
   implements `createTaskWithBacklogAdmission` with `pg_advisory_xact_lock`
   (`async-task-repository.postgres.ts:44-77`). **Target:** delete the fallback /
   mark test-only; require the advisory-locked method.
@@ -185,6 +191,7 @@ separable.
   existing `stableSha256Json`, or dedup on a `requestId`.
 
 ### Carried from the original 10-smell audit (coordination family)
+
 - **#10 — `apps/core/src/jobs/async-delegated-agent-task.ts`** — 3 hand-rolled
   CAS loops + a write-only steering ledger. Fold into the hardening batch or the
   durable-work primitive.
@@ -197,7 +204,7 @@ separable.
 
 ## Group C · MED — `desired-state-current-export.ts` hand-merge (original audit #9)
 
-`apps/core/src/config/settings/desired-state-current-export.ts` — ~650-line
+`apps/core/src/application/settings/desired-state-current-export.ts` — ~650-line
 hand-merge that silently strips unknown fields. Its own goal (config/settings
 surface), separable from the coordination work. **Target:** a schema-driven
 merge/round-trip that fails loud on unknown fields (mirror the strict parser

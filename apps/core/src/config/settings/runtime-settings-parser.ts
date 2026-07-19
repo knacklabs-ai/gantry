@@ -39,8 +39,8 @@ import type {
   RuntimeProviderSettings,
   RuntimeSettings,
   RuntimeStorageSettings,
-} from './runtime-settings-types.js';
-import type { ChatAllowlistEntry } from './sender-allowlist.js';
+} from '../../shared/runtime-settings.js';
+import type { ChatAllowlistEntry } from '../../shared/runtime-settings.js';
 import { parseMemorySettings } from './runtime-settings-memory-parser.js';
 import { parseBrowserSettings } from './runtime-settings-browser-parser.js';
 import { parsePermissionSettings } from './runtime-settings-permissions-parser.js';

@@ -2,11 +2,11 @@ import type { Pool } from 'pg';
 
 import type { AppId } from '../../domain/app/app.js';
 import type { SettingsRevisionRepository } from '../../domain/ports/fleet-capability-state.js';
-import { SettingsDesiredStateService } from '../../application/settings/desired-state-service.js';
 import type {
+  SettingsDesiredStateActions,
   SettingsDesiredStateOps,
   SettingsDesiredStateRepositories,
-} from '../../application/settings/desired-state-service.js';
+} from '../../domain/ports/settings-desired-state.js';
 import { applyRuntimeSettingsDesiredState } from './restart-sync.js';
 import {
   activateRuntimeModelAliases,
@@ -14,10 +14,10 @@ import {
   withRuntimeModelAliases,
 } from './runtime-settings.js';
 import { renderRuntimeSettingsYaml } from './runtime-settings-renderer.js';
-import { normalizeConfiguredCapabilitiesInSettings } from './configured-capability-normalization.js';
+import { normalizeConfiguredCapabilitiesInSettings } from '../../shared/configured-capabilities.js';
 import { parseRuntimeSettingsObject } from './runtime-settings-parser.js';
 import { validateLoadedRuntimeSettings } from './runtime-settings-validation.js';
-import type { RuntimeSettings } from './runtime-settings-types.js';
+import type { RuntimeSettings } from '../../shared/runtime-settings.js';
 import {
   PostgresSettingsRevisionNotifier,
   type SettingsRevisionWakeup,
@@ -48,6 +48,7 @@ export interface SettingsImportServiceDeps {
   ops: SettingsDesiredStateOps;
   repositories: SettingsDesiredStateRepositories;
   appId?: AppId;
+  desiredState: SettingsDesiredStateActions;
 }
 
 export interface SettingsRevisionMirror {
@@ -111,13 +112,8 @@ export async function validateSettingsForImport(
   if (!schema.ok && schema.failure) {
     errors.push(...schema.failure.details);
   }
-  const service = new SettingsDesiredStateService({
-    ops: deps.ops,
-    repositories: deps.repositories,
-    appId: deps.appId,
-  });
   const invalidReferences =
-    await service.validateCapabilityReferences(settings);
+    await deps.desiredState.validateCapabilityReferences(settings);
   errors.push(...invalidReferences);
   return { ok: errors.length === 0, settings, errors };
 }
@@ -159,15 +155,11 @@ export async function importWorkstationSettings(
     const revisionSettings = (
       await normalizeConfiguredCapabilitiesInSettings({
         settings,
-        repositories: deps.repositories,
-        appId,
       })
     ).settings;
     const previousRevisionSettings = (
       await normalizeConfiguredCapabilitiesInSettings({
         settings: deps.previousSettings!,
-        repositories: deps.repositories,
-        appId,
       })
     ).settings;
     const latest =
@@ -201,6 +193,7 @@ export async function importWorkstationSettings(
       await applyRuntimeSettingsDesiredState({
         runtimeHome: deps.runtimeHome,
         settings: revisionSettings,
+        desiredState: deps.desiredState,
         ops: deps.ops,
         repositories: deps.repositories,
         appId: deps.appId,
@@ -218,6 +211,7 @@ export async function importWorkstationSettings(
     const outcome = await importFleetSettingsRevision(
       {
         runtimeHome: deps.runtimeHome,
+        desiredState: deps.desiredState,
         ops: deps.ops,
         repositories: deps.repositories,
         appId: deps.appId,
@@ -243,6 +237,7 @@ export async function importWorkstationSettings(
     const appliedSettings = await applyRuntimeSettingsDesiredState({
       runtimeHome: deps.runtimeHome,
       settings: revisionSettings,
+      desiredState: deps.desiredState,
       ops: deps.ops,
       repositories: deps.repositories,
       appId: deps.appId,
@@ -255,6 +250,7 @@ export async function importWorkstationSettings(
   const appliedSettings = await applyRuntimeSettingsDesiredState({
     runtimeHome: deps.runtimeHome,
     settings,
+    desiredState: deps.desiredState,
     ops: deps.ops,
     repositories: deps.repositories,
     appId: deps.appId,
@@ -277,6 +273,7 @@ export async function importWorkstationSettings(
     const outcome = await importFleetSettingsRevision(
       {
         runtimeHome: deps.runtimeHome,
+        desiredState: deps.desiredState,
         ops: deps.ops,
         repositories: deps.repositories,
         appId: deps.appId,

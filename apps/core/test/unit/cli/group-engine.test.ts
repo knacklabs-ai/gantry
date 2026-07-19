@@ -5,7 +5,7 @@ import {
   formatAgentHarnessLine,
   selectedAgentHarnessForFolder,
 } from '@core/cli/group-engine.js';
-import type { RuntimeSettings } from '@core/config/settings/runtime-settings-types.js';
+import type { RuntimeSettings } from '@core/shared/runtime-settings.js';
 
 function settingsWithHarness(input: {
   defaultHarness?: 'auto' | 'anthropic_sdk' | 'deepagents';

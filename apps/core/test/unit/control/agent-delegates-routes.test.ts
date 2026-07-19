@@ -9,7 +9,7 @@ import {
   settingsFromRevisionDocument,
   settingsToRevisionDocument,
 } from '@core/config/settings/settings-import-service.js';
-import type { RuntimeSettings } from '@core/config/settings/runtime-settings-types.js';
+import type { RuntimeSettings } from '@core/shared/runtime-settings.js';
 import type { ControlRouteContext } from '@core/control/server/handler-context.js';
 import type { Agent } from '@core/domain/agent/agent.js';
 import { makeAgentThreadQueueKey } from '@core/shared/thread-queue-key.js';

@@ -8,7 +8,7 @@ import type { ControlRouteContext } from '@core/control/server/handler-context.j
 import type { Scope } from '@core/control/server/auth.js';
 import type { SettingsRevision } from '@core/domain/ports/fleet-capability-state.js';
 import { createDefaultRuntimeSettings } from '@core/config/settings/runtime-settings.js';
-import type { RuntimeSettings } from '@core/config/settings/runtime-settings-types.js';
+import type { RuntimeSettings } from '@core/shared/runtime-settings.js';
 
 const revisions = vi.hoisted(() => [] as SettingsRevision[]);
 const importOutcome = vi.hoisted(() => ({

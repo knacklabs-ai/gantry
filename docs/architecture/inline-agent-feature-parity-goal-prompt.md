@@ -12,7 +12,7 @@ Use ponytail. Keep changes surgical. No compatibility shims. Reuse the canonical
 - DeepAgents lane (`apps/core/src/adapters/llm/deepagents-langchain/inline-lane/index.ts`) calls `createDeepAgent` without `responseFormat` and invokes without `recursionLimit`; the installed deepagents package exports `SupportedResponseFormat`, `createSkillsMiddleware`, `listSkills`, `createSummarizationMiddleware`, and `createAgentMemoryMiddleware`.
 - An in-memory (disk-less) skill projection already exists for the worker deepagents runner: `apps/core/src/adapters/llm/deepagents-langchain/skill-projection.ts`.
 - Inline memory today is a prompt block (`memoryContextBlock`) threaded through `apps/core/src/runtime/agent-inline.ts`.
-- Inline runtime settings live in `apps/core/src/config/settings/runtime-settings-agent-runtime.ts` (reader-versioned).
+- Inline runtime settings live in `apps/core/src/shared/configured-agent-runtime.ts` (reader-versioned).
 
 ## Stage A — Iteration and effort knobs
 
@@ -54,17 +54,17 @@ Out of scope for this goal and not planned: deepagents async/library-internal su
 
 ## Surface Impact Matrix
 
-| Surface | Impact | Reason |
-| --- | --- | --- |
-| Runtime behavior | Changed | Turn caps, structured output, skills (deepagents inline), compaction, memory middleware. |
-| `settings.yaml` | Additive | `max_turns`, `effort` per agent; reader version bump. Skills admission relaxed for deepagents-engine inline agents. |
-| Control API | Additive | `response_schema` on session message send; OpenAPI updated. |
-| SDK/contracts | Additive | New optional request field + structured result field. |
-| Postgres | Unchanged | No schema change. |
-| Gantry MCP tools | Unchanged | Core-tools registry untouched. |
-| Channel adapters | Unchanged | Event contract unchanged. |
-| Docs | Changed | capability-management runtime-tier section gains the new knobs. |
-| Tests | Changed | Per-stage coverage listed above. |
+| Surface          | Impact    | Reason                                                                                                              |
+| ---------------- | --------- | ------------------------------------------------------------------------------------------------------------------- |
+| Runtime behavior | Changed   | Turn caps, structured output, skills (deepagents inline), compaction, memory middleware.                            |
+| `settings.yaml`  | Additive  | `max_turns`, `effort` per agent; reader version bump. Skills admission relaxed for deepagents-engine inline agents. |
+| Control API      | Additive  | `response_schema` on session message send; OpenAPI updated.                                                         |
+| SDK/contracts    | Additive  | New optional request field + structured result field.                                                               |
+| Postgres         | Unchanged | No schema change.                                                                                                   |
+| Gantry MCP tools | Unchanged | Core-tools registry untouched.                                                                                      |
+| Channel adapters | Unchanged | Event contract unchanged.                                                                                           |
+| Docs             | Changed   | capability-management runtime-tier section gains the new knobs.                                                     |
+| Tests            | Changed   | Per-stage coverage listed above.                                                                                    |
 
 ## Focused Verification
 

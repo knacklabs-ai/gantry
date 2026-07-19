@@ -3,30 +3,30 @@ import {
   inlineWorkerOnlyToolRuleLabels,
   isInlineWorkerOnlyToolRule,
   type AgentRuntime,
-} from '../../shared/agent-runtime.js';
+} from './agent-runtime.js';
 import {
   AUTO_AGENT_HARNESS,
   DEEPAGENTS_ENGINE,
   type AgentHarness,
-} from '../../shared/agent-engine.js';
+} from './agent-engine.js';
 import {
   deriveAgentEngineForProvider,
   resolveExecutionRoute,
-} from '../../shared/model-execution-route.js';
+} from './model-execution-route.js';
 import {
   resolveModelSelectionForWorkloadWithFamilies,
   type FamilyOrderOverrides,
-} from '../../shared/model-families.js';
+} from './model-families.js';
 import {
   DEFAULT_SETUP_MODEL_ALIAS,
   type ModelWorkload,
-} from '../../shared/model-catalog.js';
-import { settingsCapabilityIdToToolRule } from './configured-capability-normalization.js';
+} from './model-catalog.js';
+import { settingsCapabilityIdToToolRule } from './configured-capabilities.js';
 import type {
   AgentEffort,
   RuntimeAgentThinking,
   RuntimeConfiguredAgent,
-} from './runtime-settings-types.js';
+} from './runtime-settings.js';
 
 const AGENT_EFFORT_VALUES = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
 

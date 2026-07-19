@@ -14,7 +14,7 @@ Use ponytail. Fail-open everywhere: observability must never break or slow an LL
 - Content capture ON by default (configuring an endpoint = consent); `capture_content: false` keeps timing/tokens/metadata only. Truncation: 16k chars per message, 32k per attribute.
 - Usage completeness is a hard requirement: every `chat` span carries input/output/cache token detail. For OpenAI-format streams the gateway injects `stream_options.include_usage` when absent and strips the synthetic usage-only frame downstream.
 - Content keys: legacy `gen_ai.prompt` / `gen_ai.completion` (what Langfuse + LangSmith map natively today).
-- Settings: global `observability.tracing` block (enabled/endpoint/capture_content/sample_rate/environment), restart-owned; auth headers via `GANTRY_OTEL_TRACES_HEADERS` env secret; standard `OTEL_EXPORTER_OTLP_TRACES_*` env as fallback. Private in v1 — NOT in the public settings projection or contracts.
+- Settings: global `observability.tracing` block (enabled/endpoint/capture*content/sample_rate/environment), restart-owned; auth headers via `GANTRY_OTEL_TRACES_HEADERS` env secret; standard `OTEL_EXPORTER_OTLP_TRACES*\*` env as fallback. Private in v1 — NOT in the public settings projection or contracts.
 - Full plan of record: `docs/architecture/otel-llm-observability-goal-prompt.md` is the stage contract; the approved plan lives at `~/.claude/plans/analyse-the-current-code-encapsulated-origami.md`.
 - Assumptions ledger: every stage records assumptions forced by missing information in `docs/architecture/otel-llm-observability-assumptions.md` (structured table per stage; orchestrator validates each row before the stage commit).
 
@@ -22,7 +22,7 @@ Use ponytail. Fail-open everywhere: observability must never break or slow an LL
 
 - Deps in root `package.json`: `@opentelemetry/api`, `@opentelemetry/sdk-trace-node`, `@opentelemetry/exporter-trace-otlp-http`, `@opentelemetry/resources`.
 - `apps/core/src/infrastructure/observability/tracing.ts` — provider lifecycle (`initTracing`/`shutdownTracing`), turn-span registry (`startTurnSpan`/`getTurnSpan`), `parseOtlpHeaders`, content bounding. Provider-neutral by design (architecture gate).
-- `apps/core/src/adapters/llm/observability/genai-spans.ts` — `observeGatewayCall()` gateway entry point: span creation/parenting, gen_ai.* attribute mapping, include_usage injection, stream tap with frame stripping, cost via `normalizeModelUsage`.
+- `apps/core/src/adapters/llm/observability/genai-spans.ts` — `observeGatewayCall()` gateway entry point: span creation/parenting, gen_ai.\* attribute mapping, include_usage injection, stream tap with frame stripping, cost via `normalizeModelUsage`.
 - `apps/core/src/adapters/llm/observability/sse-accumulator.ts` — SSE frame splitter + Anthropic/OpenAI stream accumulators, `isOpenAiUsageOnlyFrame`.
 - Typecheck clean, architecture gate clean (provider-specific files live under the approved `apps/core/src/adapters/llm` path).
 
@@ -47,7 +47,7 @@ Bounded write scope: the two new test files only. Nothing else. If a test expose
 
 ### Stage B — Settings schema + env secret
 
-- `apps/core/src/config/settings/runtime-settings-types.ts`: `RuntimeObservabilitySettings { tracing: { enabled: boolean; endpoint: string; captureContent: boolean; sampleRate: number; environment?: string } }`; add `observability` to `RuntimeSettings`.
+- `apps/core/src/shared/runtime-settings.ts`: `RuntimeObservabilitySettings { tracing: { enabled: boolean; endpoint: string; captureContent: boolean; sampleRate: number; environment?: string } }`; add `observability` to `RuntimeSettings`.
 - New parser file (create, basename `runtime-settings-observability-parser.ts`) in `apps/core/src/config/settings/`, strict-parse modeled on `apps/core/src/config/settings/runtime-settings-limits-parser.ts`: only `tracing` under `observability`, only the five leaf keys, loud error on unknown keys, validate sample_rate ∈ [0,1].
 - Register the root key + parser in `apps/core/src/config/settings/runtime-settings-parser.ts` (allowed root-key list and its error message).
 - Defaults in `apps/core/src/config/settings/runtime-settings-defaults.ts`: `{ tracing: { enabled: false, endpoint: '', captureContent: true, sampleRate: 1 } }`.
@@ -86,18 +86,18 @@ Bounded write scope: the two gateway files + the new test file. Nothing else.
 
 ## Surface Impact Matrix
 
-| Surface | Impact | Reason |
-| --- | --- | --- |
-| Runtime behavior | Additive | Tracing off by default; enabled → spans exported, OpenAI streaming bodies gain `include_usage`. |
-| `settings.yaml` | Optional additive | New `observability.tracing` block, omit-when-default. |
-| Postgres | Unchanged | No new tables; runtime events untouched. |
-| Control API / contracts | Unchanged | Block deliberately excluded from public settings projection. |
-| SDK (`packages/sdk`) | Unchanged | No surface change. |
-| CLI | Unchanged | No new command in v1. |
-| Env/secrets | Additive | `GANTRY_OTEL_TRACES_HEADERS` runtime secret + standard `OTEL_*` fallback. |
-| Settings revisions | Changed | New block serialized; reader version bumped. |
-| Docs/prompts | Additive | `.env.example` recipes; smoke steps in PR. |
-| Tests | Additive | New unit + gateway integration suites. |
+| Surface                 | Impact            | Reason                                                                                          |
+| ----------------------- | ----------------- | ----------------------------------------------------------------------------------------------- |
+| Runtime behavior        | Additive          | Tracing off by default; enabled → spans exported, OpenAI streaming bodies gain `include_usage`. |
+| `settings.yaml`         | Optional additive | New `observability.tracing` block, omit-when-default.                                           |
+| Postgres                | Unchanged         | No new tables; runtime events untouched.                                                        |
+| Control API / contracts | Unchanged         | Block deliberately excluded from public settings projection.                                    |
+| SDK (`packages/sdk`)    | Unchanged         | No surface change.                                                                              |
+| CLI                     | Unchanged         | No new command in v1.                                                                           |
+| Env/secrets             | Additive          | `GANTRY_OTEL_TRACES_HEADERS` runtime secret + standard `OTEL_*` fallback.                       |
+| Settings revisions      | Changed           | New block serialized; reader version bumped.                                                    |
+| Docs/prompts            | Additive          | `.env.example` recipes; smoke steps in PR.                                                      |
+| Tests                   | Additive          | New unit + gateway integration suites.                                                          |
 
 ## Acceptance Criteria
 

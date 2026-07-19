@@ -9,7 +9,7 @@ import {
   getModelProviderDefinition,
   normalizeModelRouteProviderId,
 } from '../../shared/model-provider-registry.js';
-import type { RuntimeCustomModelAlias } from './runtime-settings-types.js';
+import type { RuntimeCustomModelAlias } from '../../shared/runtime-settings.js';
 import {
   containsControlCharacter,
   parseBooleanValue,

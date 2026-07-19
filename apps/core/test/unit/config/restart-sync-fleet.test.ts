@@ -36,15 +36,15 @@ function mockProjectionSync(
     SettingsStaleMutationError: MockSettingsStaleMutationError,
     SettingsRevisionConflictError: MockSettingsRevisionConflictError,
   }));
-  vi.doMock(
-    '@core/config/settings/configured-capability-normalization.js',
-    () => ({ normalizeConfiguredCapabilitiesInSettings: vi.fn() }),
-  );
+  vi.doMock('@core/shared/configured-capabilities.js', () => ({
+    normalizeConfiguredCapabilitiesInSettings: vi.fn(),
+  }));
   vi.doMock('@core/config/settings/runtime-settings-validation.js', () => ({
     validateLoadedRuntimeSettings: vi.fn(),
   }));
   return {
     exportCurrent,
+    desiredState: { exportCurrent } as never,
     importWorkstationSettings,
     loadRuntimeSettings,
   };
@@ -56,7 +56,7 @@ describe('syncRuntimeSettingsFromProjection fleet mode', () => {
     vi.doUnmock('@core/application/settings/desired-state-service.js');
     vi.doUnmock('@core/config/settings/runtime-settings.js');
     vi.doUnmock('@core/config/settings/settings-import-service.js');
-    vi.doUnmock('@core/config/settings/configured-capability-normalization.js');
+    vi.doUnmock('@core/shared/configured-capabilities.js');
     vi.doUnmock('@core/config/settings/runtime-settings-validation.js');
   });
 
@@ -73,6 +73,7 @@ describe('syncRuntimeSettingsFromProjection fleet mode', () => {
     } as never;
     await syncRuntimeSettingsFromProjection({
       runtimeHome: '/tmp/gantry-test',
+      desiredState: mocks.desiredState,
       ops: {} as never,
       repositories: {} as never,
       appId: 'app:test' as never,
@@ -109,6 +110,7 @@ describe('syncRuntimeSettingsFromProjection fleet mode', () => {
       await import('@core/config/settings/restart-sync.js');
     await syncRuntimeSettingsFromProjection({
       runtimeHome: '/tmp/gantry-test',
+      desiredState: mocks.desiredState,
       ops: {} as never,
       repositories: {} as never,
       settingsRevisions: {} as never,
@@ -145,6 +147,7 @@ describe('syncRuntimeSettingsFromProjection fleet mode', () => {
       await import('@core/config/settings/restart-sync.js');
     await syncRuntimeSettingsFromProjection({
       runtimeHome: '/tmp/gantry-test',
+      desiredState: mocks.desiredState,
       ops: {} as never,
       repositories: {} as never,
       settingsRevisions: {} as never,
@@ -172,6 +175,7 @@ describe('syncRuntimeSettingsFromProjection fleet mode', () => {
     await expect(
       syncRuntimeSettingsFromProjection({
         runtimeHome: '/tmp/gantry-test',
+        desiredState: mocks.desiredState,
         ops: {} as never,
         repositories: {} as never,
         settingsRevisions: {} as never,
@@ -219,12 +223,9 @@ describe('syncRuntimeSettingsFromProjection fleet mode', () => {
     vi.doMock('@core/application/settings/desired-state-service.js', () => ({
       SettingsDesiredStateService: class {},
     }));
-    vi.doMock(
-      '@core/config/settings/configured-capability-normalization.js',
-      () => ({
-        normalizeConfiguredCapabilitiesInSettings: vi.fn(),
-      }),
-    );
+    vi.doMock('@core/shared/configured-capabilities.js', () => ({
+      normalizeConfiguredCapabilitiesInSettings: vi.fn(),
+    }));
     vi.doMock('@core/config/settings/runtime-settings-validation.js', () => ({
       validateLoadedRuntimeSettings: vi.fn(),
     }));
@@ -236,6 +237,7 @@ describe('syncRuntimeSettingsFromProjection fleet mode', () => {
     } as never;
     await addAgentToolRulesToSyncedRuntimeSettings({
       runtimeHome: '/tmp/gantry-test',
+      desiredState: {} as never,
       agentFolder: 'main',
       rules: ['Browser'],
       ops: {} as never,
@@ -289,6 +291,7 @@ describe('syncRuntimeSettingsFromProjection fleet mode', () => {
     await expect(
       addAgentToolRulesToSyncedRuntimeSettings({
         runtimeHome: '/tmp/gantry-test',
+        desiredState: {} as never,
         agentFolder: 'main',
         rules: ['Browser'],
         ops: {} as never,

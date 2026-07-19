@@ -7,6 +7,7 @@ import {
   getRuntimeSettingsForConfig,
 } from '../../config/index.js';
 import { agentIdForFolder } from '../../application/settings/desired-state-service-helpers.js';
+import { SettingsDesiredStateService } from '../../application/settings/desired-state-service.js';
 import {
   createAgentToolRuleSettingsMirror,
   type AgentToolRuleSettingsRepositories,
@@ -424,6 +425,8 @@ export async function startRuntimeServices(
       closeBrowserToolBackends: resolved.closeBrowserToolBackends,
     });
   const mirrorAgentToolRulesToSettings = createAgentToolRuleSettingsMirror({
+    // prettier-ignore
+    desiredState: new SettingsDesiredStateService({ ops: resolved.opsRepository, repositories: resolved.settingsRepositories as AgentToolRuleSettingsRepositories }),
     opsRepository: resolved.opsRepository,
     repositories: resolved.settingsRepositories,
     reloadRuntimeState: () => app.loadState(),

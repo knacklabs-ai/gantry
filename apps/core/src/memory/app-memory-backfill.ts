@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
 import * as pgSchema from '../adapters/storage/postgres/schema/schema.js';
-import type { MemoryBackfillMode } from '../config/settings/runtime-settings-types.js';
+import type { MemoryBackfillMode } from '../shared/runtime-settings.js';
 import { logger } from '../infrastructure/logging/logger.js';
 import { nowIso } from './app-memory-service-query-helpers.js';
 import {

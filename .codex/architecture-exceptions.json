@@ -182,13 +182,6 @@
     "maxViolations": 5
   },
   {
-    "file": "apps/core/src/cli/group-args.ts",
-    "rule": "forbidden_import_by_layer",
-    "reason": "Baseline layer-boundary debt from the in-progress canonical runtime refactor; capped so new imports fail until the boundary slice removes this exception.",
-    "removeByPhase": "canonical-boundary-cleanup-phase",
-    "maxViolations": 2
-  },
-  {
     "file": "apps/core/src/cli/group-harness.ts",
     "rule": "forbidden_import_by_layer",
     "reason": "Local CLI agent-harness administration follows existing CLI settings-persistence adapters; capped so additional config imports fail until CLI settings writes are ported.",
@@ -385,9 +378,9 @@
     "maxViolations": 3
   },
   {
-    "file": "apps/core/src/config/settings/desired-state-provider-conversations.ts",
+    "file": "apps/core/src/application/settings/desired-state-provider-conversations.ts",
     "rule": "provider_specific_path",
-    "reason": "Exact settings provider-conversation debt after removing the broad config provider allowlist; capped so new provider-specific config leakage fails.",
+    "reason": "Exact settings provider-conversation debt retained by the pre-AR2 route bridge; capped so new provider-specific leakage fails.",
     "removeByPhase": "provider-boundary-config-cleanup-phase",
     "maxViolations": 14
   },
@@ -1249,13 +1242,6 @@
     "file": "apps/core/src/cli/group-access.ts",
     "rule": "forbidden_import_by_layer",
     "reason": "Group-access CLI is a local admin adapter over settings.yaml desired-state writers and runtime settings types; capped at exact count until the group-access command service is extracted.",
-    "removeByPhase": "canonical-boundary-cleanup-phase",
-    "maxViolations": 3
-  },
-  {
-    "file": "apps/core/src/cli/group-engine.ts",
-    "rule": "forbidden_import_by_layer",
-    "reason": "Group-engine CLI verb is a local admin adapter over settings.yaml desired-state writers and runtime settings types (mirrors group-access); capped at exact count until the agent-command service is extracted.",
     "removeByPhase": "canonical-boundary-cleanup-phase",
     "maxViolations": 3
   },

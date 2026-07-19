@@ -22,7 +22,7 @@ import {
   reportWorkstationSettingsImportOutcome,
   runSettingsCommand,
 } from '@core/cli/settings.js';
-import type { RuntimeConfiguredConversation } from '@core/config/settings/runtime-settings-types.js';
+import type { RuntimeConfiguredConversation } from '@core/shared/runtime-settings.js';
 import {
   parseSimpleYamlObject,
   quoteYamlString,

@@ -1,4 +1,4 @@
-import type { RuntimeArtifactStoreSettings } from './runtime-settings-types.js';
+import type { RuntimeArtifactStoreSettings } from '../../shared/runtime-settings.js';
 import { quoteYamlString } from './yaml.js';
 
 /**

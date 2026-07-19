@@ -1,4 +1,4 @@
-import type { RuntimeSettings } from '../config/settings/runtime-settings-types.js';
+import type { RuntimeSettings } from '../shared/runtime-settings.js';
 import {
   AUTO_AGENT_HARNESS,
   type AgentHarness,

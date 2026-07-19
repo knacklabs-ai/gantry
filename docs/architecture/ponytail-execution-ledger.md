@@ -9,15 +9,15 @@ Scope: Phase 1 transition evidence and Phase 2 settings-authority cutover from
 
 ### Migration head
 
-- The current migration head is `0103_settings_authority_cutover` (`idx: 103`,
-  journal timestamp `1784418410109`).
-- The repository has 101 SQL migration files and 101 journal entries, including
-  `0103`.
+- The current migration head is `0104_settings_authority_cutover` (`idx: 104`,
+  journal timestamp `1784430700000`).
+- The repository has 102 SQL migration files and 102 journal entries, including
+  `0104`.
 - Head SQL SHA-256:
-  `46995b633e529e57e2195829a1bfc9bd6d5340a89431889dc236728961498d7a`.
-- `0103_snapshot.json` SHA-256:
-  `d807c83424f31ad996d13ec965cbc0a39d717cb181005bc452529aa13e46db05`.
-- `0103` is a normal forward migration, not the Phase 7 replacement baseline.
+  `22f9eefe9b1b25eca5b99f64a104a0d4399aea8390194395e89993a461b92cdd`.
+- `0104_snapshot.json` SHA-256:
+  `6facbe8a9254b3d869dbb202d257a0a9466d1a2e10d0fca7c41dcbc7156baeb3`.
+- `0104` is a normal forward migration, not the Phase 7 replacement baseline.
   It adds Conversation-owned `requires_trigger` and drops the invariant
   ConversationInstall `sender_policy` and `control_policy` columns.
 - The migration contains no `public` schema qualifier. Tables are referenced
@@ -62,7 +62,7 @@ Scope: Phase 1 transition evidence and Phase 2 settings-authority cutover from
 ### Phase 8 reset versus restamp sketch
 
 Phase 7 must first publish the final baseline SQL, snapshot, journal entry, and
-exact stamp metadata. `0103` is not that baseline.
+exact stamp metadata. `0104` is not that baseline.
 
 For this machine only:
 
@@ -108,7 +108,7 @@ files.
 | F6   | Implemented | Removed top-level and per-agent binding/install projections. `conversations.*.installedAgents` is the public/runtime authority, and control-plane/setup consumers now read it directly.                                                                                                        |
 | F7   | Adjusted    | Removed the runtime `providerConnection` shadow, fallback reads, obsolete prefix, and current vocabulary. Old spellings remain only in the Phase 9 transition reader, reject-only coverage, and migration/history evidence.                                                                    |
 | F16  | Implemented | Removed install-owned `trigger`/`requiresTrigger`; Conversation owns `requiresTrigger`, while install model and permission overrides remain.                                                                                                                                                   |
-| F23  | Implemented | Removed invariant install `senderPolicy`/`controlPolicy` from domain, repository, schema, contracts, tests, and writers; `0103` drops the columns. Conversation sender policy and approvers remain authoritative.                                                                              |
+| F23  | Implemented | Removed invariant install `senderPolicy`/`controlPolicy` from domain, repository, schema, contracts, tests, and writers; `0104` drops the columns. Conversation sender policy and approvers remain authoritative.                                                                              |
 | AR1  | Implemented | Moved the existing desired-state service, helpers, types, and current export into `application/settings`; boot, watchers, writer, CLI/control consumers, and reconciliation use that application-owned seam. YAML codecs and revision transport remain in their narrow config/Postgres owners. |
 
 No Phase 2 item was skipped. F7 is adjusted only because the approved plan
@@ -122,7 +122,7 @@ Measured before adding this Phase 1 ledger:
 - tracked changes: +631 / -7,382 lines;
 - new non-generated `application/settings` source: +1,382 lines;
 - Phase 2 non-generated total: +2,013 / -7,382, net **-5,369 lines**;
-- generated migration artifacts excluded from that reduction: `0103` SQL +2
+- generated migration artifacts excluded from that reduction: `0104` SQL +2
   lines and snapshot +14,576 lines.
 
 The exclusion matches the audit's nonmigration estimates and prevents the
@@ -146,11 +146,18 @@ conversations. This is a manual live-machine cleanup step; the runtime does not
 translate the legacy shape.
 
 ### Runbook addendum (R6 finding resolution, no-legacy policy)
-The 0103 migration derives conversation `requires_trigger` from kind and drops
+
+The 0104 migration derives conversation `requires_trigger` from kind and drops
 the per-install columns without preservation code (user directive: no legacy
 support). Live-machine audit 2026-07-19: two REAL channels deliberately run
 trigger-free and MUST carry `requires_trigger: false` explicitly through the
 one-time settings cleanup — `main_telegram_group` and
 `telegram_default_-1003798366047_0f76daeb32c4`. The other two real
-conversations match kind-derived defaults. All codex_test_* conversations are
+conversations match kind-derived defaults. All codex*test*\* conversations are
 deleted, not migrated.
+
+## Phase 3 Slice 1 deferral
+
+- Transient install `trigger` remains until AR2 replaces the legacy route DTO;
+  current routing still reads it, so deleting only the in-memory bridge would
+  change behavior before the canonical writer cutover.

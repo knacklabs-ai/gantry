@@ -20,6 +20,7 @@ import {
 } from '../../config/settings/settings-import-service.js';
 import { PostgresSettingsRevisionWakeupSource } from '../../config/settings/settings-revision-notify.js';
 import type { AppId } from '../../domain/app/app.js';
+import { SettingsDesiredStateService } from '../../application/settings/desired-state-service.js';
 import { isDraining } from './draining-state.js';
 import type { SkillArtifactMaterializer } from '../../domain/ports/skill-artifact-store.js';
 import type { ToolchainArtifactMaterializer } from '../../domain/ports/toolchain-artifact-store.js';
@@ -96,6 +97,11 @@ export async function prepareFleetSettings(input: {
   await importWorkstationSettings(
     {
       runtimeHome: input.runtimeHome,
+      desiredState: new SettingsDesiredStateService({
+        ops: storage.ops,
+        repositories: storage.repositories,
+        appId: input.appId,
+      }),
       ops: storage.ops,
       repositories: storage.repositories,
       appId: input.appId,

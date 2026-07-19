@@ -1,4 +1,4 @@
-import type { RuntimeLimitSettings } from './runtime-settings-types.js';
+import type { RuntimeLimitSettings } from '../../shared/runtime-settings.js';
 import { listExecutableModelProviders } from '../../shared/model-provider-registry.js';
 
 // Strict parser for the optional `limits` block. Shape:

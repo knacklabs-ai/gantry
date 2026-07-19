@@ -1,20 +1,109 @@
 import type { AppId } from '../../domain/app/app.js';
+import type { AgentMcpServerBinding } from '../../domain/mcp/mcp-servers.js';
 import type { ProviderAccount } from '../../domain/provider/provider.js';
-import {
-  activeSources,
-  readableActiveCapabilities,
-} from '../../config/settings/desired-state-export-helpers.js';
+import type { AgentSkillBinding } from '../../domain/skills/skills.js';
+import type {
+  AgentToolBinding,
+  AgentToolSource,
+} from '../../domain/tools/tools.js';
 import {
   folderForAgentId,
   groupByAgentId,
 } from './desired-state-service-helpers.js';
-import type { SettingsDesiredStateServiceDeps } from './desired-state-service-types.js';
+import type { SettingsDesiredStateServiceDeps } from '../../domain/ports/settings-desired-state.js';
 import type {
   RuntimeConfiguredAgent,
+  RuntimeConfiguredAgentCapability,
+  RuntimeConfiguredAgentSources,
   RuntimeProviderAccountSettings,
   RuntimeProviderSettings,
   RuntimeSettings,
-} from '../../config/settings/runtime-settings-types.js';
+} from '../../shared/runtime-settings.js';
+import { displayToolReference } from '../../shared/agent-tool-references.js';
+import { normalizeConfiguredCapabilities } from '../../shared/configured-capabilities.js';
+import {
+  containsGeneratedRuntimeSkillPath,
+  GENERATED_RUNTIME_SKILL_PATH_DURABLE_REJECTION_REASON,
+} from '../../shared/generated-runtime-paths.js';
+import { semanticCapabilityFromToolCatalogItem } from '../../shared/semantic-capabilities.js';
+
+function activeSources(
+  skillBindings: AgentSkillBinding[],
+  mcpBindings: AgentMcpServerBinding[],
+  skillCatalogById: Map<unknown, { name: string }>,
+  toolSources: AgentToolSource[] = [],
+): RuntimeConfiguredAgentSources {
+  return {
+    skills: skillBindings
+      .filter((binding) => binding.status === 'active')
+      .map((binding) => {
+        const skillId = binding.skillId;
+        const skill = skillCatalogById.get(skillId);
+        return {
+          ...(skill ? { name: skill.name } : {}),
+          id: String(skillId),
+        };
+      }),
+    mcpServers: mcpBindings
+      .filter((binding) => binding.status === 'active')
+      .map((binding) => ({
+        id: String(binding.serverId),
+        ...(binding.allowedToolPatterns?.length
+          ? { tools: [...binding.allowedToolPatterns] }
+          : {}),
+      })),
+    tools: toolSources
+      .filter((source) => source.status === 'active')
+      .map((source) => ({
+        id: source.sourceId,
+        kind: source.kind,
+        ...(source.version && source.version !== source.kind
+          ? { version: source.version }
+          : {}),
+      })),
+  };
+}
+
+function readableActiveCapabilities(
+  toolBindings: AgentToolBinding[],
+  toolCatalogById: Map<unknown, { name: string; inputSchema?: unknown }>,
+): RuntimeConfiguredAgentCapability[] {
+  const rawCapabilities = toolBindings
+    .filter((item) => item.status === 'active')
+    .map((binding) => {
+      const tool = toolCatalogById.get(binding.toolId);
+      const reference = tool
+        ? displayToolReference({ toolId: binding.toolId, tool })
+        : String(binding.toolId).replace(/^tool:/, '');
+      if (containsGeneratedRuntimeSkillPath(reference)) {
+        throw new Error(GENERATED_RUNTIME_SKILL_PATH_DURABLE_REJECTION_REASON);
+      }
+      return capabilityFromToolReference(reference, tool);
+    });
+  return normalizeConfiguredCapabilities({
+    capabilities: rawCapabilities,
+  }).capabilities;
+}
+
+function capabilityFromToolReference(
+  reference: string,
+  tool?: { name: string; inputSchema?: unknown },
+): RuntimeConfiguredAgentCapability {
+  if (reference === 'Browser') return { id: 'browser.use', version: 'builtin' };
+  if (reference.startsWith('capability:')) {
+    const semanticCapability = tool
+      ? semanticCapabilityFromToolCatalogItem({
+          name: tool.name,
+          inputSchema: tool.inputSchema,
+        })
+      : undefined;
+    return {
+      id: reference.slice('capability:'.length),
+      version: semanticCapability?.version ?? 'catalog',
+    };
+  }
+  return { id: reference, version: 'builtin' };
+}
 
 export async function exportCurrentDesiredState(input: {
   deps: SettingsDesiredStateServiceDeps;
@@ -155,10 +244,6 @@ export async function exportCurrentDesiredState(input: {
       capabilities: readableActiveCapabilities(
         toolBindingsByAgent.get(agent.id) ?? [],
         toolCatalogById,
-        {
-          skillBindings: skillBindingsByAgent.get(agent.id) ?? [],
-          skillCatalogById,
-        },
       ),
       accessPreset: existing?.accessPreset ?? 'full',
     };

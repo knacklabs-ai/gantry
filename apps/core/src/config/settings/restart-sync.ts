@@ -2,10 +2,10 @@ import type { AppId } from '../../domain/app/app.js';
 import type { SettingsRevisionRepository } from '../../domain/ports/fleet-capability-state.js';
 import type { SettingsRevisionMirror } from './settings-import-service.js';
 import type {
+  SettingsDesiredStateActions,
   SettingsDesiredStateOps,
   SettingsDesiredStateRepositories,
-} from '../../application/settings/desired-state-service.js';
-import { SettingsDesiredStateService } from '../../application/settings/desired-state-service.js';
+} from '../../domain/ports/settings-desired-state.js';
 import {
   addAgentToolRulesToRuntimeSettings,
   activateRuntimeModelAliases,
@@ -14,13 +14,13 @@ import {
   saveRuntimeSettings,
   withRuntimeModelAliases,
 } from './runtime-settings.js';
-import { normalizeConfiguredCapabilitiesInSettings } from './configured-capability-normalization.js';
+import { normalizeConfiguredCapabilitiesInSettings } from '../../shared/configured-capabilities.js';
 import { validateLoadedRuntimeSettings } from './runtime-settings-validation.js';
-import { agentIdForFolder } from '../../application/settings/desired-state-service-helpers.js';
+import { agentIdForFolder } from '../../domain/agent/agent-folder-id.js';
 import type {
   RuntimeConfiguredAgentSourceRef,
   RuntimeSettings,
-} from './runtime-settings-types.js';
+} from '../../shared/runtime-settings.js';
 
 const MAX_STALE_SETTINGS_RETRIES = 3;
 
@@ -33,6 +33,7 @@ type ProjectionSettingsOverrides = {
 
 export async function applyRuntimeSettingsDesiredState(input: {
   runtimeHome: string;
+  desiredState: SettingsDesiredStateActions;
   settings: RuntimeSettings;
   ops: SettingsDesiredStateOps;
   repositories: SettingsDesiredStateRepositories;
@@ -40,15 +41,8 @@ export async function applyRuntimeSettingsDesiredState(input: {
   previousSettings?: RuntimeSettings;
   reloadRuntimeState?: () => Promise<void>;
 }): Promise<RuntimeSettings> {
-  const service = new SettingsDesiredStateService({
-    ops: input.ops,
-    repositories: input.repositories,
-    appId: input.appId,
-  });
   const normalization = await normalizeConfiguredCapabilitiesInSettings({
     settings: input.settings,
-    repositories: input.repositories,
-    appId: input.appId ?? ('default' as AppId),
   });
   const settings = normalization.settings;
   const reconcileSettings = normalization.changed ? input.settings : settings;
@@ -66,13 +60,13 @@ export async function applyRuntimeSettingsDesiredState(input: {
   const rollback = async () => {
     if (!input.previousSettings) return;
     saveRuntimeSettings(input.runtimeHome, input.previousSettings);
-    await service.reconcile(input.previousSettings);
+    await input.desiredState.reconcile(input.previousSettings);
     await input.reloadRuntimeState?.();
     activateRuntimeModelAliases(input.previousSettings);
   };
   try {
     saveRuntimeSettings(input.runtimeHome, settings);
-    const reconcile = await service.reconcile(reconcileSettings);
+    const reconcile = await input.desiredState.reconcile(reconcileSettings);
     if (reconcile.invalidReferences.length > 0) {
       throw new Error(
         `settings desired state contains invalid references:\n${reconcile.invalidReferences.join('\n')}`,
@@ -89,6 +83,7 @@ export async function applyRuntimeSettingsDesiredState(input: {
 
 export async function syncRuntimeSettingsFromProjection(input: {
   runtimeHome: string;
+  desiredState: SettingsDesiredStateActions;
   ops: SettingsDesiredStateOps;
   repositories: SettingsDesiredStateRepositories;
   appId?: AppId;
@@ -98,14 +93,9 @@ export async function syncRuntimeSettingsFromProjection(input: {
   createdBy?: string;
   overrides?: ProjectionSettingsOverrides;
 }): Promise<void> {
-  const service = new SettingsDesiredStateService({
-    ops: input.ops,
-    repositories: input.repositories,
-    appId: input.appId,
-  });
   for (let attempt = 0; attempt <= MAX_STALE_SETTINGS_RETRIES; attempt += 1) {
     const settings = loadRuntimeSettings(input.runtimeHome);
-    const exported = await service.exportCurrent(settings);
+    const exported = await input.desiredState.exportCurrent(settings);
     const providerAccountOverride = input.overrides?.providerAccount;
     if (providerAccountOverride) {
       const account = exported.providerAccounts[providerAccountOverride.id];
@@ -124,6 +114,7 @@ export async function syncRuntimeSettingsFromProjection(input: {
         await importWorkstationSettings(
           {
             runtimeHome: input.runtimeHome,
+            desiredState: input.desiredState,
             ops: input.ops,
             repositories: input.repositories,
             appId,
@@ -166,6 +157,7 @@ export async function syncRuntimeSettingsFromProjection(input: {
 
 export async function addAgentToolRulesToSyncedRuntimeSettings(input: {
   runtimeHome: string;
+  desiredState: SettingsDesiredStateActions;
   agentFolder: string;
   rules: readonly string[];
   ops: SettingsDesiredStateOps;
@@ -201,6 +193,7 @@ export async function addAgentToolRulesToSyncedRuntimeSettings(input: {
         await importWorkstationSettings(
           {
             runtimeHome: input.runtimeHome,
+            desiredState: input.desiredState,
             ops: input.ops,
             repositories: input.repositories,
             appId,
@@ -236,6 +229,7 @@ export async function addAgentToolRulesToSyncedRuntimeSettings(input: {
       runtimeHome: input.runtimeHome,
       settings: nextSettings,
       previousSettings,
+      desiredState: input.desiredState,
       ops: input.ops,
       repositories: input.repositories,
       appId: input.appId,
@@ -291,6 +285,7 @@ export async function addActiveMcpSourcesToRuntimeSettings(input: {
 
 export async function removeAgentToolRulesFromSyncedRuntimeSettings(input: {
   runtimeHome: string;
+  desiredState: SettingsDesiredStateActions;
   agentFolder: string;
   rules: readonly string[];
   ops: SettingsDesiredStateOps;
@@ -315,6 +310,7 @@ export async function removeAgentToolRulesFromSyncedRuntimeSettings(input: {
     await importWorkstationSettings(
       {
         runtimeHome: input.runtimeHome,
+        desiredState: input.desiredState,
         ops: input.ops,
         repositories: input.repositories,
         appId,
@@ -340,6 +336,7 @@ export async function removeAgentToolRulesFromSyncedRuntimeSettings(input: {
     runtimeHome: input.runtimeHome,
     settings: nextSettings,
     previousSettings,
+    desiredState: input.desiredState,
     ops: input.ops,
     repositories: input.repositories,
     appId: input.appId,

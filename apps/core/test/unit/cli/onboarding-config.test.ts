@@ -5,7 +5,7 @@ import path from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createDefaultRuntimeSettings } from '@core/config/settings/runtime-settings-defaults.js';
-import type { RuntimeSettings } from '@core/config/settings/runtime-settings-types.js';
+import type { RuntimeSettings } from '@core/shared/runtime-settings.js';
 
 const events: string[] = [];
 const STALE_SETTINGS_MESSAGE =

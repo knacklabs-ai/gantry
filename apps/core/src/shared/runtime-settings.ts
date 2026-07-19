@@ -1,17 +1,50 @@
-import type {
-  RuntimeMemorySettingsSnapshot,
-  RuntimeStorageSettingsSnapshot,
-} from './memory-snapshot.js';
-import type { RuntimeDeploymentMode } from '../../shared/runtime-deployment-mode.js';
-import type { AgentPersona } from '../../shared/agent-persona.js';
-import type { AgentRelationshipMode } from '../../shared/agent-relationship-mode.js';
-import type { YoloModeSettings } from '../../shared/yolo-mode-policy.js';
-import type { EgressSettings } from '../../shared/egress-policy.js';
-import type { AgentHarness } from '../../shared/agent-engine.js';
-import type { AgentRuntime } from '../../shared/agent-runtime.js';
-import type { PermissionMode } from '../../shared/permission-mode.js';
-import type { ModelWorkload } from '../../shared/model-catalog.js';
-import type { ModelEffortLevel } from '../../shared/model-catalog.js';
+import type { RuntimeDeploymentMode } from './runtime-deployment-mode.js';
+import type { AgentPersona } from './agent-persona.js';
+import type { AgentRelationshipMode } from './agent-relationship-mode.js';
+import type { YoloModeSettings } from './yolo-mode-policy.js';
+import type { EgressSettings } from './egress-policy.js';
+import type { AgentHarness } from './agent-engine.js';
+import type { AgentRuntime } from './agent-runtime.js';
+import type { PermissionMode } from './permission-mode.js';
+import type { ModelWorkload } from './model-catalog.js';
+import type { ModelEffortLevel } from './model-catalog.js';
+
+export interface ChatAllowlistEntry {
+  allow: '*' | string[];
+  mode: 'trigger' | 'drop';
+}
+
+export interface RuntimeMemorySettingsSnapshot {
+  enabled?: boolean;
+  embeddingsEnabled?: boolean;
+  embeddingProvider?: string;
+  embeddingModel?: string;
+  embeddingDimensions?: number;
+  dailyEmbedLimit?: number;
+  embedBatchSize?: number;
+  backfillEnabled?: boolean;
+  backfillCron?: string;
+  backfillMaxItemsPerRun?: number;
+  backfillMode?: string;
+  backfillProviderBatchMinItems?: number;
+  dreamingEnabled?: boolean;
+  dreamingCron?: string;
+  dreamingAlerts?: boolean;
+  dreamingEmbeddingsEnabled?: boolean;
+  dreamingEmbeddingProvider?: string;
+  dreamingEmbeddingModel?: string;
+  llmExtractorModel?: string;
+  llmDreamingModel?: string;
+  llmConsolidationModel?: string;
+  extractorMaxFacts?: number;
+  extractorMinConfidence?: number;
+  maintenanceMaxPending?: number;
+}
+
+export interface RuntimeStorageSettingsSnapshot {
+  postgresUrlEnv?: string;
+  postgresSchema?: string;
+}
 
 export interface RuntimeProviderSettings {
   enabled: boolean;
@@ -43,7 +76,7 @@ export interface RuntimeConfiguredConversation {
   displayName: string;
   brainHarvest?: boolean;
   requiresTrigger: boolean;
-  senderPolicy: import('./sender-allowlist.js').ChatAllowlistEntry;
+  senderPolicy: ChatAllowlistEntry;
   controlApprovers: string[];
   installedAgents: Record<string, RuntimeConfiguredConversationInstall>;
 }
@@ -205,8 +238,6 @@ export interface RuntimeCredentialBrokerSettings {
     bindHost: string;
   };
 }
-
-export type { RuntimeMemorySettingsSnapshot, RuntimeStorageSettingsSnapshot };
 
 export interface RuntimeQueueSettings {
   maxMessageRuns: number;

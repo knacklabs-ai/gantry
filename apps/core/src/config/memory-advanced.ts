@@ -9,7 +9,7 @@ import {
   DEFAULT_MEMORY_EMBED_BATCH_SIZE,
   DEFAULT_MEMORY_MAINTENANCE_MAX_PENDING,
 } from './settings/runtime-settings-defaults.js';
-import type { MemoryBackfillMode } from './settings/runtime-settings-types.js';
+import type { MemoryBackfillMode } from '../shared/runtime-settings.js';
 
 export const MEMORY_DREAMING_CRON =
   runtimeMemorySettings.dreamingCron ?? DEFAULT_MEMORY_DREAMING_CRON;

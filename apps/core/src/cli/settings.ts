@@ -11,8 +11,8 @@ import {
   getDeploymentMode,
   loadRuntimeSettings,
   loadRuntimeSettingsFromPath,
-  SettingsDesiredStateService,
 } from '../config/index.js';
+import { SettingsDesiredStateService } from '../application/settings/desired-state-service.js';
 import {
   importFleetSettingsRevision,
   importWorkstationSettings,
@@ -116,6 +116,7 @@ export async function runSettingsCommand(
       const outcome = await importWorkstationSettings(
         {
           runtimeHome,
+          desiredState: service,
           ops: storage.ops,
           repositories: storage.repositories,
           appId: 'default' as AppId,
@@ -192,6 +193,10 @@ async function runImport(
     return 1;
   }
 
+  const desiredState = new SettingsDesiredStateService({
+    ops: storage.ops,
+    repositories: storage.repositories,
+  });
   const fleet = flags.fleet || getDeploymentMode() === 'fleet';
   if (!fleet) {
     let outcome: Awaited<ReturnType<typeof importWorkstationSettings>>;
@@ -199,6 +204,7 @@ async function runImport(
       outcome = await importWorkstationSettings(
         {
           runtimeHome,
+          desiredState,
           ops: storage.ops,
           repositories: storage.repositories,
           appId: 'default' as AppId,
@@ -233,6 +239,7 @@ async function runImport(
   const outcome = await importFleetSettingsRevision(
     {
       runtimeHome,
+      desiredState,
       ops: storage.ops,
       repositories: storage.repositories,
       appId: 'default' as AppId,

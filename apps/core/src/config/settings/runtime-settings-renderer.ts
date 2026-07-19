@@ -41,7 +41,7 @@ import type {
   RuntimeProviderAccountSettings,
   RuntimeSettings,
   RuntimeStorageSettings,
-} from './runtime-settings-types.js';
+} from '../../shared/runtime-settings.js';
 import {
   quoteYamlKey,
   renderAgentDelegatesYaml,
@@ -50,7 +50,7 @@ import {
   renderModelFamiliesYaml,
   renderObservabilitySettingsYaml,
 } from './runtime-settings-optional-blocks-renderer.js';
-import { resolveConfiguredAgentRuntime } from './runtime-settings-agent-runtime.js';
+import { resolveConfiguredAgentRuntime } from '../../shared/configured-agent-runtime.js';
 const SYSTEM_DEFAULT_MODEL_ALIAS = 'opus';
 
 function renderDefaultsYaml(

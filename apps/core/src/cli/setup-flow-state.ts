@@ -7,7 +7,7 @@ import {
   envFilePath,
   settingsFilePath,
 } from '../config/settings/runtime-home.js';
-import { jidForConfiguredConversation } from '../config/settings/desired-state-provider-conversations.js';
+import { jidForConfiguredConversation } from '../application/settings/desired-state-provider-conversations.js';
 import {
   AUTO_AGENT_HARNESS,
   isAgentHarness,

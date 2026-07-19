@@ -1,9 +1,5 @@
 import { isValidWorkspaceFolder } from '../../platform/workspace-folder-rules.js';
-
-export interface ChatAllowlistEntry {
-  allow: '*' | string[];
-  mode: 'trigger' | 'drop';
-}
+import type { ChatAllowlistEntry } from '../../shared/runtime-settings.js';
 
 export interface SenderAllowlistConfig {
   default: ChatAllowlistEntry;

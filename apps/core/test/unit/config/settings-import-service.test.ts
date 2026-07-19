@@ -31,15 +31,11 @@ vi.mock('@core/config/settings/runtime-settings-validation.js', () => ({
   validateLoadedRuntimeSettings: () => ({ ok: true, settings: {} }),
 }));
 
-vi.mock('@core/application/settings/desired-state-service.js', () => ({
-  SettingsDesiredStateService: class {
-    async validateCapabilityReferences() {
-      return capabilityErrors;
-    }
-  },
-}));
-
 let capabilityErrors: string[] = [];
+
+const desiredStateActions = {
+  validateCapabilityReferences: async () => capabilityErrors,
+} as never;
 
 class FakeRevisionRepo implements SettingsRevisionRepository {
   rows: SettingsRevision[] = [];
@@ -106,6 +102,7 @@ class FakeRevisionRepo implements SettingsRevisionRepository {
 function baseDeps(repo: SettingsRevisionRepository) {
   return {
     runtimeHome: '/tmp/gantry-import-test',
+    desiredState: desiredStateActions,
     ops: {} as never,
     repositories: {} as never,
     appId: 'default' as never,
@@ -146,6 +143,7 @@ describe('importFleetSettingsRevision', () => {
     const outcome = await importWorkstationSettings(
       {
         runtimeHome: '/tmp/gantry-import-test',
+        desiredState: desiredStateActions,
         ops: {} as never,
         repositories: {} as never,
         appId: 'default' as never,
@@ -184,6 +182,7 @@ describe('importFleetSettingsRevision', () => {
     const outcome = await importWorkstationSettings(
       {
         runtimeHome: '/tmp/gantry-import-test',
+        desiredState: desiredStateActions,
         ops: {} as never,
         repositories: {} as never,
         appId: 'default' as never,
@@ -213,6 +212,7 @@ describe('importFleetSettingsRevision', () => {
     const outcome = await importWorkstationSettings(
       {
         runtimeHome: '/tmp/gantry-import-test',
+        desiredState: desiredStateActions,
         ops: {} as never,
         repositories: {} as never,
         appId: 'default' as never,
@@ -235,6 +235,7 @@ describe('importFleetSettingsRevision', () => {
       importWorkstationSettings(
         {
           runtimeHome: '/tmp/gantry-import-test',
+          desiredState: desiredStateActions,
           ops: {} as never,
           repositories: {} as never,
           appId: 'default' as never,
@@ -267,6 +268,7 @@ describe('importFleetSettingsRevision', () => {
     const outcome = await importWorkstationSettings(
       {
         runtimeHome: '/tmp/gantry-import-test',
+        desiredState: desiredStateActions,
         ops: {} as never,
         repositories: {} as never,
         appId: 'default' as never,
@@ -299,6 +301,7 @@ describe('importFleetSettingsRevision', () => {
     const outcome = await importWorkstationSettings(
       {
         runtimeHome: '/tmp/gantry-import-test',
+        desiredState: desiredStateActions,
         ops: {} as never,
         repositories: {} as never,
         appId: 'default' as never,
@@ -333,6 +336,7 @@ describe('importFleetSettingsRevision', () => {
     await importWorkstationSettings(
       {
         runtimeHome: '/tmp/gantry-import-test',
+        desiredState: desiredStateActions,
         ops: {} as never,
         repositories: {} as never,
         appId: 'default' as never,
@@ -396,6 +400,7 @@ describe('importFleetSettingsRevision', () => {
     await importWorkstationSettings(
       {
         runtimeHome: '/tmp/gantry-import-test',
+        desiredState: desiredStateActions,
         ops: {} as never,
         repositories: {} as never,
         appId: 'default' as never,
@@ -429,6 +434,7 @@ describe('importFleetSettingsRevision', () => {
     await importWorkstationSettings(
       {
         runtimeHome: '/tmp/gantry-import-test',
+        desiredState: desiredStateActions,
         ops: {} as never,
         repositories: {} as never,
         appId: 'default' as never,
@@ -446,6 +452,7 @@ describe('importFleetSettingsRevision', () => {
     await importWorkstationSettings(
       {
         runtimeHome: '/tmp/gantry-import-test',
+        desiredState: desiredStateActions,
         ops: {} as never,
         repositories: {} as never,
         appId: 'default' as never,
@@ -487,6 +494,7 @@ describe('importFleetSettingsRevision', () => {
       importWorkstationSettings(
         {
           runtimeHome: '/tmp/gantry-import-test',
+          desiredState: desiredStateActions,
           ops: {} as never,
           repositories: {} as never,
           appId: 'default' as never,
@@ -524,6 +532,7 @@ describe('importFleetSettingsRevision', () => {
       importWorkstationSettings(
         {
           runtimeHome: '/tmp/gantry-import-test',
+          desiredState: desiredStateActions,
           ops: {} as never,
           repositories: {} as never,
           appId: 'default' as never,
@@ -564,6 +573,7 @@ describe('importFleetSettingsRevision', () => {
       importWorkstationSettings(
         {
           runtimeHome: '/tmp/gantry-import-test',
+          desiredState: desiredStateActions,
           ops: {} as never,
           repositories: {} as never,
           appId: 'default' as never,
@@ -619,6 +629,7 @@ describe('importFleetSettingsRevision', () => {
       importWorkstationSettings(
         {
           runtimeHome: '/tmp/gantry-import-test',
+          desiredState: desiredStateActions,
           ops: {} as never,
           repositories: {} as never,
           appId: 'default' as never,
@@ -684,6 +695,7 @@ describe('importFleetSettingsRevision', () => {
       importWorkstationSettings(
         {
           runtimeHome: '/tmp/gantry-import-test',
+          desiredState: desiredStateActions,
           ops: {} as never,
           repositories: { providerAccounts } as never,
           appId: 'default' as never,

@@ -6,6 +6,7 @@ import { loadRuntimeSettings } from '../config/settings/runtime-settings.js';
 import { settingsFilePath } from '../config/settings/runtime-home.js';
 import {
   classifySettingsChanges,
+  SettingsDesiredStateService,
   type SettingsDesiredStateRepositories,
   type SettingsDesiredStateOps,
 } from '../application/settings/desired-state-service.js';
@@ -121,6 +122,11 @@ export function startSettingsReloadWatcher(
         await importWorkstationSettings(
           {
             runtimeHome: options.runtimeHome,
+            desiredState: new SettingsDesiredStateService({
+              ops: options.ops,
+              repositories: options.repositories,
+              appId: options.appId,
+            }),
             ops: options.ops,
             repositories: options.repositories,
             appId: options.appId,

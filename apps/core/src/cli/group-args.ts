@@ -1,6 +1,6 @@
 import { getProviderIds, parseRuntimeProvider } from './provider-utils.js';
 import type { RuntimeProviderId } from './provider-utils.js';
-import type { ChatAllowlistEntry } from '../config/settings/sender-allowlist.js';
+import type { ChatAllowlistEntry } from '../shared/runtime-settings.js';
 
 export interface GroupAddOptions {
   selector?: string;

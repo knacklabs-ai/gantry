@@ -21,8 +21,8 @@ import type { RuntimeDeploymentMode } from '../shared/runtime-deployment-mode.js
 import type {
   AgentRuntime,
   RuntimeSettings,
-} from './settings/runtime-settings-types.js';
-import { resolveConfiguredAgentRuntime } from './settings/runtime-settings-agent-runtime.js';
+} from '../shared/runtime-settings.js';
+import { resolveConfiguredAgentRuntime } from '../shared/configured-agent-runtime.js';
 import { isValidTimezone } from '../shared/timezone.js';
 import { resolvePermissionApprovalTimeoutMs } from '../shared/permission-timeout.js';
 import { effectiveYoloModeSettings } from '../shared/yolo-mode-policy.js';
@@ -32,7 +32,6 @@ import {
   defaultTriggerForAgentName,
 } from '../shared/trigger-pattern.js';
 export * from './memory.js';
-export { SettingsDesiredStateService } from '../application/settings/desired-state-service.js';
 export { createGroupJoinOnboardingCoordinator } from './settings/group-join-onboarding.js';
 export { configureDesiredSettingsStorageProvider } from './settings/runtime-settings.js';
 export {
@@ -49,7 +48,7 @@ export {
   resolveRuntimeStorageConfig,
   resolveRuntimeStorageConfigFromSettings,
 } from './settings/storage.js';
-export type { RuntimeSettings } from './settings/runtime-settings-types.js';
+export type { RuntimeSettings } from '../shared/runtime-settings.js';
 export type ControlEnvKey =
   | 'GANTRY_CONTROL_API_KEYS_JSON'
   | 'GANTRY_CONTROL_HOST'

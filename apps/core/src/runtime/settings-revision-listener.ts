@@ -1,4 +1,5 @@
 import type { AppId } from '../domain/app/app.js';
+import { SettingsDesiredStateService } from '../application/settings/desired-state-service.js';
 import type {
   SettingsRevision,
   SettingsRevisionRepository,
@@ -186,6 +187,11 @@ export class SettingsRevisionListener {
     await importWorkstationSettings(
       {
         runtimeHome: this.deps.runtimeHome,
+        desiredState: new SettingsDesiredStateService({
+          ops: this.deps.ops,
+          repositories: this.deps.repositories,
+          appId: this.deps.appId,
+        }),
         ops: this.deps.ops,
         repositories: this.deps.repositories,
         appId: this.deps.appId,

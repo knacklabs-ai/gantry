@@ -7,7 +7,7 @@ import {
   DEFAULT_OPENAI_DAILY_EMBED_LIMIT,
 } from './settings/runtime-settings-defaults.js';
 import { readRuntimeMemorySettingsSnapshot } from './settings/runtime-settings-snapshots.js';
-import type { RuntimeMemorySettingsSnapshot } from './settings/memory-snapshot.js';
+import type { RuntimeMemorySettingsSnapshot } from '../shared/runtime-settings.js';
 import {
   DEFAULT_SETUP_MODEL_ALIAS,
   memoryModelDefaultsForProvider,

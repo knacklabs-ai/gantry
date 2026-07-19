@@ -1,4 +1,4 @@
-import type { RuntimeSettings } from './runtime-settings-types.js';
+import type { RuntimeSettings } from '../../shared/runtime-settings.js';
 import { quoteYamlString } from './yaml.js';
 
 // Renderers for the optional tail blocks of settings.yaml. Each is omitted

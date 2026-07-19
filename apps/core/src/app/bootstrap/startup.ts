@@ -252,6 +252,11 @@ async function loadRevisionAuthoritySettings(input: {
   logger: StartupDeps['logger'];
 }): Promise<RuntimeSettings> {
   const appId = 'default' as AppId;
+  const desiredState = new SettingsDesiredStateService({
+    ops: input.storage.ops,
+    repositories: input.storage.repositories,
+    appId,
+  });
   const latest =
     await input.storage.repositories.settingsRevisions.getLatestSettingsRevision(
       appId,
@@ -289,6 +294,7 @@ async function loadRevisionAuthoritySettings(input: {
     await input.importWorkstationSettings(
       {
         runtimeHome: input.runtimeHome,
+        desiredState,
         ops: input.storage.ops,
         repositories: input.storage.repositories,
         appId,
@@ -314,6 +320,7 @@ async function loadRevisionAuthoritySettings(input: {
   const outcome = await input.importWorkstationSettings(
     {
       runtimeHome: input.runtimeHome,
+      desiredState,
       ops: input.storage.ops,
       repositories: input.storage.repositories,
       appId,

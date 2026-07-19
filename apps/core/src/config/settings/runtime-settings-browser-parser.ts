@@ -17,7 +17,7 @@ import {
 import type {
   RuntimeBrowserSettings,
   RuntimeBrowserUsagePolicyMode,
-} from './runtime-settings-types.js';
+} from '../../shared/runtime-settings.js';
 
 function parseOptionalPositiveIntegerValue(
   raw: unknown,

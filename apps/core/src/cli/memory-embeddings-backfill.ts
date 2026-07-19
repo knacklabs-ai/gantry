@@ -9,7 +9,7 @@ import { createEmbeddingProvider } from '../memory/memory-embeddings.js';
 import { EmbeddingProviderError } from '../memory/memory-embedding-errors.js';
 import { loadRuntimeSettings } from '../config/settings/runtime-settings.js';
 import type { AppId } from '../domain/app/app.js';
-import type { MemoryBackfillMode } from '../config/settings/runtime-settings-types.js';
+import type { MemoryBackfillMode } from '../shared/runtime-settings.js';
 
 interface ParsedFlags {
   limit?: number;

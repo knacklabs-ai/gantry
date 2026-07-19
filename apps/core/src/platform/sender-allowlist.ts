@@ -5,10 +5,8 @@ import { logger } from '../infrastructure/logging/logger.js';
 import '../channels/register-builtins.js';
 import { loadRuntimeSettingsFromPath } from '../config/settings/runtime-settings.js';
 import type { SenderControlAllowlistConfig } from '../config/settings/control-allowlist.js';
-import type {
-  ChatAllowlistEntry,
-  SenderAllowlistConfig,
-} from '../config/settings/sender-allowlist.js';
+import type { SenderAllowlistConfig } from '../config/settings/sender-allowlist.js';
+import type { ChatAllowlistEntry } from '../shared/runtime-settings.js';
 import { settingsFilePath } from '../config/settings/runtime-home.js';
 import {
   getProvider,

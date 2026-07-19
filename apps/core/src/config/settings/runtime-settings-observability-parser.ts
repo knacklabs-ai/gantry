@@ -1,5 +1,5 @@
 import { parseBooleanValue } from './runtime-settings-parse-primitives.js';
-import type { RuntimeObservabilitySettings } from './runtime-settings-types.js';
+import type { RuntimeObservabilitySettings } from '../../shared/runtime-settings.js';
 
 function parseEndpoint(raw: unknown, fallback: string): string {
   if (raw === undefined) return fallback;

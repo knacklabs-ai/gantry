@@ -17,7 +17,7 @@ import type {
   RuntimeConfiguredAgentSources,
   RuntimeConfiguredToolRule,
   RuntimeDesiredStateSettings,
-} from './runtime-settings-types.js';
+} from '../../shared/runtime-settings.js';
 import {
   parseBooleanValue,
   parseStringArrayValue,
@@ -33,7 +33,7 @@ import {
   parseAgentPositiveIntegerValue,
   parseAgentRuntimeValue,
   parseAgentThinkingValue,
-} from './runtime-settings-agent-runtime.js';
+} from '../../shared/configured-agent-runtime.js';
 
 function parseOptionalAgentHarnessValue(
   raw: unknown,

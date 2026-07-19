@@ -56,7 +56,7 @@ import {
   settingsFromRevisionDocument,
   settingsToRevisionDocument,
 } from '../../../config/settings/settings-import-service.js';
-import type { RuntimeSettings } from '../../../config/settings/runtime-settings-types.js';
+import type { RuntimeSettings } from '../../../shared/runtime-settings.js';
 import { writeControlDesiredState } from './settings.js';
 import { parseAgentThreadQueueKey } from '../../../shared/thread-queue-key.js';
 

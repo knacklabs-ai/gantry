@@ -19,20 +19,22 @@ import {
   inlineAgentRuntimeCapabilityErrors,
   replaceDesiredStateCapabilities,
   settingsCapabilityToToolReference,
-} from '../../config/settings/desired-state-capability-reconcile.js';
+} from './desired-state-capability-reconcile.js';
 import { exportCurrentDesiredState } from './desired-state-current-export.js';
 import {
-  normalizeConfiguredCapabilities,
-  normalizeConfiguredCapabilitiesInSettings,
   semanticCapabilityDefinitionsById,
   semanticCapabilityDefinitionsFromCatalogTools,
   skillActionDefinitionsForSkills,
-} from '../../config/settings/configured-capability-normalization.js';
+} from './configured-capability-normalization.js';
+import {
+  normalizeConfiguredCapabilities,
+  normalizeConfiguredCapabilitiesInSettings,
+} from '../../shared/configured-capabilities.js';
 import {
   configuredConversationKind,
   jidForConfiguredConversation,
   stripProviderPrefix,
-} from '../../config/settings/desired-state-provider-conversations.js';
+} from './desired-state-provider-conversations.js';
 import {
   agentIdForFolder,
   configuredAgentConfig,
@@ -52,7 +54,7 @@ import {
 import {
   resolveConfiguredSkillReferences,
   selectedSkillsFromResolvedSkillReferences,
-} from '../../config/settings/desired-state-skill-references.js';
+} from './desired-state-skill-references.js';
 import {
   formatSkillMaterializationCollisionFragment,
   skillMaterializationCollisions,
@@ -62,25 +64,24 @@ export {
   classifySettingsChanges,
 } from './desired-state-service-helpers.js';
 export type {
-  SettingsChangeClassification,
   SettingsDesiredStateDriftReport,
   SettingsDesiredStateOps,
   SettingsDesiredStateRepositories,
   SettingsDesiredStateServiceDeps,
   SettingsReconcileResult,
   StoredAgentBinding,
-} from './desired-state-service-types.js';
+} from '../../domain/ports/settings-desired-state.js';
 import type {
   SettingsDesiredStateDriftReport,
   SettingsDesiredStateServiceDeps,
   SettingsReconcileResult,
-} from './desired-state-service-types.js';
+} from '../../domain/ports/settings-desired-state.js';
 import type {
   RuntimeConfiguredAgent,
   RuntimeConfiguredConversation,
   RuntimeProviderAccountSettings,
   RuntimeSettings,
-} from '../../config/settings/runtime-settings-types.js';
+} from '../../shared/runtime-settings.js';
 import { resolveAgentToolReference } from '../../domain/tools/agent-tool-catalog-references.js';
 import { nowIso } from '../../shared/time/datetime.js';
 import { makeAgentThreadQueueKey } from '../../shared/thread-queue-key.js';
@@ -105,8 +106,6 @@ export class SettingsDesiredStateService {
   async normalizeConfiguredCapabilities(settings: RuntimeSettings) {
     return normalizeConfiguredCapabilitiesInSettings({
       settings,
-      repositories: this.deps.repositories,
-      appId: this.appId,
     });
   }
 
@@ -151,8 +150,6 @@ export class SettingsDesiredStateService {
   async reconcile(settings: RuntimeSettings): Promise<SettingsReconcileResult> {
     const normalization = await normalizeConfiguredCapabilitiesInSettings({
       settings,
-      repositories: this.deps.repositories,
-      appId: this.appId,
     });
     settings = normalization.settings;
     const normalizedCapabilityFolders = new Set(

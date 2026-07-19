@@ -1,34 +1,7 @@
-export interface RuntimeMemorySettingsSnapshot {
-  enabled?: boolean;
-  embeddingsEnabled?: boolean;
-  embeddingProvider?: string;
-  embeddingModel?: string;
-  embeddingDimensions?: number;
-  dailyEmbedLimit?: number;
-  embedBatchSize?: number;
-  backfillEnabled?: boolean;
-  backfillCron?: string;
-  backfillMaxItemsPerRun?: number;
-  backfillMode?: string;
-  backfillProviderBatchMinItems?: number;
-  dreamingEnabled?: boolean;
-  dreamingCron?: string;
-  dreamingAlerts?: boolean;
-  dreamingEmbeddingsEnabled?: boolean;
-  dreamingEmbeddingProvider?: string;
-  dreamingEmbeddingModel?: string;
-  llmExtractorModel?: string;
-  llmDreamingModel?: string;
-  llmConsolidationModel?: string;
-  extractorMaxFacts?: number;
-  extractorMinConfidence?: number;
-  maintenanceMaxPending?: number;
-}
-
-export interface RuntimeStorageSettingsSnapshot {
-  postgresUrlEnv?: string;
-  postgresSchema?: string;
-}
+import type {
+  RuntimeMemorySettingsSnapshot,
+  RuntimeStorageSettingsSnapshot,
+} from '../../shared/runtime-settings.js';
 
 function parseOptionalBoolean(
   value: unknown,

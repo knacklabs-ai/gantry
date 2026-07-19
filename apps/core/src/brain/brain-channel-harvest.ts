@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 
 import type { RuntimeSettings } from '../config/settings/runtime-settings.js';
-import { jidForConfiguredConversation } from '../config/settings/desired-state-provider-conversations.js';
+import { jidForConfiguredConversation } from '../application/settings/desired-state-provider-conversations.js';
 import type { NewMessage } from '../domain/types.js';
 import { normalizeBrainSlug } from './brain-page-ingest.js';
 import type { BrainService } from './brain-service.js';

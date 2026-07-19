@@ -417,9 +417,9 @@ The source-of-truth directory is
 copies it into `dist/adapters/storage/postgres/schema/migrations`
 (`package.json:48-53`). Do not edit `dist/` by hand. The next migration follows
 the sequential convention as `0102_permission_durable_storage_cutover.sql`,
-with matching `meta/0102_snapshot.json` and a `_journal.json` entry after the
+with matching `apps/core/src/adapters/storage/postgres/schema/migrations/meta/0103_snapshot.json` and a `_journal.json` entry after the
 current `0101` entry (`meta/_journal.json:692-697`). Update the active Drizzle
-schema modules and export from `schema/schema.ts` in the same stage.
+schema modules and export from `apps/core/src/adapters/storage/postgres/schema/schema.ts` in the same stage.
 
 ### Recommended cutover
 

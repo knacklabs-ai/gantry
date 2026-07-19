@@ -2,7 +2,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 
 import { getRuntimeStorage } from '../../../adapters/storage/postgres/runtime-store.js';
 import { parseRuntimeSettingsObject } from '../../../config/settings/runtime-settings-parser.js';
-import type { RuntimeSettings } from '../../../config/settings/runtime-settings-types.js';
+import type { RuntimeSettings } from '../../../shared/runtime-settings.js';
 import {
   importFleetSettingsRevision,
   importWorkstationSettings,
@@ -12,6 +12,7 @@ import {
   settingsToRevisionDocument,
 } from '../../../config/settings/settings-import-service.js';
 import type { AppId } from '../../../domain/app/app.js';
+import { SettingsDesiredStateService } from '../../../application/settings/desired-state-service.js';
 import { logger } from '../../../infrastructure/logging/logger.js';
 import type { RuntimeDeploymentMode } from '../../../shared/runtime-deployment-mode.js';
 import {
@@ -161,6 +162,11 @@ async function handleDesiredState(
       typeof body.expectedRevision === 'number' ? body.expectedRevision : null;
     const note = typeof body.note === 'string' ? body.note : null;
     const storage = getRuntimeStorage();
+    const desiredState = new SettingsDesiredStateService({
+      ops: storage.ops,
+      repositories: storage.repositories,
+      appId,
+    });
     const isWorkstation = currentDeploymentMode(ctx) === 'workstation';
     // Preserve the server-side observability block across writes: this
     // surface can neither read nor set it (see omitObservability above).
@@ -220,6 +226,7 @@ async function handleDesiredState(
           const outcome = await importWorkstationSettings(
             {
               runtimeHome: ctx.runtimeHome,
+              desiredState,
               ops: storage.ops,
               repositories: storage.repositories,
               appId,
@@ -286,6 +293,7 @@ async function handleDesiredState(
       const outcome = await importFleetSettingsRevision(
         {
           runtimeHome: ctx.runtimeHome,
+          desiredState,
           ops: getRuntimeStorage().ops,
           repositories: storage.repositories,
           appId,

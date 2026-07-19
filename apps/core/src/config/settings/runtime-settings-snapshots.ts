@@ -3,11 +3,13 @@ import fs from 'fs';
 import {
   parseRuntimeMemorySnapshotFromRoot,
   parseRuntimeStorageSnapshotFromRoot,
-  type RuntimeMemorySettingsSnapshot,
-  type RuntimeStorageSettingsSnapshot,
 } from './memory-snapshot.js';
 import { settingsFilePath } from './runtime-home.js';
 import { parseSimpleYamlObject } from './yaml.js';
+import type {
+  RuntimeMemorySettingsSnapshot,
+  RuntimeStorageSettingsSnapshot,
+} from '../../shared/runtime-settings.js';
 
 function readRuntimeSettingsRoot(filePath: string): Record<string, unknown> {
   const raw = fs.readFileSync(filePath, 'utf-8');

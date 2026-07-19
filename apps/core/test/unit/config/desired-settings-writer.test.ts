@@ -39,6 +39,7 @@ describe('writeDesiredRuntimeSettings', () => {
       writeDesiredRuntimeSettings,
     } = await import('@core/config/settings/desired-settings-writer.js');
     configureDesiredSettingsStorageProvider(async () => ({
+      desiredState: {} as never,
       ops: {} as never,
       repositories: {} as never,
       settingsRevisions: {
@@ -80,7 +81,7 @@ describe('writeDesiredRuntimeSettings', () => {
     expect(saveRuntimeSettings).not.toHaveBeenCalled();
   });
 
-  it('appends settings revisions before applying local desired state', async () => {
+  it('passes a non-default app scope before applying local desired state', async () => {
     const importWorkstationSettings = vi.fn(async () => ({ revision: 7 }));
     vi.doMock('@core/config/settings/settings-import-service.js', () => ({
       importWorkstationSettings,
@@ -97,6 +98,7 @@ describe('writeDesiredRuntimeSettings', () => {
       getLatestSettingsRevision: vi.fn(async () => null),
     } as never;
     const storageProvider = vi.fn(async () => ({
+      desiredState: {} as never,
       ops: {} as never,
       repositories: {} as never,
       settingsRevisions,
@@ -124,6 +126,7 @@ describe('writeDesiredRuntimeSettings', () => {
       expect.objectContaining({ runtime: { deploymentMode: 'fleet' } }),
     );
     expect(storageProvider).toHaveBeenCalledWith({
+      appId: 'app:test',
       settings: expect.objectContaining({
         runtime: expect.objectContaining({ deploymentMode: 'fleet' }),
       }),
@@ -187,6 +190,7 @@ describe('writeDesiredRuntimeSettings', () => {
       writeDesiredRuntimeSettings,
     } = await import('@core/config/settings/desired-settings-writer.js');
     configureDesiredSettingsStorageProvider(async () => ({
+      desiredState: {} as never,
       ops: {} as never,
       repositories: {} as never,
       settingsRevisions: {
@@ -221,6 +225,7 @@ describe('writeDesiredRuntimeSettings', () => {
       writeDesiredRuntimeSettings,
     } = await import('@core/config/settings/desired-settings-writer.js');
     configureDesiredSettingsStorageProvider(async () => ({
+      desiredState: {} as never,
       ops: {} as never,
       repositories: {} as never,
       settingsRevisions: {
@@ -269,6 +274,7 @@ describe('writeDesiredRuntimeSettings', () => {
     } = await import('@core/config/settings/desired-settings-writer.js');
     const close = vi.fn(async () => {});
     configureDesiredSettingsStorageProvider(async () => ({
+      desiredState: {} as never,
       ops: {} as never,
       repositories: {} as never,
       settingsRevisions: {

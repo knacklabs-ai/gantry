@@ -28,7 +28,7 @@ import type {
   RuntimeMemoryBackfillSettings,
   RuntimeMemoryLlmModels,
   RuntimeMemorySettings,
-} from './runtime-settings-types.js';
+} from '../../shared/runtime-settings.js';
 import { listEmbeddingModelProviders } from '../../shared/model-provider-registry.js';
 
 const BACKFILL_MODES: ReadonlySet<MemoryBackfillMode> = new Set([

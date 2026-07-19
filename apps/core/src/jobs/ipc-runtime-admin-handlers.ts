@@ -413,6 +413,7 @@ export const requestSettingsUpdateHandler: TaskHandler = async (context) => {
       await importWorkstationSettings(
         {
           runtimeHome: GANTRY_HOME,
+          desiredState,
           ops: storage.ops,
           repositories: storage.repositories,
           previousSettings: parseRuntimeSettings(beforeYaml),

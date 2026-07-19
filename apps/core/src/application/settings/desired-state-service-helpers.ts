@@ -6,30 +6,24 @@ import type {
 } from '../../domain/conversation/conversation.js';
 import type { MemorySubject } from '../../domain/memory/memory.js';
 import type { ProviderId } from '../../domain/provider/provider.js';
-import type {
-  McpServerRepository,
-  ToolCatalogRepository,
-} from '../../domain/ports/repositories.js';
+import type { McpServerRepository } from '../../domain/ports/repositories.js';
 import { normalizeRuntimeSecretRefString } from '../../domain/ports/runtime-secret-provider.js';
-import {
-  jidForConfiguredConversation,
-  providerTopology,
-} from '../../config/settings/desired-state-provider-conversations.js';
+import { jidForConfiguredConversation } from './desired-state-provider-conversations.js';
 import type {
   ConfiguredRoutingBinding,
-  SettingsChangeClassification,
   StoredAgentBinding,
-} from './desired-state-service-types.js';
+} from '../../domain/ports/settings-desired-state.js';
 import type {
   RuntimeConfiguredAgent,
   RuntimeConfiguredConversation,
   RuntimeSettings,
-} from '../../config/settings/runtime-settings-types.js';
+} from '../../shared/runtime-settings.js';
 import type { AgentConfig } from '../../domain/types.js';
 export {
   agentIdForFolder,
   folderForAgentId,
 } from '../../domain/agent/agent-folder-id.js';
+export { classifySettingsChanges } from '../../shared/settings-change-classification.js';
 
 export function configuredRoutingBindingsByAgent(
   settings: RuntimeSettings,
@@ -211,55 +205,6 @@ export function normalizeRuntimeSecretRefs(input: {
   );
 }
 
-export function classifySettingsChanges(
-  before: RuntimeSettings,
-  after: RuntimeSettings,
-): SettingsChangeClassification {
-  const liveApplied: string[] = [];
-  const restartRequired: string[] = [];
-
-  if (!jsonEqual(before.storage, after.storage)) {
-    restartRequired.push('storage');
-  }
-  if (!jsonEqual(before.credentialBroker, after.credentialBroker)) {
-    restartRequired.push('model_access');
-  }
-  const providerTopologyChanged = !jsonEqual(
-    providerTopology(before),
-    providerTopology(after),
-  );
-  if (providerTopologyChanged) {
-    restartRequired.push('providers');
-  }
-  if (
-    !providerTopologyChanged &&
-    !jsonEqual(before.conversations, after.conversations)
-  ) {
-    liveApplied.push('conversation_policies');
-  }
-  if (!jsonEqual(before.agent, after.agent)) {
-    liveApplied.push('agent_defaults');
-  }
-  if (!jsonEqual(before.agents, after.agents)) {
-    restartRequired.push('agents');
-  }
-  if (!jsonEqual(before.memory, after.memory)) {
-    restartRequired.push('memory');
-  }
-  if (!jsonEqual(before.runtime, after.runtime)) {
-    restartRequired.push('runtime');
-  }
-  // Tracing initializes once at boot from authoritative settings.
-  if (!jsonEqual(before.observability, after.observability)) {
-    restartRequired.push('observability');
-  }
-
-  return {
-    liveApplied: [...new Set(liveApplied)].sort(),
-    restartRequired: [...new Set(restartRequired)].sort(),
-  };
-}
-
 export function hasAnyCapability(agent: RuntimeConfiguredAgent) {
   return (
     agent.capabilities.length > 0 ||
@@ -282,23 +227,6 @@ export function groupByAgentId<T extends { agentId: AgentId }>(
     }
   }
   return result;
-}
-
-function jsonEqual(left: unknown, right: unknown): boolean {
-  return JSON.stringify(left) === JSON.stringify(right);
-}
-
-export async function loadToolsById(
-  repository: ToolCatalogRepository,
-  toolIds: readonly string[],
-): Promise<Map<string, Awaited<ReturnType<ToolCatalogRepository['getTool']>>>> {
-  const tools = await Promise.all(
-    toolIds.map(
-      async (toolId) =>
-        [toolId, await repository.getTool(toolId as never)] as const,
-    ),
-  );
-  return new Map(tools);
 }
 
 export async function loadMcpServersById(

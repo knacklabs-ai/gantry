@@ -37,6 +37,7 @@ import {
 } from '../../adapters/storage/postgres/runtime-store.js';
 import { preflightModelProvider } from '../../adapters/llm/model-provider-preflight.js';
 import type { AppId } from '../../domain/app/app.js';
+import { SettingsDesiredStateService } from '../../application/settings/desired-state-service.js';
 import { canAccessApp, makeAppGroup } from './app-identity.js';
 import {
   isValidControlId,
@@ -242,9 +243,14 @@ export function startControlServer(input: {
   oldestWaitingLiveAdmissionSeconds?: () => number;
   liveCapacityLimit?: () => number;
 }): ControlServerHandle {
-  configureDesiredSettingsStorageProvider(async () => {
+  configureDesiredSettingsStorageProvider(async (providerInput) => {
     const storage = getRuntimeStorage();
     return {
+      desiredState: new SettingsDesiredStateService({
+        ops: getRuntimeRepositories(),
+        repositories: storage.repositories,
+        appId: providerInput?.appId,
+      }),
       ops: getRuntimeRepositories(),
       repositories: storage.repositories,
       settingsRevisions: storage.repositories.settingsRevisions,
@@ -383,6 +389,11 @@ export function startControlServer(input: {
       const storage = getRuntimeStorage();
       return syncRuntimeSettingsFromProjection({
         runtimeHome: GANTRY_HOME,
+        desiredState: new SettingsDesiredStateService({
+          ops: getRuntimeRepositories(),
+          repositories: storage.repositories,
+          appId,
+        }),
         ops: getRuntimeRepositories(),
         repositories: storage.repositories,
         appId,

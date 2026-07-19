@@ -28,13 +28,13 @@ import { envFilePath, settingsFilePath } from './runtime-home.js';
 import type {
   RuntimeSettings,
   RuntimeSettingsValidationResult,
-} from './runtime-settings-types.js';
+} from '../../shared/runtime-settings.js';
 import {
   configuredAgentControlConstraintErrors,
   formatInlineAgentWorkerOnlyConfigError,
   inlineConfiguredSkillEngineConstraintError,
   inlineWorkerOnlyConfiguredCapabilityLabels,
-} from './runtime-settings-agent-runtime.js';
+} from '../../shared/configured-agent-runtime.js';
 
 export function validateLoadedRuntimeSettings(
   runtimeHome: string,

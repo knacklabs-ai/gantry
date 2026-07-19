@@ -25,7 +25,7 @@ import type {
   RuntimeSandboxSettings,
   RuntimeSettings,
   RuntimeStorageSettings,
-} from './runtime-settings-types.js';
+} from '../../shared/runtime-settings.js';
 
 export { DEFAULT_AGENT_NAME } from '../../shared/default-agent.js';
 

@@ -11,7 +11,7 @@ import { renderRuntimeSettingsYaml } from '@core/config/settings/runtime-setting
 import {
   configuredAgentControlConstraintErrors,
   resolveConfiguredAgentRuntime,
-} from '@core/config/settings/runtime-settings-agent-runtime.js';
+} from '@core/shared/configured-agent-runtime.js';
 import {
   DEFAULT_AGENT_ENGINE,
   DEEPAGENTS_ENGINE,

@@ -2,7 +2,7 @@ import { normalizeRuntimeSecretRefString } from '../../domain/ports/runtime-secr
 import type {
   RuntimeProviderAccountSettings,
   RuntimeProviderSettings,
-} from './runtime-settings-types.js';
+} from '../../shared/runtime-settings.js';
 import {
   containsControlCharacter,
   parseStringValue,

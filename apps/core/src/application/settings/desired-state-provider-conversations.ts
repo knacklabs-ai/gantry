@@ -3,8 +3,7 @@ import type {
   RuntimeConfiguredConversation,
   RuntimeProviderAccountSettings,
   RuntimeSettings,
-} from './runtime-settings-types.js';
-import { envRuntimeSecretRef } from '../../domain/ports/runtime-secret-provider.js';
+} from '../../shared/runtime-settings.js';
 
 export interface SettingsProviderJidInfo {
   id: string;
@@ -91,41 +90,4 @@ export function configuredConversationKind(
   if (kind === 'dm') return 'direct';
   if (kind === 'chat') return 'group';
   return kind;
-}
-
-export function defaultRuntimeSecretRefs(
-  providerId: string,
-): Record<string, string> {
-  if (providerId === 'telegram') {
-    return { bot_token: envRuntimeSecretRef('TELEGRAM_BOT_TOKEN') };
-  }
-  if (providerId === 'slack') {
-    return {
-      bot_token: envRuntimeSecretRef('SLACK_BOT_TOKEN'),
-      app_token: envRuntimeSecretRef('SLACK_APP_TOKEN'),
-    };
-  }
-  if (providerId === 'teams') {
-    return {
-      client_id: envRuntimeSecretRef('TEAMS_CLIENT_ID'),
-      client_secret: envRuntimeSecretRef('TEAMS_CLIENT_SECRET'),
-      tenant_id: envRuntimeSecretRef('TEAMS_TENANT_ID'),
-    };
-  }
-  if (providerId === 'discord') {
-    return {
-      bot_token: envRuntimeSecretRef('DISCORD_BOT_TOKEN'),
-      application_id: envRuntimeSecretRef('DISCORD_APPLICATION_ID'),
-    };
-  }
-  return {};
-}
-
-export function providerTopology(
-  settings: RuntimeSettings,
-): Record<string, unknown> {
-  return {
-    providers: settings.providers,
-    providerAccounts: settings.providerAccounts,
-  };
 }

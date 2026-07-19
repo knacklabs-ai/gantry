@@ -2,7 +2,7 @@ import { and, desc, eq, isNull, or, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 
 import * as pgSchema from '../adapters/storage/postgres/schema/schema.js';
-import type { MemoryBackfillMode } from '../config/settings/runtime-settings-types.js';
+import type { MemoryBackfillMode } from '../shared/runtime-settings.js';
 import type { EmbeddingPauseReason } from './memory-embedding-errors.js';
 
 const Runs = pgSchema.memoryEmbeddingBackfillRunsPostgres;

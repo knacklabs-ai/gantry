@@ -6,7 +6,7 @@ import * as p from '@clack/prompts';
 import { controlApiRequest } from './control-api.js';
 import { loadRuntimeSettings } from '../config/settings/runtime-settings.js';
 import { writeDesiredRuntimeSettings } from '../config/settings/desired-settings-writer.js';
-import type { AgentAccessPreset } from '../config/settings/runtime-settings-types.js';
+import type { AgentAccessPreset } from '../shared/runtime-settings.js';
 
 const errorMessage = (err: unknown): string =>
   err instanceof Error ? err.message : String(err);

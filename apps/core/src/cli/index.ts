@@ -30,6 +30,7 @@ import {
   configureDesiredSettingsStorageProvider,
   ensureRuntimeSettings,
 } from '../config/settings/runtime-settings.js';
+import { SettingsDesiredStateService } from '../application/settings/desired-state-service.js';
 
 configureDesiredSettingsStorageProvider(async (input) => {
   const {
@@ -40,6 +41,11 @@ configureDesiredSettingsStorageProvider(async (input) => {
   try {
     const storage = getRuntimeStorage();
     return {
+      desiredState: new SettingsDesiredStateService({
+        ops: storage.ops,
+        repositories: storage.repositories,
+        appId: input?.appId,
+      }),
       ops: storage.ops,
       repositories: storage.repositories,
       settingsRevisions: storage.repositories.settingsRevisions,
@@ -53,6 +59,11 @@ configureDesiredSettingsStorageProvider(async (input) => {
       runtimeSettings: input?.settings,
     });
     return {
+      desiredState: new SettingsDesiredStateService({
+        ops: storage.ops,
+        repositories: storage.repositories,
+        appId: input?.appId,
+      }),
       ops: storage.ops,
       repositories: storage.repositories,
       settingsRevisions: storage.repositories.settingsRevisions,

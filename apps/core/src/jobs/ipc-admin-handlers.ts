@@ -10,6 +10,7 @@ import {
   getRuntimeSettingsForConfig,
   syncRuntimeSettingsFromProjection,
 } from '../config/index.js';
+import { SettingsDesiredStateService } from '../application/settings/desired-state-service.js';
 import { parseDeclaredNetworkHost } from '../shared/network-host-declaration.js';
 import { nowIso } from '../shared/time/datetime.js';
 import { logger } from '../infrastructure/logging/logger.js';
@@ -858,6 +859,11 @@ async function syncApprovedCapabilitySettings(
   const storage = getRuntimeStorage();
   await syncRuntimeSettingsFromProjection({
     runtimeHome: GANTRY_HOME,
+    desiredState: new SettingsDesiredStateService({
+      ops: getRuntimeRepositories(),
+      repositories: storage.repositories,
+      appId,
+    }),
     ops: getRuntimeRepositories(),
     repositories: storage.repositories,
     settingsRevisions: storage.repositories.settingsRevisions,
