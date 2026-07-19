@@ -1133,7 +1133,7 @@ maybeDescribe('multi-worker coordination acceptance gates', () => {
     expect(duplicateRetry.id).toBe('question-dead-lease-retry');
   });
 
-  it('restores a claimed batch alias on release and rejects it while claimed', async () => {
+  it('restores a claimed batch alias on release and exposes persisted intent while claimed', async () => {
     const callbackId = 'batch:req-atomic-1:2';
     const providerCallbackId = 'opaque-batch-callback';
     const aliasesByRequestId = {
@@ -1273,7 +1273,21 @@ maybeDescribe('multi-worker coordination acceptance gates', () => {
         scope,
         providerAlias: providerCallbackId,
       }),
-    ).resolves.toBeNull();
+    ).resolves.toMatchObject({
+      scope,
+      claim: {
+        id: claim.id,
+        intent: claim.intent,
+        match: {
+          kind: 'batch',
+          canonicalId: callbackId,
+        },
+      },
+      providerAliases: expect.arrayContaining([
+        providerCallbackId,
+        'other-row-alias',
+      ]),
+    });
     await expect(
       claimPermissionInteractionCallback({
         scope,

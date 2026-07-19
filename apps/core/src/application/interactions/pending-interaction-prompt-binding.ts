@@ -9,13 +9,15 @@ import type {
 import {
   permissionRequestFromPayload,
   readDurablePermissionFullView,
-  readPermissionCallbackClaim,
   readPermissionRecoveryEnvelope,
-  samePermissionCallbackClaim,
   sharedPermissionRecoveryEnvelope,
   durablePermissionRequestSnapshot,
   type DurablePermissionFullView,
 } from './pending-interaction-permission-envelope.js';
+import {
+  permissionCallbackClaimFromValue,
+  samePermissionCallbackClaim,
+} from './pending-interaction-permission-claim.js';
 import { DurableInteractionPersistenceError } from './pending-interaction-persistence-error.js';
 import { pendingInteractionIdempotencyKey } from './pending-interaction-idempotency.js';
 
@@ -41,19 +43,6 @@ export function configurePendingInteractionPromptBinding(
   next: PromptBindingBackend | null,
 ): void {
   backend = next;
-}
-
-function sourceAgentFolderFromPayload(
-  payload: Record<string, unknown> | undefined,
-): string | null {
-  if (typeof payload?.sourceAgentFolder === 'string')
-    return payload.sourceAgentFolder;
-  const request = payload?.request;
-  if (!request || typeof request !== 'object') return null;
-  if (!('sourceAgentFolder' in request)) return null;
-  return typeof request.sourceAgentFolder === 'string'
-    ? request.sourceAgentFolder
-    : null;
 }
 
 export async function bindPendingPermissionInteractionMessage(input: {
@@ -172,7 +161,7 @@ export async function bindPendingPermissionInteractionMessage(input: {
           update: (payload) => {
             if ('permissionCallbackClaim' in payload) return null;
             const next = { ...payload, ...bindingPayload };
-            const settlement = readPermissionCallbackClaim(
+            const settlement = permissionCallbackClaimFromValue(
               payload.permissionCallbackSettlement,
             );
             if (
@@ -263,7 +252,9 @@ export async function findDurablePermissionInteractionByPromptMessage(input: {
     if (!envelope) return null;
     const sourceAgentFolder = envelope.members[0]!.callback.sourceAgentFolder;
     const claims = pending.map((interaction) =>
-      readPermissionCallbackClaim(interaction.payload.permissionCallbackClaim),
+      permissionCallbackClaimFromValue(
+        interaction.payload.permissionCallbackClaim,
+      ),
     );
     const persistedClaim = claims.find((claim) => claim !== null) ?? null;
     let scope: PermissionCallbackScope;

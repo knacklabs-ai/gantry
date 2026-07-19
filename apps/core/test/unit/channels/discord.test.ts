@@ -15,6 +15,7 @@ const durabilityMocks = vi.hoisted(() => ({
   })),
   findDurablePermissionInteractionByPromptMessage: vi.fn(),
   findDurablePermissionInteractionByRequestId: vi.fn(),
+  recoverDurablePermissionDecision: vi.fn(),
   recordDurableQuestionAnswerProgress: vi.fn(async () => true),
   releasePermissionInteractionCallback: vi.fn(async () => true),
   resolveDurablePermissionInteractionByRequestId: vi.fn(),
@@ -113,6 +114,7 @@ describe('DiscordChannel', () => {
       true,
     );
     durabilityMocks.findDurablePermissionInteractionByPromptMessage.mockReset();
+    durabilityMocks.recoverDurablePermissionDecision.mockReset();
     durabilityMocks.claimPermissionInteractionCallback
       .mockReset()
       .mockImplementation(async (input: any) => ({
@@ -3008,7 +3010,7 @@ describe('DiscordChannel', () => {
       expect.objectContaining({
         method: 'PATCH',
         body: JSON.stringify({
-          content: 'Permission request denied.',
+          content: 'Canceled: Review 2 permission requests. Nothing changed.',
           components: [],
         }),
       }),
@@ -3496,7 +3498,7 @@ describe('DiscordChannel', () => {
     vi.restoreAllMocks();
   });
 
-  it('expires recovered Review-each state in its parent Discord conversation', async () => {
+  it('routes recovered Discord clicks through application orchestrator transport hooks', async () => {
     let socket!: FakeWebSocket;
     let acked = false;
     const events: string[] = [];
@@ -3519,60 +3521,76 @@ describe('DiscordChannel', () => {
       }
       return jsonResponse({});
     });
-    durabilityMocks.findDurablePermissionInteractionByRequestId.mockImplementation(
-      async () => {
-        expect(acked).toBe(true);
-        events.push('durable');
-        return {
-          requestId: 'batch:permission-1:2',
-          batchCallbackId: 'batch:permission-1:2',
-          sourceAgentFolder: 'main_agent',
-          targetJid: 'dc:parent-1',
-          approvalContextJid: 'dc:parent-1',
-          threadId: 'thread-1',
-          decisionPolicy: 'same_channel',
-          decisionOptions: ['allow_persistent_rule', 'cancel'],
-          request: {
-            requestId: 'permission-1',
-            sourceAgentFolder: 'main_agent',
-            targetJid: 'dc:parent-1',
-            decisionPolicy: 'same_channel',
-            toolName: 'Bash',
-          },
-          claim: {
-            id: 'review-each-expired',
-            scope: {
-              appId: 'default',
-              sourceAgentFolder: 'main_agent',
-              interactionId: 'batch:permission-1:2',
-            },
-            intent: {
-              mode: 'cancel',
-              approverRef: 'system',
-              decidedAt: '2026-07-19T00:00:00.000Z',
-            },
-            match: {
-              kind: 'batch',
-              canonicalId: 'batch:permission-1:2',
-              providerAliases: ['alias-batch'],
-            },
-          },
-        };
+    const durable = {
+      requestId: 'batch:permission-1:2',
+      batchCallbackId: 'batch:permission-1:2',
+      sourceAgentFolder: 'main_agent',
+      targetJid: 'dc:parent-1',
+      approvalContextJid: 'dc:parent-1',
+      threadId: 'thread-1',
+      decisionPolicy: 'same_channel',
+      decisionOptions: ['allow_persistent_rule', 'cancel'],
+      request: {
+        requestId: 'permission-1',
+        sourceAgentFolder: 'main_agent',
+        targetJid: 'dc:parent-1',
+        decisionPolicy: 'same_channel',
+        toolName: 'Bash',
       },
-    );
-    durabilityMocks.findDurablePermissionInteractionByPromptMessage.mockResolvedValue(
-      {
+      claim: {
+        id: 'review-each-expired',
         scope: {
           appId: 'default',
           sourceAgentFolder: 'main_agent',
           interactionId: 'batch:permission-1:2',
         },
-        providerAlias: 'alias-batch',
-        matchKind: 'batch',
+        intent: {
+          mode: 'cancel',
+          approverRef: 'system',
+          decidedAt: '2026-07-19T00:00:00.000Z',
+        },
+        match: {
+          kind: 'batch',
+          canonicalId: 'batch:permission-1:2',
+          providerAliases: ['alias-batch'],
+        },
       },
-    );
-    durabilityMocks.resolveDurablePermissionInteractionByRequestId.mockResolvedValue(
-      true,
+    } as any;
+    durabilityMocks.recoverDurablePermissionDecision.mockImplementation(
+      async (hooks: any) => {
+        expect(acked).toBe(true);
+        events.push('orchestrator');
+        expect(hooks.locator).toEqual({
+          kind: 'message',
+          appId: 'default',
+          provider: 'discord',
+          conversationId: 'parent-1',
+          externalMessageId: 'message-1',
+          threadId: 'thread-1',
+          providerAlias: 'alias-batch',
+        });
+        expect(hooks.surfaceJid).toBe('dc:parent-1');
+        await expect(hooks.authorize(durable)).resolves.toBe(true);
+        await expect(
+          hooks.terminalize({
+            status: 'resolved',
+            request: durable.request,
+            context: durable,
+            decision: {
+              approved: false,
+              mode: 'cancel',
+              decidedBy: 'system',
+              reason: 'canceled',
+              permissionCallbackClaim: {
+                id: durable.claim.id,
+                scope: durable.claim.scope,
+              },
+            },
+          }),
+        ).resolves.toBe(true);
+        await hooks.feedback('Decision recorded.');
+        return 'resolved';
+      },
     );
     const isControlApproverAllowed = vi.fn(async () => true);
     const channel = new DiscordChannel(
@@ -3604,32 +3622,8 @@ describe('DiscordChannel', () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(
-      durabilityMocks.resolveDurablePermissionInteractionByRequestId,
-    ).toHaveBeenCalledWith({
-      claim: expect.objectContaining({
-        id: 'review-each-expired',
-        scope: {
-          appId: 'default',
-          sourceAgentFolder: 'main_agent',
-          interactionId: 'batch:permission-1:2',
-        },
-        intent: expect.objectContaining({
-          mode: 'cancel',
-          approverRef: 'system',
-        }),
-      }),
-      reason: 'resolved via Discord after channel restart',
-    });
-    expect(
-      durabilityMocks.claimPermissionInteractionCallback,
-    ).toHaveBeenCalledWith(
-      expect.objectContaining({
-        recoveredClaim: expect.objectContaining({
-          id: 'review-each-expired',
-        }),
-        expireReviewEach: true,
-      }),
-    );
+      durabilityMocks.recoverDurablePermissionDecision,
+    ).toHaveBeenCalledOnce();
     expect(isControlApproverAllowed).toHaveBeenCalledWith({
       providerId: 'discord',
       conversationJid: 'dc:parent-1',
@@ -3638,14 +3632,24 @@ describe('DiscordChannel', () => {
       sourceAgentFolder: 'main_agent',
       decisionPolicy: 'same_channel',
     });
-    expect(events.slice(0, 3)).toEqual(['ack', 'context', 'durable']);
+    expect(events.slice(0, 3)).toEqual(['ack', 'context', 'orchestrator']);
     expect(globalThis.fetch).toHaveBeenCalledWith(
       'https://discord.com/api/v10/channels/thread-1/messages/message-1',
       expect.objectContaining({
         method: 'PATCH',
         body: JSON.stringify({
-          content: 'Permission request denied.',
+          content: 'Canceled: exact command access. Nothing changed.',
           components: [],
+        }),
+      }),
+    );
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      'https://discord.com/api/v10/webhooks/app-id/token-1/messages/@original',
+      expect.objectContaining({
+        method: 'PATCH',
+        body: JSON.stringify({
+          content: 'Decision recorded.',
+          allowed_mentions: { parse: [] },
         }),
       }),
     );

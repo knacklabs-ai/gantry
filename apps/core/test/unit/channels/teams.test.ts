@@ -2151,7 +2151,7 @@ describe('TeamsChannel adapter scaffold', () => {
     expect(sdkClient.sendAdaptiveCard).toHaveBeenCalledTimes(1);
   });
 
-  it('expires a recovered Review-each batch and terminalizes the stale Teams card', async () => {
+  it('routes recovered Teams clicks through application orchestrator transport hooks', async () => {
     let startInput: Parameters<TeamsSdkClient['start']>[0] | undefined;
     const sdkClient: TeamsSdkClient = {
       start: vi.fn(async (input) => {

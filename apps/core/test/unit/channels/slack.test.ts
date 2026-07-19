@@ -4038,7 +4038,7 @@ describe('Slack channel', () => {
     expect(appRef.current.client.chat.postMessage).not.toHaveBeenCalled();
   });
 
-  it('expires a recovered Review-each batch and terminalizes the stale Slack prompt', async () => {
+  it('routes recovered Slack clicks through application orchestrator transport hooks', async () => {
     const opts = createOptsWithApproverHook(['U_APPROVER']);
     const runtimeSettings = opts.runtimeSettings;
     opts.runtimeSettings = () => {
@@ -4127,6 +4127,77 @@ describe('Slack channel', () => {
     expect(repository.expirePendingPermissionReviewEach).toHaveBeenCalledOnce();
     expect(opts.isControlApproverAllowed).toHaveBeenCalledWith(
       expect.objectContaining({ conversationJid: 'sl:C1234567890' }),
+    );
+  });
+
+  it('terminalizes a recovered Slack batch with the durable callback id', async () => {
+    const opts = createOptsWithApproverHook(['U_APPROVER']);
+    const channel = new SlackChannel('xoxb-token', 'xapp-token', opts as any);
+    await channel.connect();
+    const requests: PermissionApprovalRequest[] = ['one', 'two'].map(
+      (suffix) => ({
+        requestId: `perm-terminalize-${suffix}`,
+        sourceAgentFolder: 'slack_main',
+        targetJid: 'sl:C123',
+        toolName: 'Bash',
+        decisionOptions: ['allow_once', 'cancel'],
+      }),
+    );
+    const batch = createPermissionBatchRequest(requests, [
+      '1. Command',
+      '2. Command',
+    ]);
+    const repository = configureSlackPermissionRequest(batch);
+    const providerAlias = 'slack-terminalize-batch';
+    await bindPendingPermissionInteractionMessage({
+      request: batch,
+      decisionOptions: ['allow_persistent_rule', 'cancel'],
+      callbackId: providerAlias,
+    });
+    const interactions = await repository.listPendingInteractions();
+    const envelope = interactions[0]!.payload.permissionRecoveryEnvelope as any;
+    for (const interaction of interactions) {
+      interaction.payload.permissionRecoveryEnvelope = {
+        ...envelope,
+        renderedRequest: envelope.members[0].request,
+        batch: null,
+      };
+    }
+    const terminalize = vi
+      .spyOn(channel as any, 'terminalizePermissionPrompt')
+      .mockResolvedValue(true);
+
+    await appRef.current.actionHandlers.get(
+      'gantry_perm_decision_allow_persistent_rule',
+    )?.({
+      ack: vi.fn().mockResolvedValue(undefined),
+      respond: vi.fn().mockResolvedValue({}),
+      body: {
+        channel: { id: 'C123' },
+        response_url: 'https://hooks.slack.test/actions/terminalize-batch',
+        user: { id: 'U_APPROVER', name: 'Approver' },
+      },
+      action: {
+        value: JSON.stringify({
+          callback: {
+            providerAlias,
+            scope: {
+              appId: 'default',
+              sourceAgentFolder: 'slack_main',
+              interactionId: batch.requestId,
+            },
+            matchKind: 'batch',
+          },
+          decision: 'allow_persistent_rule',
+        }),
+      },
+    });
+
+    expect(terminalize).toHaveBeenCalledWith(
+      batch.requestId,
+      expect.any(Object),
+      expect.any(String),
+      expect.any(Function),
     );
   });
 

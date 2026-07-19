@@ -57,11 +57,42 @@ export function permissionCallbackClaimFromValue(
   return claim as PermissionCallbackClaim;
 }
 
-export function samePersistedPermissionClaim(
+export function samePermissionCallbackClaim(
   left: PermissionCallbackClaim,
   right: PermissionCallbackClaim,
 ): boolean {
-  return JSON.stringify(left) === JSON.stringify(right);
+  return (
+    left.id === right.id &&
+    left.scope.appId === right.scope.appId &&
+    left.scope.sourceAgentFolder === right.scope.sourceAgentFolder &&
+    left.scope.interactionId === right.scope.interactionId &&
+    left.intent.mode === right.intent.mode &&
+    left.intent.approverRef === right.intent.approverRef &&
+    left.intent.decidedAt === right.intent.decidedAt &&
+    left.match.kind === right.match.kind &&
+    left.match.canonicalId === right.match.canonicalId
+  );
+}
+
+export function samePermissionCallbackLocator(
+  left: {
+    providerAlias: string;
+    matchKind: PermissionCallbackClaim['match']['kind'];
+    scope: PermissionCallbackScope;
+  },
+  right: {
+    providerAlias: string;
+    matchKind: PermissionCallbackClaim['match']['kind'];
+    scope: PermissionCallbackScope;
+  },
+): boolean {
+  return (
+    left.providerAlias === right.providerAlias &&
+    left.matchKind === right.matchKind &&
+    left.scope.appId === right.scope.appId &&
+    left.scope.sourceAgentFolder === right.scope.sourceAgentFolder &&
+    left.scope.interactionId === right.scope.interactionId
+  );
 }
 
 export function permissionClaimReference(

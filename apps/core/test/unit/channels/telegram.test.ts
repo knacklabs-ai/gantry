@@ -4822,7 +4822,7 @@ describe('TelegramChannel', () => {
       });
     });
 
-    it('resolves every durable batch row from an opaque callback after restart', async () => {
+    it('routes recovered Telegram clicks through application orchestrator transport hooks', async () => {
       const requests = ['perm-batch-1', 'perm-batch-2'].map((requestId) => ({
         id: `pending-${requestId}`,
         appId: 'default',
@@ -4917,8 +4917,36 @@ describe('TelegramChannel', () => {
         }),
       );
       expect(callbackCtx.answerCallbackQuery).toHaveBeenCalledWith({
-        text: 'Decision recorded. Details will update in chat.',
+        text: 'Decision recorded.',
         show_alert: false,
+      });
+    });
+
+    it('terminalizes a stale Telegram prompt when durable recovery misses', async () => {
+      const channel = new TelegramChannel('test-token', createTestOpts());
+      await channel.connect();
+      const callbackCtx = {
+        callbackQuery: {
+          data: 'perm:allow_once:stale-recovery-alias',
+          message: { message_id: 444, chat: { id: 100200300 } },
+        },
+        chat: { id: 100200300 },
+        from: { id: 222, first_name: 'Admin' },
+        api: currentBot().api,
+        answerCallbackQuery: vi.fn().mockResolvedValue(undefined),
+      };
+
+      await triggerCallbackQuery(callbackCtx);
+
+      expect(currentBot().api.editMessageText).toHaveBeenCalledWith(
+        '100200300',
+        444,
+        'This permission request is no longer active.',
+        expect.objectContaining({ reply_markup: { inline_keyboard: [] } }),
+      );
+      expect(callbackCtx.answerCallbackQuery).toHaveBeenCalledWith({
+        text: 'This permission request is no longer active.',
+        show_alert: true,
       });
     });
 
@@ -5020,7 +5048,7 @@ describe('TelegramChannel', () => {
         expect.objectContaining({ reply_markup: { inline_keyboard: [] } }),
       );
       expect(callbackCtx.answerCallbackQuery).toHaveBeenCalledWith({
-        text: 'Decision recorded. Details will update in chat.',
+        text: 'Decision recorded.',
         show_alert: false,
       });
     });

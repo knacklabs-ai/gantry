@@ -7,6 +7,7 @@ import {
   findDurablePermissionInteractionByPromptMessage,
   findDurablePermissionInteractionByRequestId,
   recordDurableQuestionAnswerProgress,
+  recoverDurablePermissionDecision,
   isActiveRunLeaseForInteraction,
   releasePermissionInteractionCallback,
   resolveDurablePermissionInteractionByRequestId,
@@ -1536,6 +1537,224 @@ describe('pending interaction durability', () => {
       decisionPolicy: 'same_channel',
       providerAliases: [],
     });
+  });
+
+  it('recovers alias-divergent sibling rows by scope and preserves the persisted intent', async () => {
+    const batchId = 'batch:alias-divergent:2';
+    const rows = [
+      permissionRow({
+        id: 'alias-divergent-1',
+        agent: 'agent-a',
+        requestId: 'alias-divergent-request-1',
+        alias: 'alias-one',
+        batchId,
+      }),
+      permissionRow({
+        id: 'alias-divergent-2',
+        agent: 'agent-a',
+        requestId: 'alias-divergent-request-2',
+        alias: 'alias-two',
+        batchId,
+      }),
+    ];
+    const repository = permissionClaimRepository(rows);
+    const applyDecision = vi.fn(async () => true);
+    configurePendingInteractionDurability({
+      repository: repository as never,
+    });
+    configurePendingInteractionPermissionCallbacks({
+      repository: repository as never,
+      applyDecision,
+      resolve: (input) =>
+        repository.resolvePendingInteraction({
+          idempotencyKey: `default:permission:agent-a:${input.requestId}`,
+          ...input,
+        }),
+    });
+    const scope = {
+      appId: 'default',
+      sourceAgentFolder: 'agent-a',
+      interactionId: batchId,
+    };
+    const original = await claimPermissionInteractionCallback({
+      scope,
+      mode: 'allow_once',
+      approverRef: 'user:original',
+      matchKind: 'batch',
+      providerAlias: 'alias-one',
+      claimedAt: '2026-07-19T00:00:00.000Z',
+      claimId: 'alias-divergent-claim',
+    });
+    expect(original.status).toBe('claimed');
+    const terminalize = vi.fn(async () => true);
+    const feedback = vi.fn(async () => {});
+
+    await expect(
+      recoverDurablePermissionDecision({
+        locator: {
+          kind: 'scope',
+          scope,
+          matchKind: 'batch',
+          providerAlias: 'alias-two',
+        },
+        surfaceJid: 'sl:C123',
+        incomingMode: 'allow_persistent_rule',
+        incomingApprover: 'user:later',
+        authorize: vi.fn(async () => true),
+        terminalize,
+        feedback,
+      }),
+    ).resolves.toBe('resolved');
+
+    expect(terminalize).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: 'resolved',
+        decision: expect.objectContaining({
+          approved: true,
+          mode: 'allow_once',
+          decidedBy: 'user:original',
+        }),
+      }),
+    );
+    expect(feedback).toHaveBeenCalledWith('Decision recorded.');
+    expect(applyDecision).toHaveBeenCalledTimes(2);
+    expect(rows.map((row) => row.status)).toEqual(['resolved', 'resolved']);
+  });
+
+  it('recovers a durable permission by provider message through transport hooks', async () => {
+    const row = permissionPromptRow({
+      id: 'message-locator-row',
+      agent: 'agent-a',
+      requestId: 'message-locator-request',
+      messageId: 'message-locator-prompt',
+      payload: { permissionCallbackId: 'message-locator-alias' },
+    });
+    const repository = permissionClaimRepository([row]);
+    configurePendingInteractionDurability({
+      repository: repository as never,
+    });
+    configurePendingInteractionPermissionCallbacks({
+      repository: repository as never,
+      applyDecision: vi.fn(async () => true),
+      resolve: (input) =>
+        repository.resolvePendingInteraction({
+          idempotencyKey: row.idempotencyKey,
+          ...input,
+        }),
+    });
+    const terminalize = vi.fn(async () => true);
+
+    await expect(
+      recoverDurablePermissionDecision({
+        locator: {
+          kind: 'message',
+          appId: 'default',
+          provider: 'slack',
+          conversationId: 'C123',
+          externalMessageId: 'message-locator-prompt',
+          threadId: 'thread-1',
+          providerAlias: 'message-locator-alias',
+        },
+        surfaceJid: 'sl:C123',
+        incomingMode: 'allow_once',
+        incomingApprover: 'user:approver',
+        authorize: vi.fn(async () => true),
+        terminalize,
+        feedback: vi.fn(async () => {}),
+      }),
+    ).resolves.toBe('resolved');
+
+    expect(terminalize).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: 'resolved',
+        request: row.payload.request,
+      }),
+    );
+    expect(row.status).toBe('resolved');
+  });
+
+  it('rejects a wrong-surface recovered click with visible feedback', async () => {
+    const row = permissionRow({
+      id: 'wrong-surface-row',
+      agent: 'agent-a',
+      requestId: 'wrong-surface-request',
+      alias: 'wrong-surface-alias',
+    });
+    const repository = permissionClaimRepository([row]);
+    configurePendingInteractionDurability({
+      repository: repository as never,
+    });
+    const authorize = vi.fn(async () => true);
+    const terminalize = vi.fn(async () => true);
+    const feedback = vi.fn(async () => {});
+
+    await expect(
+      recoverDurablePermissionDecision({
+        locator: {
+          kind: 'scope',
+          scope: {
+            appId: 'default',
+            sourceAgentFolder: 'agent-a',
+            interactionId: 'wrong-surface-request',
+          },
+          matchKind: 'individual',
+          providerAlias: 'wrong-surface-alias',
+        },
+        surfaceJid: 'sl:C999',
+        incomingMode: 'allow_once',
+        incomingApprover: 'user:approver',
+        authorize,
+        terminalize,
+        feedback,
+      }),
+    ).resolves.toBe('wrong_surface');
+
+    expect(feedback).toHaveBeenCalledWith(
+      'This approval request belongs to a different chat.',
+    );
+    expect(authorize).not.toHaveBeenCalled();
+    expect(terminalize).not.toHaveBeenCalled();
+    expect(repository.claimPendingPermissionCallback).not.toHaveBeenCalled();
+  });
+
+  it('terminalizes a stale prompt when durable recovery misses', async () => {
+    const repository = {
+      listPendingInteractions: vi.fn(async () => []),
+    };
+    configurePendingInteractionDurability({
+      repository: repository as never,
+    });
+    const terminalize = vi.fn(async () => true);
+    const feedback = vi.fn(async () => {});
+
+    await expect(
+      recoverDurablePermissionDecision({
+        locator: {
+          kind: 'message',
+          appId: 'default',
+          provider: 'telegram',
+          conversationId: '123',
+          externalMessageId: 'stale-message',
+          providerAlias: 'stale-alias',
+        },
+        surfaceJid: 'tg:123',
+        incomingMode: 'allow_once',
+        incomingApprover: 'user:approver',
+        authorize: vi.fn(async () => true),
+        terminalize,
+        feedback,
+      }),
+    ).resolves.toBe('inactive');
+
+    expect(terminalize).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: 'expired',
+        text: 'This permission request is no longer active.',
+      }),
+    );
+    expect(feedback).toHaveBeenCalledWith(
+      'This permission request is no longer active.',
+    );
   });
 
   it.each(['provider_terminalization', 'apply_false'] as const)(

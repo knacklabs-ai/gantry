@@ -158,6 +158,14 @@ export {
   settlePermissionInteractionCallback,
 } from './pending-interaction-permission-callback.js';
 export type { DurablePermissionInteractionContext } from './pending-interaction-permission-callback.js';
+export {
+  recoverDurablePermissionDecision,
+  type DurablePermissionRecoveryLocator,
+  type DurablePermissionRecoveryOutcome,
+  type DurablePermissionRecoveryReceipt,
+  type RecoverDurablePermissionDecisionHooks,
+} from './pending-interaction-permission-recovery-orchestrator.js';
+export { samePermissionCallbackLocator } from './pending-interaction-permission-claim.js';
 
 export function applyPermissionInteractionDecision(
   input: PermissionInteractionDecisionInput,

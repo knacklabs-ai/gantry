@@ -23,8 +23,8 @@ import {
   permissionCallbackClaimFromPayload,
   permissionCallbackClaimFromValue,
   permissionClaimReference,
+  samePermissionCallbackClaim,
   samePermissionClaim,
-  samePersistedPermissionClaim,
   sourceAgentFolderFromPermissionPayload,
 } from './pending-interaction-permission-claim.js';
 
@@ -177,7 +177,7 @@ async function expireReviewEachClaim(
       }
       return candidate.match.kind === 'batch'
         ? candidate.id !== claim.id ||
-            !samePersistedPermissionClaim(candidate, claims[0]!)
+            !samePermissionCallbackClaim(candidate, claims[0]!)
         : !candidate.id.startsWith(`${claim.id}:expired:`);
     })
   ) {
@@ -288,7 +288,7 @@ export async function findDurablePermissionInteractionByRequestId(input: {
       activeClaim &&
       !expiredReviewEachClaims &&
       claims.some(
-        (value) => !value || !samePersistedPermissionClaim(value, activeClaim),
+        (value) => !value || !samePermissionCallbackClaim(value, activeClaim),
       )
     ) {
       return null;
@@ -310,7 +310,7 @@ export async function findDurablePermissionInteractionByRequestId(input: {
         recoveredReviewEach &&
         settlements.every(
           (value) =>
-            value && samePersistedPermissionClaim(value, recoveredReviewEach),
+            value && samePermissionCallbackClaim(value, recoveredReviewEach),
         )
       ) {
         claim = recoveredReviewEach;
@@ -320,6 +320,12 @@ export async function findDurablePermissionInteractionByRequestId(input: {
       ...new Set([
         ...(claim?.match.providerAliases ?? []),
         ...claims.flatMap((value) => value?.match.providerAliases ?? []),
+        ...pending.flatMap(
+          (interaction) =>
+            permissionCallbackClaimFromValue(
+              interaction.payload.permissionCallbackSettlement,
+            )?.match.providerAliases ?? [],
+        ),
         ...pending.flatMap((interaction) =>
           typeof interaction.payload.permissionCallbackId === 'string'
             ? [interaction.payload.permissionCallbackId]
