@@ -10,6 +10,7 @@ import {
   isAdminMcpToolEnabled,
   memoryUserId,
   memoryDefaultScope,
+  providerAccountId,
   TASKS_DIR,
   threadId,
 } from '../context.js';
@@ -57,6 +58,7 @@ export function registerServiceTools(server: McpServer): void {
         chatJid,
         memoryUserId,
         authThreadId: threadId,
+        providerAccountId,
         payload: {
           patternCandidateId: args.patternCandidateId,
           choice: args.choice,
@@ -689,6 +691,7 @@ async function submitCapabilityReviewTask(
     targetJid: chatJid,
     chatJid,
     authThreadId: threadId,
+    providerAccountId,
     payload,
     timestamp: nowIso(),
   });
@@ -767,6 +770,7 @@ function registerSkillProposalTool(
         chatJid,
         memoryUserId,
         authThreadId: threadId,
+        providerAccountId,
         payload: {
           files: args.files,
           reason: args.reason,

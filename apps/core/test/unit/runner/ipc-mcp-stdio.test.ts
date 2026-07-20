@@ -1133,7 +1133,10 @@ describe('agent-runner MCP stdio tools', { timeout: 70_000 }, () => {
         ],
         reason: 'Reuse a posting workflow.',
       },
-      { GANTRY_MEMORY_USER_ID: 'tg:user-1' },
+      {
+        GANTRY_MEMORY_USER_ID: 'tg:user-1',
+        GANTRY_PROVIDER_ACCOUNT_ID: 'provider-account:telegram:main',
+      },
     );
 
     expect(result.exitCode, result.stderr).toBe(0);
@@ -1149,6 +1152,7 @@ describe('agent-runner MCP stdio tools', { timeout: 70_000 }, () => {
       type: 'request_skill_proposal',
       targetJid: 'tg:team',
       chatJid: 'tg:team',
+      providerAccountId: 'provider-account:telegram:main',
       memoryUserId: 'tg:user-1',
       payload: {
         reason: 'Reuse a posting workflow.',
