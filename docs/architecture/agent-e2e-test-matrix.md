@@ -58,6 +58,7 @@ Legend: ✅ covered (cite) · 🔨 to build · 🏷 label-gated (live lane) · �
 | Turn produces 3P STRUCTURE (Progress/Plans/Problems sections exist — structure, not wording) | e2e | 🔨 |
 | `gantry-admin` reserved name rejected by install API | integration | 🔨 |
 | `admin_permission_list` callable, returns expected shape | e2e | 🔨 |
+| **Agent-driven skill acquisition**: turn asks the agent to get itself a skill → `request_skill_install` → REAL approval path → installed+selected → follow-up turn USES it (materialized assets asserted) | e2e (haiku, Stage C) | 🔨 |
 | Skill install/registry logic | integration | ✅ skills-registry-flow.integration.test.ts |
 
 ## 5. MCP
@@ -70,6 +71,8 @@ Legend: ✅ covered (cite) · 🔨 to build · 🏷 label-gated (live lane) · �
 | stdio transport | integration | ✅ ipc-mcp-stdio.test.ts |
 | MCP server management lifecycle | integration | ✅ mcp-server-management.integration.test.ts + mcp-server.postgres.integration.test.ts |
 | Deep-MCP: every capability class of vendored everything-server (tools, resources, prompts, sampling, progress, logging, completions) — unsupported class = product bug or documented non-support | e2e-live | 🏷 |
+| **Agent-driven MCP acquisition**: turn asks the agent to get itself the fixture MCP server → agent calls `request_mcp_server` → REAL approval path decides → server registered+bound → follow-up turn agent CALLS its tool (fixture records it) | e2e (haiku, Stage C) | 🔨 |
+| Agent-driven acquisition via CHAT (Slack): same loop driven by a channel message + button approval | e2e-live | 🏷 |
 
 ## 6. Permissions (granular)
 
