@@ -5,7 +5,7 @@ import {
   parseReadableScopedToolRule,
   RUN_COMMAND_TOOL_NAME,
 } from '../../shared/agent-tool-references.js';
-import { isDurableExactGantryMcpToolFullName } from '../../shared/admin-mcp-tools.js';
+import { isAdminMcpToolFullName } from '../../shared/admin-mcp-tools.js';
 import { parseSemanticCapabilityRule } from '../../shared/semantic-capability-ids.js';
 import { toolRuleCoversRule } from '../../shared/tool-rule-matcher.js';
 import { validateDurableAccessRule } from '../../shared/durable-access-policy.js';
@@ -194,7 +194,7 @@ export function toolAccessRequirementRecoveryAction(toolName: string): string {
   }
   if (
     isGantryFacadeExactToolRule(toolName) ||
-    isDurableExactGantryMcpToolFullName(toolName)
+    isAdminMcpToolFullName(toolName)
   ) {
     return `request_access ${JSON.stringify({
       target: { kind: 'tool', name: toolName },

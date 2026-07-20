@@ -1,8 +1,7 @@
 import {
   ADMIN_MCP_TOOL_NAMES,
-  DURABLE_EXACT_GANTRY_MCP_TOOL_FULL_NAMES,
-  durableExactGantryMcpToolFullNameFromName,
-  durableExactGantryMcpToolIdForFullName,
+  adminMcpToolFullName,
+  adminMcpToolIdForFullName,
   type AdminMcpToolName,
 } from './admin-mcp-tools.js';
 import {
@@ -54,43 +53,16 @@ export const BROWSER_REQUESTABLE_NOTE =
 export function buildRequestableAdminToolAccess(
   enabledAdminTools: ReadonlySet<AdminMcpToolName | string>,
 ): RequestableAdminToolAccess[] {
-  return buildRequestableGantryMcpToolAccess(enabledAdminTools, {
-    toolFullNames: ADMIN_MCP_TOOL_NAMES.map(
-      (toolName) => `mcp__gantry__${toolName}` as const,
-    ),
+  return ADMIN_MCP_TOOL_NAMES.filter(
+    (toolName) => !enabledAdminTools.has(toolName),
+  ).map((toolName) => {
+    const fullName = adminMcpToolFullName(toolName);
+    return {
+      tool: fullName,
+      toolId: adminMcpToolIdForFullName(fullName),
+      requestPermission: `target.kind=tool target.name="${fullName}" temporaryOnly=false reason="<why this agent needs ${toolName}>"`,
+    };
   });
-}
-
-export function buildRequestableGantryMcpToolAccess(
-  enabledTools: ReadonlySet<string>,
-  options: {
-    toolFullNames?: readonly string[];
-  } = {},
-): RequestableAdminToolAccess[] {
-  const candidates =
-    options.toolFullNames ?? DURABLE_EXACT_GANTRY_MCP_TOOL_FULL_NAMES;
-  const enabledFullNames = enabledGantryMcpToolNames(enabledTools);
-  return candidates
-    .filter((fullName) => !enabledFullNames.has(fullName))
-    .map((fullName) => {
-      const toolName = fullName.replace(/^mcp__gantry__/, '');
-      return {
-        tool: fullName,
-        toolId: durableExactGantryMcpToolIdForFullName(fullName),
-        requestPermission: `target.kind=tool target.name="${fullName}" temporaryOnly=false reason="<why this agent needs ${toolName}>"`,
-      };
-    });
-}
-
-function enabledGantryMcpToolNames(
-  enabledTools: ReadonlySet<string>,
-): Set<string> {
-  const out = new Set<string>();
-  for (const value of enabledTools) {
-    const fullName = durableExactGantryMcpToolFullNameFromName(value);
-    if (fullName) out.add(fullName);
-  }
-  return out;
 }
 
 export function buildRequestableBrowserToolAccess(input: {
@@ -175,7 +147,7 @@ export function formatAgentToolAccess(view: AgentToolAccessView): string {
     `  Configured tools: ${formatList(view.configuredTools)}`,
     `  Default tools: ${formatList(view.defaultTools)}`,
     `  Available but gated: ${formatList(view.availableButGatedTools)}`,
-    `  Requestable Gantry tools: ${formatList(
+    `  Requestable admin tools: ${formatList(
       view.requestableAdminTools.map((tool) => tool.tool),
     )}`,
   ].join('\n');

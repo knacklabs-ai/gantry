@@ -389,16 +389,7 @@ export function parsePermissionIpcRequest(
   if (jobId && runId && (!runLeaseToken || !runLeaseFencingVersion)) {
     throw new Error('permission IPC scheduled job lease identity is required');
   }
-  const explicitTargetJid = toTrimmedString(raw.targetJid, { maxLen: 255 });
-  const payloadChatJid = toTrimmedString(raw.chatJid, { maxLen: 255 });
-  if (
-    explicitTargetJid &&
-    payloadChatJid &&
-    explicitTargetJid !== payloadChatJid
-  ) {
-    throw new Error('IPC targetJid/chatJid mismatch');
-  }
-  const payloadTargetJid = explicitTargetJid ?? payloadChatJid;
+  const payloadTargetJid = toTrimmedString(raw.targetJid, { maxLen: 255 });
   const contextTargetJid = toTrimmedString(context?.chatJid, { maxLen: 255 });
   if (
     payloadTargetJid &&
@@ -539,16 +530,7 @@ export function parseUserQuestionIpcRequest(
       'user question IPC scheduled job lease identity is required',
     );
   }
-  const explicitTargetJid = toTrimmedString(raw.targetJid, { maxLen: 255 });
-  const payloadChatJid = toTrimmedString(raw.chatJid, { maxLen: 255 });
-  if (
-    explicitTargetJid &&
-    payloadChatJid &&
-    explicitTargetJid !== payloadChatJid
-  ) {
-    throw new Error('IPC targetJid/chatJid mismatch');
-  }
-  const payloadTargetJid = explicitTargetJid ?? payloadChatJid;
+  const payloadTargetJid = toTrimmedString(raw.targetJid, { maxLen: 255 });
   const contextTargetJid = toTrimmedString(context?.chatJid, { maxLen: 255 });
   if (
     payloadTargetJid &&
@@ -654,16 +636,7 @@ export function parseRichInteractionIpcRequest(
   const providerAccountId =
     toTrimmedString(raw.providerAccountId, { maxLen: 255 }) ??
     toTrimmedString(context?.providerAccountId, { maxLen: 255 });
-  const explicitTargetJid = toTrimmedString(raw.targetJid, { maxLen: 255 });
-  const payloadChatJid = toTrimmedString(raw.chatJid, { maxLen: 255 });
-  if (
-    explicitTargetJid &&
-    payloadChatJid &&
-    explicitTargetJid !== payloadChatJid
-  ) {
-    throw new Error('IPC targetJid/chatJid mismatch');
-  }
-  const payloadTargetJid = explicitTargetJid ?? payloadChatJid;
+  const payloadTargetJid = toTrimmedString(raw.targetJid, { maxLen: 255 });
   const contextTargetJid = toTrimmedString(context?.chatJid, { maxLen: 255 });
   if (
     payloadTargetJid &&

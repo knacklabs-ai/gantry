@@ -38,12 +38,12 @@ import { validateDurableAccessRule } from '../../shared/durable-access-policy.js
 import { ensureAgentToolCatalogItem } from '../../domain/tools/agent-tool-catalog-references.js';
 import {
   buildConfiguredAgentToolAccess,
-  buildRequestableGantryMcpToolAccess,
+  buildRequestableAdminToolAccess,
   type AgentToolAccessView,
 } from '../../shared/tool-access-view.js';
 import {
-  durableExactGantryMcpToolFullNameFromName,
-  isDurableExactGantryMcpToolFullName,
+  adminMcpToolNameFromFullName,
+  isAdminMcpToolFullName,
 } from '../../shared/admin-mcp-tools.js';
 import { nowIso } from '../../shared/time/datetime.js';
 import {
@@ -177,7 +177,7 @@ export class AgentCapabilityAdministrationService {
         semanticCapabilityDefinitions,
       }),
     );
-    const enabledGantryMcpTools = selectedGantryMcpToolNames(configuredTools);
+    const enabledAdminTools = selectedAdminToolNames(configuredTools);
     const sources = buildAgentSources({
       configuredSkillSources,
       mcpBindings,
@@ -189,7 +189,7 @@ export class AgentCapabilityAdministrationService {
     );
     const toolAccess = buildConfiguredAgentToolAccess(
       configuredTools,
-      buildRequestableGantryMcpToolAccess(enabledGantryMcpTools),
+      buildRequestableAdminToolAccess(enabledAdminTools),
     );
     return {
       agentId: input.agentId,
@@ -324,9 +324,7 @@ export class AgentCapabilityAdministrationService {
     );
     const toolAccess = buildConfiguredAgentToolAccess(
       configuredTools,
-      buildRequestableGantryMcpToolAccess(
-        selectedGantryMcpToolNames(configuredTools),
-      ),
+      buildRequestableAdminToolAccess(selectedAdminToolNames(configuredTools)),
     );
     return {
       agentId: input.agentId,
@@ -618,12 +616,7 @@ function capabilitySelectionToToolReference(capabilityId: string): string {
   const id = capabilityId.trim();
   if (id === 'browser.use') return 'Browser';
   if (id.startsWith('RunCommand(')) return id;
-  if (
-    isDurableExactGantryMcpToolFullName(id) ||
-    isGantryFacadeExactToolRule(id)
-  ) {
-    return id;
-  }
+  if (isAdminMcpToolFullName(id) || isGantryFacadeExactToolRule(id)) return id;
   return `capability:${id}`;
 }
 
@@ -661,11 +654,11 @@ function resolveSelectedToolReferences(
   );
 }
 
-function selectedGantryMcpToolNames(tools: readonly string[]): Set<string> {
+function selectedAdminToolNames(tools: readonly string[]): Set<string> {
   const names = new Set<string>();
   for (const tool of tools) {
-    const fullName = durableExactGantryMcpToolFullNameFromName(tool);
-    if (fullName) names.add(fullName);
+    const name = adminMcpToolNameFromFullName(tool);
+    if (name) names.add(name);
   }
   return names;
 }

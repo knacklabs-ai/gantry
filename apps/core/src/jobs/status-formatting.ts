@@ -65,8 +65,9 @@ function statusEmoji(statusText: string): string {
 }
 
 export function selectJobNotificationSummary(summary: string): string {
-  const normalized = stripRawToolCallMarkup(
-    summary.replace(/^\[output truncated; showing tail\]\s*/i, ''),
+  const normalized = summary.replace(
+    /^\[output truncated; showing tail\]\s*/i,
+    '',
   );
   const markers = [
     '## Final Job Report',
@@ -86,17 +87,7 @@ export function selectJobNotificationSummary(summary: string): string {
   }
   const selected =
     markerIndex >= 0 ? normalized.slice(markerIndex) : normalized;
-  return stripTrailingEmptyReceiptLines(selected).trim() || '';
-}
-
-function stripRawToolCallMarkup(summary: string): string {
-  return summary
-    .replace(
-      /(?:^|\n)\s*(?:mcp_call_tool)?<arg_key>[\s\S]*?<\/tool_call>\s*/g,
-      '\n',
-    )
-    .replace(/(?:^|\n)\s*<tool_call>[\s\S]*?<\/tool_call>\s*/g, '\n')
-    .replace(/\n{3,}/g, '\n\n');
+  return stripTrailingEmptyReceiptLines(selected).trim() || summary;
 }
 
 function statusLabel(

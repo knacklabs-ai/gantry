@@ -27,7 +27,6 @@ import type {
   ProviderId,
 } from '../../domain/provider/provider.js';
 import { migrateLegacyAgentBindings } from './settings-revision-legacy-bindings.js';
-import { envRuntimeSecretRef } from '../../domain/ports/runtime-secret-provider.js';
 
 /**
  * Reader version of the settings-revision contract this build understands. A
@@ -544,62 +543,7 @@ function buildRevisionDocument(
 export function settingsFromRevisionDocument(
   document: Record<string, unknown>,
 ): RuntimeSettings {
-  return parseRuntimeSettingsObject(
-    repairLegacyProviderAccountSecretRefs(migrateLegacyAgentBindings(document)),
-  );
-}
-
-const DEFAULT_PROVIDER_RUNTIME_SECRET_REFS: Record<
-  string,
-  Record<string, string>
-> = {
-  slack: {
-    bot_token: envRuntimeSecretRef('SLACK_BOT_TOKEN'),
-    app_token: envRuntimeSecretRef('SLACK_APP_TOKEN'),
-  },
-  discord: {
-    bot_token: envRuntimeSecretRef('DISCORD_BOT_TOKEN'),
-    application_id: envRuntimeSecretRef('DISCORD_APPLICATION_ID'),
-  },
-  teams: {
-    client_id: envRuntimeSecretRef('TEAMS_CLIENT_ID'),
-    client_secret: envRuntimeSecretRef('TEAMS_CLIENT_SECRET'),
-    tenant_id: envRuntimeSecretRef('TEAMS_TENANT_ID'),
-  },
-  telegram: {
-    bot_token: envRuntimeSecretRef('TELEGRAM_BOT_TOKEN'),
-  },
-};
-
-function repairLegacyProviderAccountSecretRefs(
-  document: Record<string, unknown>,
-): Record<string, unknown> {
-  const providerAccounts = recordOrUndefined(document.provider_accounts);
-  if (!providerAccounts) return document;
-  let next: Record<string, unknown> | undefined;
-  for (const [accountId, accountRaw] of Object.entries(providerAccounts)) {
-    const account = recordOrUndefined(accountRaw);
-    const provider = stringValue(account?.provider);
-    const defaults = provider
-      ? DEFAULT_PROVIDER_RUNTIME_SECRET_REFS[provider]
-      : undefined;
-    if (!account || !defaults || account.status === 'disabled') continue;
-    const runtimeSecretRefs =
-      recordOrUndefined(account.runtime_secret_refs) ?? {};
-    const missingDefaults = Object.entries(defaults).filter(
-      ([key]) => stringValue(runtimeSecretRefs[key]) === undefined,
-    );
-    if (missingDefaults.length === 0) continue;
-    next ??= structuredClone(document);
-    const nextProviderAccounts = recordOrUndefined(next.provider_accounts);
-    const nextAccount = recordOrUndefined(nextProviderAccounts?.[accountId]);
-    if (!nextAccount) continue;
-    nextAccount.runtime_secret_refs = {
-      ...recordOrUndefined(nextAccount.runtime_secret_refs),
-      ...Object.fromEntries(missingDefaults),
-    };
-  }
-  return next ?? document;
+  return parseRuntimeSettingsObject(migrateLegacyAgentBindings(document));
 }
 
 export async function settingsMatchesLatestRevision(input: {
@@ -676,18 +620,6 @@ async function validateProjectionPreconditions(input: {
       );
     }
   }
-}
-
-function recordOrUndefined(
-  value: unknown,
-): Record<string, unknown> | undefined {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined;
-}
-
-function stringValue(value: unknown): string | undefined {
-  return typeof value === 'string' && value.length > 0 ? value : undefined;
 }
 
 function mapRecord<T>(

@@ -261,17 +261,6 @@ export function registerMcpProxyTools(server: McpServer): void {
       });
       const response = await waitForTaskResponse(taskId, MCP_PROXY_WAIT_MS);
       if (!response?.ok) {
-        const recoverable = formatRecoverableMcpAccessDenial(response);
-        if (recoverable) {
-          return {
-            content: [
-              {
-                type: 'text' as const,
-                text: recoverable,
-              },
-            ],
-          };
-        }
         return {
           content: [
             {
@@ -311,41 +300,4 @@ function modelVisibleMcpCallResult(data: unknown): CallToolResult {
     };
   }
   return data as CallToolResult;
-}
-
-function formatRecoverableMcpAccessDenial(
-  response?: {
-    code?: string;
-    details?: string[];
-    error?: string;
-  } | null,
-): string | null {
-  if (response?.code !== 'missing_capability') return null;
-  const lines = [
-    response.error || 'MCP access is missing for this tool.',
-    '',
-    'This is recoverable: request access using the guidance below, then retry the MCP tool after approval.',
-  ];
-  const toolName = exactMcpToolNameFromAccessDenial(response.error);
-  if (toolName) {
-    lines.push(
-      '',
-      `- For one-off recovery, call request_access with target.kind=tool and target.name="${toolName}".`,
-      '- For durable future access, ask an admin to refresh the reviewed semantic capability binding for this MCP source.',
-    );
-  }
-  if (response.details && response.details.length > 0) {
-    lines.push('', ...response.details.map((item) => `- ${item}`));
-  }
-  return lines.join('\n');
-}
-
-function exactMcpToolNameFromAccessDenial(
-  error: string | undefined,
-): string | null {
-  const match =
-    /^MCP tool is not approved for this agent:\s*(mcp__(?!gantry__)[A-Za-z0-9._-]+__[A-Za-z0-9._-]+)\s*$/.exec(
-      error?.trim() ?? '',
-    );
-  return match?.[1] ?? null;
 }

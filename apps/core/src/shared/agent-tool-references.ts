@@ -77,7 +77,7 @@ export const BROWSER_PROJECTED_MCP_RULE_REJECTION_REASON =
 export const BASH_SCOPE_REJECTION_REASON =
   'Persistent RunCommand scope is too broad; include a literal argv prefix such as RunCommand(npm test *).';
 export const SDK_SANDBOX_NETWORK_ACCESS_REJECTION_REASON =
-  'SDK sandbox network prompts are internal defense-in-depth callbacks and cannot be persisted as agent tool rules; approve the underlying semantic capability, canonical Browser grant, exact durable Gantry MCP tool, MCP server binding, or scoped RunCommand fallback instead.';
+  'SDK sandbox network prompts are internal defense-in-depth callbacks and cannot be persisted as agent tool rules; approve the underlying semantic capability, canonical Browser grant, exact admin MCP tool, MCP server binding, or scoped RunCommand fallback instead.';
 export function parseReadableScopedToolRule(
   value: string,
 ): { toolName: string; scope: string } | null {
@@ -115,6 +115,19 @@ export function isProjectedBrowserMcpToolRule(value: string): boolean {
   return (
     toolName === GANTRY_BROWSER_TOOL_PREFIX ||
     toolName.startsWith(`${GANTRY_BROWSER_TOOL_PREFIX}_`)
+  );
+}
+
+const REVIEWED_MCP_PATTERN_RULE_RE =
+  /^mcp__(?!gantry__)([a-z][a-z0-9_-]{0,62})__[A-Za-z0-9_.-]+\*$/;
+
+// Runtime rule projected from a reviewed mcp_pattern capability binding
+// (mcp__server__prefix*). Only valid as a projection from a reviewed semantic
+// capability, never as a durable raw grant.
+export function isReviewedMcpPatternRule(value: string): boolean {
+  const rule = value.trim();
+  return (
+    REVIEWED_MCP_PATTERN_RULE_RE.test(rule) && !isBrowserActionMcpToolRule(rule)
   );
 }
 
