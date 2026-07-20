@@ -89,9 +89,14 @@ installs on sync failure (hardened by UX Stage A; re-breakable).
 - No mid-run SDK session mutation.
 - No changes to the reviewed-capability approval flow itself.
 
-## Sequencing
+## Sequencing (user directive 2026-07-20: changes go INTO PR #237)
 
-After `pr237-validation.md` lands its verdict: fold #237's overlapping fixes
-in (or rebase this lane's scope down to what #237 doesn't cover). Implementer:
-Fable subagents (user directive), one worktree, matrix rows flipped with
-citations at closeout.
+Implementation lands ON PR #237's branch (`develop`) — NOT a separate lane on
+main. Flow: (1) `pr237-validation.md` verdict identifies what #237 already
+fixes; (2) a worktree on `origin/develop` implements the REMAINING items from
+this doc (the four locked decisions + the trace defects #237 doesn't cover) as
+additional commits on that branch, keeping every change aligned with the
+inventory-only capability model; (3) any #237 change the validation flags as
+misaligned/defective gets corrected in the same branch; (4) PR #237 merges as
+the single MCP/skill acquisition PR once its CI + the e2e rows are green.
+Implementer: Fable subagents, matrix rows flipped with citations at closeout.
