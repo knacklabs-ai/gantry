@@ -64,6 +64,17 @@ B2 hardening batch.
    Small fix lane + regression tests (incl. the sourceAgentFolderJids
    chat-jid derivation test skipped during the live hotfix).
    _(worktree `wt-routefix`, `fix/route-loader-dedup`)_
+6. **Permission floor + command-class promotion** — grill-scoped 2026-07-20.
+   Stay-direct posture confirmed. auto_strict becomes the new-agent default
+   (deterministic read-only pre-gate + YOLO backstop under the classifier) AND
+   "allow for future" persists a user-confirmed command-NAME class scoped to
+   conversation+agent (kills the novel-task prompt flood). Tight scope:
+   env-facts defers to media Stage 5, audit-write fix is separate.
+   `permission-floor-and-promotion-goal-prompt.md`
+7. **Fail-loud audit writes (separate tiny lane)** — `runtime_events` insert in
+   `publishGatewayUseAudit` has thrown ~98× since 2026-07-04 (WARN-swallowed);
+   durable credential/model-usage audit silently not persisting. Fix the insert
+   + add a failure counter so silent audit loss can't hide. Not yet scoped.
 
 Per-lane loop: codex lands → independent verify (typecheck + FULL unit +
 throwaway-DB integration when schema touched) → local autoreview to clean →
