@@ -1429,35 +1429,6 @@ describe('jobs/execution', () => {
     );
   });
 
-  it('falls back to the execution context route and Telegram topic for job notifications', async () => {
-    const job = makeJob({ notification_routes: undefined });
-    const opsRepository = makeOpsRepository(job);
-    const sendMessage = vi.fn(async () => undefined);
-
-    await runJob(
-      job,
-      {
-        conversationRoutes: () => schedulerRoutes(),
-        queue: {} as never,
-        onProcess: () => {},
-        sendMessage: sendMessage as never,
-        opsRepository: opsRepository as never,
-        runAgent: vi.fn(async () => ({
-          status: 'success',
-          result: 'runtime flow completed',
-        })) as never,
-      },
-      'tg:scheduler',
-    );
-
-    expect(sendMessage).toHaveBeenCalledTimes(1);
-    expect(sendMessage).toHaveBeenCalledWith(
-      'tg:scheduler',
-      expect.stringContaining('**✅ Completed** · Daily summary'),
-      expect.objectContaining({ threadId: 'thread-scheduled' }),
-    );
-  });
-
   it('uses a bounded tail summary for long streamed scheduled job output', async () => {
     const job = makeJob();
     const opsRepository = makeOpsRepository(job);

@@ -1,7 +1,7 @@
 import type { App } from '@slack/bolt';
 
 import { resolveDurableQuestionInteractionByRequestId } from '../../application/interactions/pending-interaction-durability.js';
-import type { DurableQuestionCallback } from '../../application/interactions/pending-interaction-durability.js';
+import type { DurableQuestionCallback } from '../../application/interactions/pending-interaction-question-recovery.js';
 import { logger } from '../../infrastructure/logging/logger.js';
 import type { PendingUserQuestionState } from './channel-state.js';
 

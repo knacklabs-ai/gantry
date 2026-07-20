@@ -228,3 +228,73 @@ add +68/-3 documentation lines, making the complete uncommitted worktree delta
   Telegram text-style findings, and two active-doc references. The task's
   stated eight-finding baseline omitted the newly merged prompt-profile ratchet
   and two active-doc references; Slice 2 added no finding or exception.
+
+## Phase 3 Slice 3 outcomes
+
+### Current-tree revalidation
+
+F9, N2, N3, N4, and N8 all still applied after Slices 1-2 and the merged
+conversation-quality, permission-prompt schema, attachment, messaging-cleanup,
+and gateway-latency changes. None was fully or partially absorbed: the job
+model still allowed missing canonical execution/delivery fields and rebuilt
+them from legacy mirrors, question selections were still decoded twice, Slack
+and Teams still carried separate durable callback readers, the unused pending
+interaction list port still crossed every layer, and the prompt-binding module
+still re-exported unrelated callback types.
+
+| Item | Outcome     | Evidence and boundary                                                                                                                                                                                                                                                                                                              |
+| ---- | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| F9   | Implemented | Made `execution_context` and non-empty `notification_routes` the only job execution/delivery authority; deleted top-level/session/route reconstruction and route-source aliases; required canonical rows at Postgres read/write boundaries; preserved provider-account identity in system-job targets and registration signatures. |
+| N2   | Implemented | Removed the second raw selection decoder and builds the durable selection map directly from the already-validated pending-interaction envelope.                                                                                                                                                                                    |
+| N3   | Implemented | Consolidated Slack and Teams durable question callback recovery into one application-owned reader; channel adapters now keep only channel-specific rendering/parsing.                                                                                                                                                              |
+| N4   | Implemented | Deleted the zero-production-consumer `listPendingInteractions` port, Postgres implementation, mocks, and tests; recovery continues through the existing idempotency-key lookup.                                                                                                                                                    |
+| N8   | Implemented | Removed prompt-binding callback/type re-exports and changed consumers to import each type or reader from its owning module.                                                                                                                                                                                                        |
+
+F9 intentionally adds no compatibility reader or migration shim. The approved
+Phase 8 reset/restamp must leave every retained job with canonical execution
+context and at least one notification route before this fail-loud reader is
+deployed; other environments reset.
+
+### Surface impact
+
+| Surface                     | Classification       | Reason                                                                                                           |
+| --------------------------- | -------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| Runtime behavior            | Changed              | Jobs execute and notify only from canonical context/routes; durable question recovery has one reader.            |
+| `settings.yaml`             | Unchanged by design  | These findings do not change desired-state configuration or its authority.                                       |
+| Postgres/runtime projection | Changed              | Job reads/writes reject missing canonical fields; the unused pending-interaction list repository method is gone. |
+| Control API                 | Read-only/observable | Existing job responses consume canonical visibility metadata; no public request or response shape changed.       |
+| SDK/contracts               | Unchanged by design  | No provider SDK or public contract changed.                                                                      |
+| CLI                         | Unchanged by design  | No CLI surface reads the removed fallbacks or pending-interaction list.                                          |
+| Gantry MCP/admin tools      | Unchanged by design  | Existing job writers already supply canonical context/routes; no tool schema changed.                            |
+| Channel/provider adapters   | Changed              | Slack and Teams share the application callback reader; Discord imports the callback type from its owner.         |
+| Docs/prompts                | Changed              | This ledger records the cutover prerequisite and current-tree outcome; prompts are unchanged.                    |
+| Audit/events                | Unchanged by design  | Existing job and interaction audit/event payloads remain authoritative.                                          |
+| Tests/verification          | Changed              | Fallback/list tests were deleted and canonical fail-loud/provider-account invariants were added.                 |
+
+### Net line delta
+
+Mutually exclusive source-and-test attribution is F9 +342/-290 (net **+52**;
+production alone +116/-233, net **-117**), N2 +9/-37 (net **-28**), N3
++33/-51 (net **-18**), N4 +33/-95 (net **-62**), and N8 +10/-20 (net
+**-10**): total +427/-493, net **-66 lines** before this ledger section.
+
+### Verification notes
+
+- Typecheck passed after the final production/test change.
+- Focused job/interaction matrix: 14 files, 624 tests passed; the two stale F9
+  fixtures discovered by the first full run were corrected and reran in
+  isolation with 75 tests passed. The N2/N3/N4/N8 subset independently passed
+  six files / 474 tests.
+- Autoreview found one provider-account restamp gap for dead-lettered system
+  jobs. Both per-conversation and singleton registrations now refresh canonical
+  targets without reviving the job; the focused regression file passed 16
+  tests and typecheck passed again.
+- The exact full `npm run test:unit` command was run three times. The first run
+  found the two stale F9 fixtures above. After their isolated green rerun, both
+  the second run and the final post-review-fix run emitted no failing test but
+  did not exit or print Vitest's final summary after bounded waits, so they were
+  terminated as load/open-handle stalls rather than reported as clean
+  full-suite completions.
+- Postgres integration startup is blocked in this symlinked worktree because
+  Vitest cannot create `node_modules/.vite-temp` (`EPERM`); no integration test
+  body ran, so focused unit coverage is the verification evidence for N4.

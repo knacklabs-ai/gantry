@@ -12,7 +12,6 @@ import {
   profileIdForJobNotificationPhase,
   resolveJobNotificationRoutes,
   type JobNotificationPhase,
-  type JobNotificationRouteSource,
 } from './job-notification-routes.js';
 
 export type SchedulerSendMessage = (
@@ -141,7 +140,7 @@ function providerFromPayload(providerPayload: unknown): string | undefined {
 }
 
 export async function sendJobNotification(input: {
-  job: Job & JobNotificationRouteSource;
+  job: Job;
   text: string;
   phase: JobNotificationPhase;
   runId?: string | null;

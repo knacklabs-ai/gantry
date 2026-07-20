@@ -607,7 +607,6 @@ function requestSlackUserAnswer(
     idempotencyKey: `${appId}:question:${request.sourceAgentFolder}:${request.requestId}`,
   };
   const repository = {
-    listPendingInteractions: vi.fn(async () => [interaction]),
     findPendingInteractionByRequest: vi.fn(async () => interaction),
     findPendingInteractionByIdempotencyKey: vi.fn(async () => interaction),
     updatePendingInteractionPayload: vi.fn((input) =>

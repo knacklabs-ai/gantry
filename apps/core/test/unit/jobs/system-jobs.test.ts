@@ -87,11 +87,18 @@ describe('system memory dreaming jobs', () => {
     const getAllJobs = vi.fn(async () => []);
     const deleteJob = vi.fn(async () => undefined);
     const routes = {
-      'sl:C123': makeRoute({ folder: 'agent-a', conversationKind: 'channel' }),
-      'sl:D123': makeRoute({ folder: 'agent-a', conversationKind: 'dm' }),
+      'sl:C123': makeRoute({
+        folder: 'agent-a',
+        conversationKind: 'channel',
+        providerAccountId: 'slack-main',
+      }),
+      'sl:D123': makeRoute({
+        folder: 'agent-a',
+        conversationKind: 'dm',
+        providerAccountId: 'slack-main',
+      }),
     };
-
-    await registerSystemJobs({
+    const deps = {
       conversationRoutes: () => routes,
       opsRepository: {
         getJobById,
@@ -99,7 +106,9 @@ describe('system memory dreaming jobs', () => {
         deleteJob,
         upsertJob,
       },
-    } as never);
+    } as never;
+
+    await registerSystemJobs(deps);
 
     expect(upsertJob).toHaveBeenCalledTimes(3);
     expect(
@@ -131,6 +140,7 @@ describe('system memory dreaming jobs', () => {
         {
           conversationJid: 'sl:C123',
           threadId: null,
+          providerAccountId: 'slack-main',
           label: 'primary',
         },
       ],
@@ -138,6 +148,7 @@ describe('system memory dreaming jobs', () => {
         {
           conversationJid: 'sl:D123',
           threadId: null,
+          providerAccountId: 'slack-main',
           label: 'primary',
         },
       ],
@@ -145,6 +156,7 @@ describe('system memory dreaming jobs', () => {
         {
           conversationJid: 'sl:C123',
           threadId: null,
+          providerAccountId: 'slack-main',
           label: 'primary',
         },
       ],
@@ -163,23 +175,44 @@ describe('system memory dreaming jobs', () => {
       true,
     ]);
     expect(deleteJob).not.toHaveBeenCalled();
+
+    upsertJob.mockClear();
+    routes['sl:C123'].providerAccountId = 'slack-secondary';
+    await registerSystemJobs(deps);
+    expect(
+      upsertJob.mock.calls.map((call) => call[0].notification_routes),
+    ).toEqual(
+      expect.arrayContaining([
+        [
+          expect.objectContaining({
+            conversationJid: 'sl:C123',
+            providerAccountId: 'slack-secondary',
+          }),
+        ],
+      ]),
+    );
   });
 
-  it('re-stamps silent on dead-lettered dreaming jobs without reviving them', async () => {
+  it('re-stamps canonical targets on dead-lettered dreaming jobs without reviving them', async () => {
     const { registerSystemJobs } = await loadSystemJobs();
     const upsertJob = vi.fn().mockResolvedValue({ created: true });
     const updateJob = vi.fn(async () => undefined);
-    const getJobById = vi.fn(async (id: string) =>
-      id.startsWith('system:dreaming:')
-        ? makeJob({ id, status: 'dead_lettered', silent: false })
-        : undefined,
-    );
+    const getJobById = vi.fn(async (id: string) => {
+      if (id.startsWith('system:dreaming:') || id === 'system:brain-dreaming') {
+        return makeJob({ id, status: 'dead_lettered', silent: false });
+      }
+      return undefined;
+    });
     const getAllJobs = vi.fn(async () => []);
     const deleteJob = vi.fn(async () => undefined);
 
     await registerSystemJobs({
       conversationRoutes: () => ({
-        'sl:C123': makeRoute({ folder: 'agent', conversationKind: 'channel' }),
+        'sl:C123': makeRoute({
+          folder: 'agent',
+          conversationKind: 'channel',
+          providerAccountId: 'slack-current',
+        }),
       }),
       opsRepository: {
         getJobById,
@@ -190,11 +223,27 @@ describe('system memory dreaming jobs', () => {
       },
     } as never);
 
-    expect(updateJob).toHaveBeenCalledTimes(1);
-    expect(updateJob).toHaveBeenCalledWith(
-      expect.stringMatching(/^system:dreaming:/),
-      { silent: true },
-    );
+    expect(updateJob).toHaveBeenCalledTimes(2);
+    for (const [jobId, updates] of updateJob.mock.calls) {
+      expect(jobId).toMatch(/^system:(dreaming:|brain-dreaming$)/);
+      expect(updates).toEqual({
+        execution_context: {
+          conversationJid: 'sl:C123',
+          threadId: null,
+          workspaceKey: 'agent',
+          sessionId: null,
+        },
+        notification_routes: [
+          {
+            conversationJid: 'sl:C123',
+            threadId: null,
+            providerAccountId: 'slack-current',
+            label: 'primary',
+          },
+        ],
+        silent: true,
+      });
+    }
     expect(
       upsertJob.mock.calls.filter(
         (call) => call[0].prompt === '__system:memory_dream',

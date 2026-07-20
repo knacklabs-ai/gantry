@@ -123,15 +123,6 @@ function pendingQuestionRow(request: any) {
 
 function pendingInteractionLookups(rows: any[]) {
   return {
-    listPendingInteractions: vi.fn(
-      async ({ appId, runId }: { appId: string; runId?: string | null }) =>
-        rows.filter(
-          (row) =>
-            row.appId === appId &&
-            row.status === 'pending' &&
-            (runId === undefined || row.runId === runId),
-        ),
-    ),
     findPendingInteractionByRequest: vi.fn(
       async ({ appId, kind, sourceAgentFolder, requestId }: any) =>
         rows.find(

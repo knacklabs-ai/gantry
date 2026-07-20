@@ -34,6 +34,14 @@ function job(input: Partial<Job>): Job {
     session_id: null,
     thread_id: null,
     workspace_key: 'agent-folder',
+    execution_context: {
+      conversationJid: 'chat-a',
+      threadId: null,
+      workspaceKey: 'agent-folder',
+    },
+    notification_routes: [
+      { conversationJid: 'chat-a', threadId: null, label: 'primary' },
+    ],
     created_by: 'agent',
     status: 'active',
     next_run: null,
@@ -157,7 +165,7 @@ describe('resolveExecutionContext', () => {
     });
   });
 
-  it('uses execution_context agentId to select the provider conversation route', () => {
+  it('uses canonical workspaceKey instead of the top-level workspace mirror', () => {
     const alphaRouteKey = makeAgentThreadQueueKey('sl:C123', 'agent:alpha');
     const betaRouteKey = makeAgentThreadQueueKey('sl:C123', 'agent:beta');
     const groups = {
@@ -167,13 +175,12 @@ describe('resolveExecutionContext', () => {
 
     const resolved = resolveExecutionContext(
       job({
-        workspace_key: 'alpha',
+        workspace_key: 'beta',
         execution_context: {
           conversationJid: 'sl:C123',
           threadId: null,
           workspaceKey: 'alpha',
-          agentId: 'agent:beta',
-        } as Job['execution_context'],
+        },
         notification_routes: [
           { conversationJid: 'sl:C123', threadId: null, label: 'primary' },
         ],
@@ -181,7 +188,7 @@ describe('resolveExecutionContext', () => {
       groups,
     );
 
-    expect(resolved?.group).toBe(groups[betaRouteKey]);
+    expect(resolved?.group).toBe(groups[alphaRouteKey]);
   });
 
   it('derives the route agent from the job workspace key', () => {

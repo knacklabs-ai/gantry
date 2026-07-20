@@ -69,13 +69,7 @@ export function resolveExecutionContext(
 }
 
 export function resolveJobExecutionAgentId(job: Job): string | undefined {
-  const explicitAgentId = normalizeOptional(
-    (job.execution_context as Record<string, unknown> | undefined)?.agentId,
-  );
-  if (explicitAgentId) return explicitAgentId;
-  const workspaceKey =
-    normalizeOptional(job.execution_context?.workspaceKey) ??
-    normalizeOptional(job.workspace_key);
+  const workspaceKey = normalizeOptional(job.execution_context.workspaceKey);
   return workspaceKey ? agentIdForJobWorkspaceKey(workspaceKey) : undefined;
 }
 

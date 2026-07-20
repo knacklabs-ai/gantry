@@ -15,6 +15,14 @@ function makeJob(overrides: Partial<Job> = {}): Job {
     session_id: null,
     thread_id: null,
     workspace_key: 'alpha',
+    execution_context: {
+      conversationJid: 'sl:C123',
+      threadId: null,
+      workspaceKey: 'alpha',
+    },
+    notification_routes: [
+      { conversationJid: 'sl:C123', threadId: null, label: 'primary' },
+    ],
     created_by: 'agent',
     created_at: '2026-07-17T00:00:00.000Z',
     updated_at: '2026-07-17T00:00:00.000Z',
@@ -35,14 +43,14 @@ function makeJob(overrides: Partial<Job> = {}): Job {
 }
 
 describe('runActiveJobWithLogContext', () => {
-  it('uses execution_context agentId for the initial log context', async () => {
+  it('uses canonical workspaceKey for the initial log context', async () => {
     const activeJob = makeJob({
+      workspace_key: 'beta',
       execution_context: {
         conversationJid: 'sl:C123',
         threadId: null,
         workspaceKey: 'alpha',
-        agentId: 'agent:beta',
-      } as Job['execution_context'],
+      },
     });
     let observedContext: ReturnType<typeof currentLogContext>;
 
@@ -61,7 +69,7 @@ describe('runActiveJobWithLogContext', () => {
     expect(observedContext).toEqual({
       runId: 'run-1',
       appId: 'default',
-      agentId: 'agent:beta',
+      agentId: 'agent:alpha',
     });
   });
 });

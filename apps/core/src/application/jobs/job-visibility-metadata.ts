@@ -133,11 +133,8 @@ export async function buildJobVisibilityMetadata(input: {
 }): Promise<JobVisibilityMetadata> {
   const appId = input.appId ?? DEFAULT_JOB_RUNTIME_APP_ID;
   const executionContext = resolveExecutionContext(input.job);
-  const notificationRoutes = resolveNotificationRoutes(
-    input.job,
-    executionContext,
-  );
-  const agentId = agentIdForJobWorkspaceKey(input.job.workspace_key);
+  const notificationRoutes = resolveNotificationRoutes(input.job);
+  const agentId = agentIdForJobWorkspaceKey(executionContext.workspaceKey);
   const policy = await resolveJobToolPolicy({
     job: input.job,
     appId,
@@ -171,7 +168,7 @@ export async function buildJobVisibilityMetadata(input: {
     target: {
       appId,
       agentId,
-      workspaceKey: input.job.workspace_key,
+      workspaceKey: executionContext.workspaceKey,
       conversationJids: dedupeConversationJids(notificationRoutes),
       threadId: executionContext.threadId,
     },
@@ -231,11 +228,10 @@ export async function buildJobListVisibilityMetadata(input: {
       input.jobs.map(async (job) => {
         const appId = input.appId ?? DEFAULT_JOB_RUNTIME_APP_ID;
         const executionContext = resolveExecutionContext(job);
-        const notificationRoutes = resolveNotificationRoutes(
-          job,
-          executionContext,
+        const notificationRoutes = resolveNotificationRoutes(job);
+        const agentId = agentIdForJobWorkspaceKey(
+          executionContext.workspaceKey,
         );
-        const agentId = agentIdForJobWorkspaceKey(job.workspace_key);
         const inheritedTools = await loadInheritedTools(appId, agentId);
         const effectiveAllowedTools = mergeUnique(inheritedTools);
         const staleness = schedulerJobStaleness(job, nowMs);
@@ -259,7 +255,7 @@ export async function buildJobListVisibilityMetadata(input: {
           target: {
             appId,
             agentId,
-            workspaceKey: job.workspace_key,
+            workspaceKey: executionContext.workspaceKey,
             conversationJids: dedupeConversationJids(notificationRoutes),
             threadId: executionContext.threadId,
           },
@@ -506,44 +502,16 @@ function neutralToolAccessLabel(toolName: string): string {
 
 function resolveExecutionContext(job: Job): JobExecutionContextInput {
   const stored = job.execution_context;
-  if (
-    stored &&
-    typeof stored.conversationJid === 'string' &&
-    stored.conversationJid.trim() &&
-    typeof stored.workspaceKey === 'string' &&
-    stored.workspaceKey.trim()
-  ) {
-    return {
-      conversationJid: stored.conversationJid,
-      threadId: stored.threadId ?? null,
-      workspaceKey: stored.workspaceKey,
-      sessionId:
-        stored.sessionId === undefined ? job.session_id : stored.sessionId,
-    };
-  }
-  const fallbackConversationJid = Array.isArray(job.notification_routes)
-    ? job.notification_routes.find(
-        (route) =>
-          typeof route?.conversationJid === 'string' &&
-          route.conversationJid.trim().length > 0,
-      )?.conversationJid
-    : undefined;
   return {
-    conversationJid: fallbackConversationJid ?? '',
-    threadId: job.thread_id,
-    workspaceKey: job.workspace_key,
-    sessionId: job.session_id,
+    conversationJid: stored.conversationJid,
+    threadId: stored.threadId ?? null,
+    workspaceKey: stored.workspaceKey,
+    sessionId: stored.sessionId ?? null,
   };
 }
 
-function resolveNotificationRoutes(
-  job: Job,
-  executionContext: JobExecutionContextInput,
-): JobNotificationRouteInput[] {
-  const stored = Array.isArray(job.notification_routes)
-    ? job.notification_routes
-    : [];
-  const normalized = stored
+function resolveNotificationRoutes(job: Job): JobNotificationRouteInput[] {
+  return job.notification_routes
     .filter(
       (route): route is JobNotificationRouteInput =>
         typeof route?.conversationJid === 'string' &&
@@ -555,16 +523,11 @@ function resolveNotificationRoutes(
     .map((route) => ({
       conversationJid: route.conversationJid.trim(),
       threadId: route.threadId ?? null,
+      ...(route.providerAccountId !== undefined
+        ? { providerAccountId: route.providerAccountId }
+        : {}),
       label: route.label.trim(),
     }));
-  if (normalized.length > 0) return normalized;
-  return [
-    {
-      conversationJid: executionContext.conversationJid,
-      threadId: executionContext.threadId,
-      label: 'primary',
-    },
-  ];
 }
 
 function dedupeConversationJids(routes: readonly JobNotificationRouteInput[]) {

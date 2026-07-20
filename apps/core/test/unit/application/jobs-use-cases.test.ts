@@ -24,6 +24,20 @@ afterEach(() => {
 });
 
 function makeJob(overrides: Partial<Job> = {}): Job {
+  const conversationJid =
+    overrides.execution_context?.conversationJid ??
+    overrides.notification_routes?.[0]?.conversationJid ??
+    'app:app-one:conversation';
+  const threadId =
+    overrides.execution_context?.threadId ?? overrides.thread_id ?? null;
+  const workspaceKey =
+    overrides.execution_context?.workspaceKey ??
+    overrides.workspace_key ??
+    'app-folder';
+  const sessionId =
+    overrides.execution_context?.sessionId ??
+    overrides.session_id ??
+    'session-app-one';
   return {
     id: 'job-1',
     name: 'Job',
@@ -50,6 +64,19 @@ function makeJob(overrides: Partial<Job> = {}): Job {
     lease_run_id: null,
     lease_expires_at: null,
     pause_reason: null,
+    execution_context: {
+      conversationJid,
+      threadId,
+      workspaceKey,
+      sessionId,
+    },
+    notification_routes: [
+      {
+        conversationJid,
+        threadId,
+        label: 'primary',
+      },
+    ],
     ...overrides,
   };
 }
@@ -1628,6 +1655,11 @@ describe('job application use cases', () => {
       canAccessSchedulerJob(
         makeJob({
           workspace_key: 'team',
+          execution_context: {
+            conversationJid: 'tg:team',
+            threadId: null,
+            workspaceKey: 'team',
+          },
           notification_routes: [
             {
               conversationJid: 'tg:sibling',
@@ -2885,6 +2917,13 @@ describe('job application use cases', () => {
           id: 'job-1',
           workspace_key: 'team',
           session_id: 'session-1',
+          notification_routes: [
+            {
+              conversationJid: 'tg:team',
+              threadId: null,
+              label: 'primary',
+            },
+          ],
           schedule_type: 'cron',
           schedule_value: '0 9 * * *',
         }),
@@ -3010,6 +3049,13 @@ describe('job application use cases', () => {
         id: 'job-1',
         workspace_key: 'team',
         session_id: 'session-1',
+        notification_routes: [
+          {
+            conversationJid: 'tg:team',
+            threadId: null,
+            label: 'primary',
+          },
+        ],
         schedule_type: 'cron',
         schedule_value: '0 9 * * *',
         status: 'paused',
@@ -3103,6 +3149,13 @@ describe('job application use cases', () => {
           id: 'job-1',
           workspace_key: 'team',
           session_id: null,
+          notification_routes: [
+            {
+              conversationJid: 'tg:team',
+              threadId: null,
+              label: 'primary',
+            },
+          ],
         }),
       ) as RuntimeJobRepository,
       scheduler: { requestSchedulerSync: vi.fn() },
@@ -3314,6 +3367,13 @@ describe('job application use cases', () => {
         makeJob({
           status: 'paused',
           workspace_key: 'team',
+          notification_routes: [
+            {
+              conversationJid: 'tg:team',
+              threadId: null,
+              label: 'primary',
+            },
+          ],
         }),
       ) as RuntimeJobRepository,
       scheduler: { requestSchedulerSync: vi.fn() },
@@ -3358,6 +3418,13 @@ describe('job application use cases', () => {
       ops: makeOps(
         makeJob({
           workspace_key: 'team',
+          notification_routes: [
+            {
+              conversationJid: 'tg:team',
+              threadId: null,
+              label: 'primary',
+            },
+          ],
         }),
       ) as RuntimeJobRepository,
       scheduler: { requestSchedulerSync: vi.fn() },

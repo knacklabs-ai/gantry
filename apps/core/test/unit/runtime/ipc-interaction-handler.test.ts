@@ -1350,7 +1350,6 @@ describe('ipc-interaction-handler', () => {
         })),
         createPendingInteraction: vi.fn(async () => true),
         findPendingPermissionPromptByMember: vi.fn(async () => null),
-        listPendingInteractions: vi.fn(async () => []),
         resolvePendingInteraction: vi.fn(async () => true),
         createTransientGrant,
       } as never,
@@ -1445,7 +1444,6 @@ describe('ipc-interaction-handler', () => {
     const repository = {
       createPendingInteraction: vi.fn(async () => true),
       findPendingPermissionPromptByMember: vi.fn(async () => null),
-      listPendingInteractions: vi.fn(async () => []),
       claimPendingPermissionCallback: vi.fn(async () => {
         if (claimHeld) return null;
         claimHeld = true;
@@ -1731,7 +1729,6 @@ describe('ipc-interaction-handler', () => {
       repository: {
         createPendingInteraction: vi.fn(async () => true),
         findPendingPermissionPromptByMember: vi.fn(async () => null),
-        listPendingInteractions: vi.fn(async () => []),
         getActiveRunLease: vi
           .fn()
           .mockResolvedValueOnce(activeLease)
@@ -1802,7 +1799,6 @@ describe('ipc-interaction-handler', () => {
       repository: {
         createPendingInteraction: vi.fn(async () => true),
         findPendingPermissionPromptByMember: vi.fn(async () => null),
-        listPendingInteractions: vi.fn(async () => []),
         getActiveRunLease: vi
           .fn()
           .mockResolvedValueOnce(activeLease)
@@ -2394,7 +2390,6 @@ describe('ipc-interaction-handler', () => {
         })),
         createPendingInteraction: vi.fn(async () => true),
         findPendingPermissionPromptByMember: vi.fn(async () => null),
-        listPendingInteractions: vi.fn(async () => []),
         resolvePendingInteraction,
         createTransientGrant: vi.fn(async () => true),
         releasePendingPermissionCallback,
@@ -2493,7 +2488,6 @@ describe('ipc-interaction-handler', () => {
         })),
         createPendingInteraction: vi.fn(async () => true),
         findPendingPermissionPromptByMember: vi.fn(async () => null),
-        listPendingInteractions: vi.fn(async () => []),
         resolvePendingInteraction,
         createTransientGrant,
       } as never,
@@ -2810,7 +2804,6 @@ describe('ipc-interaction-handler', () => {
       getActiveRunLease,
       createPendingInteraction: vi.fn(async () => true),
       findPendingPermissionPromptByMember: vi.fn(async () => null),
-      listPendingInteractions: vi.fn(async () => []),
       resolvePendingInteraction: vi.fn(async () => true),
       createTransientGrant: vi.fn(async () => true),
     };
@@ -2902,7 +2895,6 @@ describe('ipc-interaction-handler', () => {
         getActiveRunLease,
         createPendingInteraction: vi.fn(async () => true),
         findPendingPermissionPromptByMember: vi.fn(async () => null),
-        listPendingInteractions: vi.fn(async () => []),
         resolvePendingInteraction: vi.fn(async () => true),
         createTransientGrant: vi.fn(async () => true),
       } as never,

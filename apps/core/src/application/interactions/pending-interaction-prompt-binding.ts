@@ -16,11 +16,6 @@ import {
 import { DurableInteractionPersistenceError } from './pending-interaction-persistence-error.js';
 import { pendingInteractionIdempotencyKey } from './pending-interaction-idempotency.js';
 
-export { readDurablePermissionFullView } from './pending-interaction-permission-envelope.js';
-export type { DurablePermissionFullView } from './pending-interaction-permission-envelope.js';
-export { readQuestionRecoveryEnvelope } from './pending-interaction-question-recovery.js';
-export type { DurableQuestionCallback } from './pending-interaction-question-recovery.js';
-
 const DEFAULT_APP_ID = 'default';
 
 type PromptBindingBackend = {

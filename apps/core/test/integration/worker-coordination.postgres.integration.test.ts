@@ -992,13 +992,14 @@ maybeDescribe('multi-worker coordination acceptance gates', () => {
       targetJid: 'tg:worker-coordination',
     });
 
-    const pending = await coordination.listPendingInteractions({
+    const pending = await coordination.findPendingInteractionByIdempotencyKey({
       appId: 'default',
+      idempotencyKey: 'permission:scheduler_agent:req-1',
     });
-    expect(pending.map((row) => row.id)).toContain('interaction-1');
-    expect(
-      pending.find((row) => row.id === 'interaction-1')?.callbackRoute,
-    ).toEqual({ targetJid: 'tg:worker-coordination' });
+    expect(pending?.id).toBe('interaction-1');
+    expect(pending?.callbackRoute).toEqual({
+      targetJid: 'tg:worker-coordination',
+    });
 
     await expect(
       coordination.resolvePendingInteraction({
@@ -1016,10 +1017,12 @@ maybeDescribe('multi-worker coordination acceptance gates', () => {
         resolution: { approved: true, mode: 'allow_once' },
       }),
     ).resolves.toBe(true);
-    const pendingAfter = await coordination.listPendingInteractions({
-      appId: 'default',
-    });
-    expect(pendingAfter.map((row) => row.id)).not.toContain('interaction-1');
+    const pendingAfter =
+      await coordination.findPendingInteractionByIdempotencyKey({
+        appId: 'default',
+        idempotencyKey: 'permission:scheduler_agent:req-1',
+      });
+    expect(pendingAfter).toBeNull();
   });
 
   it('reopens only cancelled questions and admits one concurrent re-ask', async () => {
@@ -2142,9 +2145,11 @@ maybeDescribe('multi-worker coordination acceptance gates', () => {
       providerAliases: ['opaque-binding-race'],
       mode: 'batch',
     });
-    const stalePayload = (
-      await coordination.listPendingInteractions({ appId: 'default' })
-    ).find((row) => row.idempotencyKey === idempotencyKey)!.payload;
+    const stalePayload =
+      (await coordination.findPendingInteractionByIdempotencyKey({
+        appId: 'default',
+        idempotencyKey,
+      }))!.payload;
 
     await expect(
       coordination.claimPendingPermissionCallback({ claim }),
@@ -2228,10 +2233,11 @@ maybeDescribe('multi-worker coordination acceptance gates', () => {
         }),
       }),
     ).resolves.toBe(true);
-    const settled = (
-      await coordination.listPendingInteractions({ appId: 'default' })
-    ).find((row) => row.idempotencyKey === idempotencyKey)!;
-    expect(settled.payload).toMatchObject({
+    const settled = await coordination.findPendingInteractionByIdempotencyKey({
+      appId: 'default',
+      idempotencyKey,
+    });
+    expect(settled?.payload).toMatchObject({
       externalPromptMessageId: 'message-after-settlement',
     });
     await expect(

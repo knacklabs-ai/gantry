@@ -739,13 +739,10 @@ maybeDescribe('agent capability boundary slices (Postgres)', () => {
       {
         permissionDecision: async () => {
           const pending =
-            await runtime.repositories.workerCoordination.listPendingInteractions(
-              { appId, runId },
+            await runtime.repositories.workerCoordination.findPendingInteractionByIdempotencyKey(
+              { appId, runId, idempotencyKey },
             );
-          pendingWasVisibleDuringPrompt = pending.some(
-            (row) =>
-              row.idempotencyKey === idempotencyKey && row.status === 'pending',
-          );
+          pendingWasVisibleDuringPrompt = pending?.status === 'pending';
           return {
             approved: true,
             mode: 'allow_once',

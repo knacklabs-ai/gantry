@@ -36,10 +36,12 @@ describe('CanonicalJobOpsService', () => {
     });
 
     const stored = vi.mocked(repository.upsertJob).mock.calls[0]?.[0] as {
+      agentId: string;
       targetJson: string;
     };
     const target = JSON.parse(stored.targetJson) as Record<string, unknown>;
     expect(target.capabilityPolicy).toBeUndefined();
+    expect(stored.agentId).toBe('agent:agent_one');
     expect(target.executionContext).toEqual({
       conversationJid: 'tg:1',
       threadId: null,
@@ -59,7 +61,7 @@ describe('CanonicalJobOpsService', () => {
     ]);
   });
 
-  it('merges canonical session_id into executionContext when target sessionId is missing', async () => {
+  it('does not reconstruct executionContext sessionId from session_id', async () => {
     const repository = {
       findJobById: vi.fn(async () => null),
       upsertJob: vi.fn(async () => undefined),
@@ -96,8 +98,45 @@ describe('CanonicalJobOpsService', () => {
       conversationJid: 'tg:1',
       threadId: null,
       workspaceKey: 'agent_one',
-      sessionId: 'session-canonical',
+      sessionId: null,
     });
+  });
+
+  it('requires canonical execution context and a non-empty route set', async () => {
+    const repository = {
+      findJobById: vi.fn(async () => null),
+      upsertJob: vi.fn(async () => undefined),
+    } as unknown as PostgresCanonicalJobRepository;
+    const service = new CanonicalJobOpsService(repository);
+    const input = {
+      id: 'job-1',
+      name: 'Job',
+      prompt: 'Run',
+      schedule_type: 'interval' as const,
+      schedule_value: '60000',
+      session_id: 'legacy-session',
+      thread_id: 'legacy-thread',
+      workspace_key: 'legacy-workspace',
+      notification_routes: [
+        { conversationJid: 'tg:1', threadId: null, label: 'Primary' },
+      ],
+    };
+
+    await expect(service.upsertJob(input as never)).rejects.toThrow(
+      'Job job-1 is missing canonical execution_context.',
+    );
+    await expect(
+      service.upsertJob({
+        ...input,
+        execution_context: {
+          conversationJid: 'tg:1',
+          threadId: null,
+          workspaceKey: 'agent_one',
+        },
+        notification_routes: [],
+      }),
+    ).rejects.toThrow('Job job-1 is missing canonical notification_routes.');
+    expect(repository.upsertJob).not.toHaveBeenCalled();
   });
 
   it('projects target routing context into job records', async () => {

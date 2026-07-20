@@ -303,6 +303,13 @@ describe('control job trigger', () => {
         workspaceKey: 'app-folder',
         sessionId: 'session-1',
       },
+      notification_routes: [
+        {
+          conversationJid: 'chat-1',
+          threadId: null,
+          label: 'primary',
+        },
+      ],
       workspace_key: 'app-folder',
       created_by: 'human',
       created_at: '2026-04-24T00:00:00.000Z',

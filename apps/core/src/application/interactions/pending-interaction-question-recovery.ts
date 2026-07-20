@@ -11,6 +11,30 @@ export interface DurableQuestionCallback {
   questionIndex: number;
 }
 
+export function readDurableQuestionCallback(
+  value: unknown,
+): DurableQuestionCallback | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const callback = value as Record<string, unknown>;
+  const scope = callback.scope;
+  if (!scope || typeof scope !== 'object' || Array.isArray(scope)) return null;
+  const parsedScope = scope as Record<string, unknown>;
+  if (
+    typeof callback.providerAlias !== 'string' ||
+    !callback.providerAlias ||
+    !Number.isInteger(callback.questionIndex) ||
+    typeof parsedScope.appId !== 'string' ||
+    !parsedScope.appId ||
+    typeof parsedScope.sourceAgentFolder !== 'string' ||
+    !parsedScope.sourceAgentFolder ||
+    typeof parsedScope.interactionId !== 'string' ||
+    !parsedScope.interactionId
+  ) {
+    return null;
+  }
+  return callback as unknown as DurableQuestionCallback;
+}
+
 export function readQuestionRecoveryEnvelope(
   value: unknown,
 ): QuestionRecoveryEnvelope | null {

@@ -2,7 +2,10 @@ import type {
   UserQuestionRequest,
   UserQuestionResponse,
 } from '../domain/types.js';
-import type { DurableQuestionCallback } from '../application/interactions/pending-interaction-durability.js';
+import {
+  readDurableQuestionCallback,
+  type DurableQuestionCallback,
+} from '../application/interactions/pending-interaction-question-recovery.js';
 
 export interface TeamsUserQuestionSubmit {
   callback: DurableQuestionCallback;
@@ -30,7 +33,7 @@ export function readTeamsUserQuestionSubmit(
         ? (top.data as Record<string, unknown>)
         : null;
   if (!candidate || candidate.action !== 'gantry_userq') return null;
-  const callback = readTeamsUserQuestionCallback(candidate.callback);
+  const callback = readDurableQuestionCallback(candidate.callback);
   if (!callback) return null;
 
   const values: Record<string, string> = {};
@@ -42,30 +45,6 @@ export function readTeamsUserQuestionSubmit(
     }
   }
   return { callback, values };
-}
-
-function readTeamsUserQuestionCallback(
-  value: unknown,
-): DurableQuestionCallback | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const callback = value as Record<string, unknown>;
-  const scope = callback.scope;
-  if (!scope || typeof scope !== 'object' || Array.isArray(scope)) return null;
-  const parsedScope = scope as Record<string, unknown>;
-  if (
-    typeof callback.providerAlias !== 'string' ||
-    !callback.providerAlias ||
-    !Number.isInteger(callback.questionIndex) ||
-    typeof parsedScope.appId !== 'string' ||
-    !parsedScope.appId ||
-    typeof parsedScope.sourceAgentFolder !== 'string' ||
-    !parsedScope.sourceAgentFolder ||
-    typeof parsedScope.interactionId !== 'string' ||
-    !parsedScope.interactionId
-  ) {
-    return null;
-  }
-  return callback as unknown as DurableQuestionCallback;
 }
 
 export function mapTeamsUserQuestionAnswers(

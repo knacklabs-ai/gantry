@@ -15,32 +15,20 @@ export function canAccessSchedulerJob(
   const originProviderAccountId = normalizeOptional(
     access.originProviderAccountId,
   );
-  if (job.workspace_key !== access.sourceAgentFolder) return false;
+  if (job.execution_context.workspaceKey !== access.sourceAgentFolder) {
+    return false;
+  }
   const executionConversationJid = normalizeOptional(
     job.execution_context?.conversationJid,
   );
-  const notificationRoutes = Array.isArray(job.notification_routes)
-    ? job.notification_routes
-    : [];
-  if (executionConversationJid) {
-    if (executionConversationJid !== originConversationJid) return false;
-    if (!originProviderAccountId) return true;
-    return notificationRoutes.some(
-      (route) =>
-        normalizeOptional(route.conversationJid) === originConversationJid &&
-        normalizeOptional(route.providerAccountId) === originProviderAccountId,
-    );
-  }
-  if (notificationRoutes.length > 0) {
-    return notificationRoutes.some(
-      (route) =>
-        normalizeOptional(route.conversationJid) === originConversationJid &&
-        (!originProviderAccountId ||
-          normalizeOptional(route.providerAccountId) ===
-            originProviderAccountId),
-    );
-  }
-  return true;
+  const notificationRoutes = job.notification_routes;
+  if (executionConversationJid !== originConversationJid) return false;
+  if (!originProviderAccountId) return true;
+  return notificationRoutes.some(
+    (route) =>
+      normalizeOptional(route.conversationJid) === originConversationJid &&
+      normalizeOptional(route.providerAccountId) === originProviderAccountId,
+  );
 }
 
 export function assertSchedulerJobAccess(

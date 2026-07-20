@@ -5,7 +5,7 @@ import type {
   UserQuestionRequest,
 } from '../domain/types.js';
 import type { AgentTodoRender } from '../domain/ports/task-lifecycle.js';
-import type { DurableQuestionCallback } from '../application/interactions/pending-interaction-durability.js';
+import type { DurableQuestionCallback } from '../application/interactions/pending-interaction-question-recovery.js';
 import { PERMISSION_APPROVAL_TIMEOUT_MS } from '../shared/permission-timeout.js';
 import {
   agentTodoLines,

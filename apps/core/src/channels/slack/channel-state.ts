@@ -31,7 +31,7 @@ import {
   tryNativeStreamStop,
 } from './native-stream.js';
 import { writeSlackAttachmentResponse } from './attachment-download.js';
-import type { DurableQuestionCallback } from '../../application/interactions/pending-interaction-durability.js';
+import type { DurableQuestionCallback } from '../../application/interactions/pending-interaction-question-recovery.js';
 
 interface SlackAttachmentDownload {
   filePath: string;

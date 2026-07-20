@@ -1,8 +1,8 @@
 import {
   DurableInteractionPersistenceError,
   recordDurableQuestionAnswerProgress,
-  type DurableQuestionCallback,
 } from '../application/interactions/pending-interaction-durability.js';
+import type { DurableQuestionCallback } from '../application/interactions/pending-interaction-question-recovery.js';
 import type {
   MessageDeliveryResult,
   UserQuestionRequest,

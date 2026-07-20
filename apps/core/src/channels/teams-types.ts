@@ -9,7 +9,7 @@ import type {
   UserQuestionResponse,
 } from '../domain/types.js';
 import type { TeamsAdaptiveCardPayload } from './teams-cards.js';
-import type { DurableQuestionCallback } from '../application/interactions/pending-interaction-durability.js';
+import type { DurableQuestionCallback } from '../application/interactions/pending-interaction-question-recovery.js';
 
 export const TEAMS_JID_PREFIX = 'teams:';
 

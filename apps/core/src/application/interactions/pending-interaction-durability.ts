@@ -16,15 +16,10 @@ import {
   type PermissionInteractionDecisionInput,
 } from './pending-interaction-grants.js';
 import type { PermissionPersistenceBackend } from './pending-interaction-permission-recovery.js';
-import {
-  configurePendingInteractionPromptBinding,
-  readQuestionRecoveryEnvelope,
-} from './pending-interaction-prompt-binding.js';
+import { configurePendingInteractionPromptBinding } from './pending-interaction-prompt-binding.js';
 import { configurePendingInteractionPermissionCallbacks } from './pending-interaction-permission-callback.js';
-import {
-  questionSelectionsFromPayload,
-  serializeQuestionSelections,
-} from './pending-interaction-question-selections.js';
+import { serializeQuestionSelections } from './pending-interaction-question-selections.js';
+import { readQuestionRecoveryEnvelope } from './pending-interaction-question-recovery.js';
 import { DurableInteractionPersistenceError } from './pending-interaction-persistence-error.js';
 import {
   persistPendingInteractionResolution,
@@ -160,10 +155,7 @@ export {
   bindPendingPermissionInteractionMessage,
   findDurablePermissionInteractionByPromptMessage,
 } from './pending-interaction-prompt-binding.js';
-export type {
-  DurablePermissionPromptMessageContext,
-  DurableQuestionCallback,
-} from './pending-interaction-prompt-binding.js';
+export type { DurablePermissionPromptMessageContext } from './pending-interaction-prompt-binding.js';
 export {
   claimPermissionInteractionCallback,
   findDurablePermissionInteractionByRequestId,
@@ -220,7 +212,7 @@ export async function resolveDurableQuestionInteractionByRequestId(input: {
     if (!pending) return false;
     return await persistQuestionProgress({
       pending,
-      update: (envelope, payload) => {
+      update: (envelope) => {
         const question = envelope.request.questions[input.questionIndex];
         if (
           !question ||
@@ -229,7 +221,12 @@ export async function resolveDurableQuestionInteractionByRequestId(input: {
         ) {
           return null;
         }
-        const selections = questionSelectionsFromPayload(payload);
+        const selections = new Map(
+          envelope.selections.map(({ questionIndex, optionIndexes }) => [
+            questionIndex,
+            new Set(optionIndexes),
+          ]),
+        );
         if (envelope.completedQuestionIndexes.includes(input.questionIndex)) {
           return envelope;
         }
@@ -337,12 +334,9 @@ function mergeQuestionAnswerProgress(
 }
 
 async function persistQuestionProgress(input: {
-  pending: Awaited<
-    ReturnType<PendingInteractionRepository['listPendingInteractions']>
-  >[number];
+  pending: PendingInteraction;
   update: (
     envelope: QuestionRecoveryEnvelope,
-    payload: Record<string, unknown>,
   ) => QuestionRecoveryEnvelope | null;
 }): Promise<boolean> {
   const active = backend;
@@ -355,7 +349,7 @@ async function persistQuestionProgress(input: {
         payload.questionRecoveryEnvelope,
       );
       if (!envelope) return null;
-      const next = input.update(envelope, payload);
+      const next = input.update(envelope);
       if (!next) return null;
       updated = true;
       return {

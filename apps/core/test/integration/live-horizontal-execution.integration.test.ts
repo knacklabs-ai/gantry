@@ -735,11 +735,13 @@ maybeDescribe('live horizontal execution acceptance gates', () => {
     });
     configurePendingInteractionDurability(null);
 
-    const pendingAfter = await coordination.listPendingInteractions({
-      appId: 'default',
-      runId: 'run-prompt-restart',
-    });
-    expect(pendingAfter).toEqual([]);
+    const pendingAfter =
+      await coordination.findPendingInteractionByIdempotencyKey({
+        appId: 'default',
+        runId: 'run-prompt-restart',
+        idempotencyKey: 'permission:live-agent:req-live-1',
+      });
+    expect(pendingAfter).toBeNull();
     const inbox = await liveTurns.listPendingLiveTurnCommands({
       liveTurnId: 'turn-prompt-restart',
       limit: 10,

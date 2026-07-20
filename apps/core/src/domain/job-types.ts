@@ -145,8 +145,8 @@ export interface Job {
   lease_run_id: string | null;
   lease_expires_at: string | null;
   pause_reason: string | null;
-  execution_context?: JobExecutionContext;
-  notification_routes?: JobNotificationRoute[];
+  execution_context: JobExecutionContext;
+  notification_routes: JobNotificationRoute[];
   access_requirements?: JobAccessRequirement[];
   setup_state?: JobSetupState;
   recovery_intent?: JobRecoveryIntent | null;

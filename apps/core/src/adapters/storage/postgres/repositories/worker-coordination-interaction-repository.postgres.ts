@@ -1,5 +1,3 @@
-import { and, asc, eq, sql } from 'drizzle-orm';
-
 import type {
   LiveTurnCommandAppendInput,
   LiveTurnCommandNotifier,
@@ -16,7 +14,6 @@ import type {
   PermissionRecoveryEnvelope,
 } from '../../../../domain/types.js';
 import { nowIso as currentIso } from '../../../../shared/time/datetime.js';
-import * as pgSchema from '../schema/schema.js';
 import type { CanonicalDb } from './canonical-graph-repository.postgres.js';
 import {
   cancelPendingQuestionInteractionIfRunLeaseInactiveRow,
@@ -24,7 +21,6 @@ import {
   findPendingInteractionByIdempotencyKeyRow,
   findPendingInteractionByRequestRow,
   resolvePendingInteractionRow,
-  toPendingInteraction,
   updatePendingInteractionPayloadRow,
 } from './worker-coordination-interaction.postgres.js';
 import {
@@ -228,27 +224,5 @@ export abstract class PostgresInteractionRepositoryMethods {
       ...input,
       now: input.now ?? currentIso(),
     });
-  }
-
-  async listPendingInteractions(input: {
-    appId: string;
-    runId?: string | null;
-    now?: string;
-  }): Promise<PendingInteraction[]> {
-    const now = input.now ?? currentIso();
-    const table = pgSchema.pendingInteractionsPostgres;
-    const rows = await this.db
-      .select()
-      .from(table)
-      .where(
-        and(
-          eq(table.appId, input.appId),
-          eq(table.status, 'pending'),
-          sql`${table.expiresAt} > ${now}`,
-          input.runId ? eq(table.runId, input.runId) : undefined,
-        ),
-      )
-      .orderBy(asc(table.createdAt));
-    return rows.map(toPendingInteraction);
   }
 }

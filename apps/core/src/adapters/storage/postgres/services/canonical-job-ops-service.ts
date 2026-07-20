@@ -47,7 +47,7 @@ export class CanonicalJobOpsService {
         ? existing.status
         : job.status || 'active';
     await this.repository.upsertJob(
-      this.toRecordInput(job.id, agentIdForFolder(job.workspace_key), {
+      this.toRecordInput(job.id, {
         name: job.name,
         prompt: job.prompt,
         model: job.model,
@@ -103,7 +103,7 @@ export class CanonicalJobOpsService {
     const next = { ...current, ...updates };
     await this.repository.updateJob(
       id,
-      this.toRecordInput(id, agentIdForFolder(next.workspace_key), {
+      this.toRecordInput(id, {
         ...next,
         updated_at: updates.updated_at ?? currentIso(),
       }),
@@ -408,16 +408,14 @@ export class CanonicalJobOpsService {
       {},
     );
     const target = parseJson<Record<string, unknown>>(row.targetJson, {});
-    const executionContext = parseExecutionContext(target.executionContext) ?? {
-      conversationJid: '',
-      threadId: null,
-      workspaceKey: row.agentId?.replace(/^agent:/, '') || 'system',
-      sessionId: null,
-    };
-    const notificationRoutes = resolveNotificationRoutesFromTarget({
-      targetRoutes: target.notificationRoutes,
-      executionContext,
-    });
+    const executionContext = requireExecutionContext(
+      target.executionContext,
+      row.id,
+    );
+    const notificationRoutes = requireNotificationRoutes(
+      target.notificationRoutes,
+      row.id,
+    );
     const accessRequirements = parseAccessRequirements(
       target.accessRequirements,
     );
@@ -461,20 +459,16 @@ export class CanonicalJobOpsService {
     };
   }
 
-  private toRecordInput(
-    id: string,
-    agentId: string,
-    job: JobRecordSource,
-  ): JobRecordInput {
+  private toRecordInput(id: string, job: JobRecordSource): JobRecordInput {
     const now = currentIso();
-    const executionContext = mergeExecutionContextSessionId(
-      resolveExecutionContext(job, agentId),
-      job.session_id,
+    const executionContext = requireExecutionContext(job.execution_context, id);
+    const notificationRoutes = requireNotificationRoutes(
+      job.notification_routes,
+      id,
     );
-    const notificationRoutes = resolveNotificationRoutes(job, executionContext);
     return {
       id,
-      agentId,
+      agentId: agentIdForFolder(executionContext.workspaceKey),
       name: job.name,
       prompt: job.prompt,
       model: job.model || null,
@@ -715,77 +709,33 @@ function parseCapabilityImplementation(
   return implementation;
 }
 
-function resolveExecutionContext(
-  job: JobRecordSource,
-  agentId: string,
+function requireExecutionContext(
+  input: unknown,
+  jobId: string,
 ): CanonicalExecutionContext {
-  const parsed = parseExecutionContext(job.execution_context);
+  const parsed = parseExecutionContext(input);
   if (parsed) return parsed;
-
-  const firstRouteConversation = parseNotificationRoutes(
-    job.notification_routes,
-  )[0]?.conversationJid;
-  const fallbackConversation = normalizeString(firstRouteConversation);
-  if (!fallbackConversation) {
-    throw new Error(
-      `Job ${'id' in job ? String(job.id) : '<unknown>'} is missing execution context conversation.`,
-    );
-  }
-  return {
-    conversationJid: fallbackConversation,
-    threadId: normalizeNullableString(job.thread_id),
-    workspaceKey:
-      normalizeString(job.workspace_key) ?? agentId.replace(/^agent:/, ''),
-    sessionId: normalizeNullableString(job.session_id),
-  };
+  throw new Error(`Job ${jobId} is missing canonical execution_context.`);
 }
 
-function mergeExecutionContextSessionId(
-  executionContext: CanonicalExecutionContext,
-  sessionId: unknown,
-): CanonicalExecutionContext {
-  const fallback = normalizeNullableString(sessionId);
-  return executionContext.sessionId || !fallback
-    ? executionContext
-    : { ...executionContext, sessionId: fallback };
-}
-
-function resolveNotificationRoutes(
-  job: JobRecordSource,
-  executionContext: CanonicalExecutionContext,
+function requireNotificationRoutes(
+  input: unknown,
+  jobId: string,
 ): CanonicalNotificationRoute[] {
-  const explicitRoutes = parseNotificationRoutes(job.notification_routes);
-  if (explicitRoutes.length > 0) return explicitRoutes;
-
-  return [
-    {
-      conversationJid: executionContext.conversationJid,
-      threadId: executionContext.threadId,
-      label: 'Primary',
-    },
-  ];
+  if (!Array.isArray(input) || input.length === 0) {
+    throw new Error(`Job ${jobId} is missing canonical notification_routes.`);
+  }
+  const routes = parseNotificationRoutes(input);
+  if (routes.length !== input.length) {
+    throw new Error(`Job ${jobId} has invalid canonical notification_routes.`);
+  }
+  return routes;
 }
 
 function normalizeString(input: unknown): string | undefined {
   if (typeof input !== 'string') return undefined;
   const trimmed = input.trim();
   return trimmed.length > 0 ? trimmed : undefined;
-}
-
-function resolveNotificationRoutesFromTarget(input: {
-  targetRoutes: unknown;
-  executionContext: CanonicalExecutionContext;
-}): CanonicalNotificationRoute[] {
-  const explicitRoutes = parseNotificationRoutes(input.targetRoutes);
-  if (explicitRoutes.length > 0) return explicitRoutes;
-  if (!input.executionContext.conversationJid) return [];
-  return [
-    {
-      conversationJid: input.executionContext.conversationJid,
-      threadId: input.executionContext.threadId,
-      label: 'Primary',
-    },
-  ];
 }
 
 // prettier-ignore

@@ -403,11 +403,6 @@ export interface PendingInteractionRepository {
     runId?: string | null;
     now?: string;
   }): Promise<PendingInteraction | null>;
-  listPendingInteractions(input: {
-    appId: string;
-    runId?: string | null;
-    now?: string;
-  }): Promise<PendingInteraction[]>;
 }
 
 export interface TransientGrantRepository {

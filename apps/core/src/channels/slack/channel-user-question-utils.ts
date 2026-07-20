@@ -1,5 +1,8 @@
 import { UserQuestionRequest } from '../../domain/types.js';
-import type { DurableQuestionCallback } from '../../application/interactions/pending-interaction-durability.js';
+import {
+  readDurableQuestionCallback,
+  type DurableQuestionCallback,
+} from '../../application/interactions/pending-interaction-question-recovery.js';
 
 const SLACK_LIMITS = { buttonText: 75, actionValue: 2000 } as const;
 
@@ -52,30 +55,6 @@ export function parseSlackUserQuestionActionValue(
   } catch {
     return null;
   }
-}
-
-function readDurableQuestionCallback(
-  value: unknown,
-): DurableQuestionCallback | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const callback = value as Record<string, unknown>;
-  const scope = callback.scope;
-  if (!scope || typeof scope !== 'object' || Array.isArray(scope)) return null;
-  const parsedScope = scope as Record<string, unknown>;
-  if (
-    typeof callback.providerAlias !== 'string' ||
-    !callback.providerAlias ||
-    !Number.isInteger(callback.questionIndex) ||
-    typeof parsedScope.appId !== 'string' ||
-    !parsedScope.appId ||
-    typeof parsedScope.sourceAgentFolder !== 'string' ||
-    !parsedScope.sourceAgentFolder ||
-    typeof parsedScope.interactionId !== 'string' ||
-    !parsedScope.interactionId
-  ) {
-    return null;
-  }
-  return callback as unknown as DurableQuestionCallback;
 }
 
 /** Question + options, without the header (the header gets its own block). */

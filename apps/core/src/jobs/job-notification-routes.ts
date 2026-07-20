@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 
 import type {
+  Job,
   JobExecutionContext,
   JobNotificationRoute,
 } from '../domain/types.js';
@@ -18,26 +19,10 @@ export interface NormalizedJobNotificationRoute {
   label: string;
 }
 
-export interface JobNotificationRouteSource {
-  notification_routes?: readonly JobNotificationRoute[] | null;
-  notificationRoutes?: readonly JobNotificationRoute[] | null;
-  execution_context?: JobExecutionContext | null;
-  executionContext?: JobExecutionContext | null;
-}
-
 export function resolveJobNotificationRoutes(
-  source: JobNotificationRouteSource,
+  source: Pick<Job, 'notification_routes'>,
 ): NormalizedJobNotificationRoute[] {
-  const explicitRoutes = dedupeRoutes(
-    normalizeRoutes(
-      source.notification_routes ?? source.notificationRoutes ?? [],
-    ),
-  );
-  if (explicitRoutes.length > 0) return explicitRoutes;
-  const fallback = executionContextToRoute(
-    source.execution_context ?? source.executionContext,
-  );
-  return fallback ? [fallback] : [];
+  return dedupeRoutes(normalizeRoutes(source.notification_routes));
 }
 
 export function profileIdForJobNotificationPhase(
@@ -80,6 +65,7 @@ export function buildCanonicalJobLifecycleTarget(input: {
   threadId?: string | null;
   workspaceKey: string;
   sessionId?: string | null;
+  providerAccountId?: string | null;
   label?: string;
 }): {
   executionContext: JobExecutionContext;
@@ -93,6 +79,7 @@ export function buildCanonicalJobLifecycleTarget(input: {
     );
   }
   const threadId = normalizeOptional(input.threadId) ?? null;
+  const providerAccountId = normalizeOptional(input.providerAccountId);
   const executionContext: JobExecutionContext = {
     conversationJid,
     threadId,
@@ -105,6 +92,7 @@ export function buildCanonicalJobLifecycleTarget(input: {
       {
         conversationJid,
         threadId,
+        ...(providerAccountId ? { providerAccountId } : {}),
         label: normalizeOptional(input.label) ?? 'Primary',
       },
     ],
@@ -140,19 +128,6 @@ function dedupeRoutes(
     unique.push(route);
   }
   return unique;
-}
-
-function executionContextToRoute(
-  context: JobExecutionContext | null | undefined,
-): NormalizedJobNotificationRoute | null {
-  if (!context) return null;
-  const conversationJid = normalizeOptional(context.conversationJid);
-  if (!conversationJid) return null;
-  return {
-    conversationJid,
-    threadId: normalizeOptional(context.threadId) ?? null,
-    label: 'Primary',
-  };
 }
 
 function normalizeOptional(value: unknown): string | undefined {

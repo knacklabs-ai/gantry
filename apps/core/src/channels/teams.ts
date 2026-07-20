@@ -66,8 +66,8 @@ import { StreamResetEpochs } from './stream-reset-epochs.js';
 import {
   DurableInteractionPersistenceError,
   recordDurableQuestionAnswerProgress,
-  type DurableQuestionCallback,
 } from '../application/interactions/pending-interaction-durability.js';
+import type { DurableQuestionCallback } from '../application/interactions/pending-interaction-question-recovery.js';
 
 export {
   TEAMS_ADAPTIVE_CARD_CONTENT_TYPE,

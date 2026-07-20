@@ -206,6 +206,7 @@ export async function registerSystemJobs(
       .map(({ jid, group }) => [
         group.folder,
         jid,
+        group.providerAccountId ?? '',
         group.conversationKind ?? 'channel',
       ])
       .sort(([leftFolder, leftJid], [rightFolder, rightJid]) =>
@@ -224,14 +225,19 @@ export async function registerSystemJobs(
     for (const { jid, group } of registrations) {
       const jobId = systemDreamingJobId({ folder: group.folder, jid });
       const existing = await deps.opsRepository.getJobById(jobId);
+      const target = buildCanonicalJobLifecycleTarget({
+        conversationJid: jid,
+        workspaceKey: group.folder,
+        threadId: null,
+        providerAccountId: group.providerAccountId,
+        label: 'primary',
+      });
       if (existing?.status === 'dead_lettered') {
-        // Dead-lettered jobs are not revived here, but silent must still track
-        // the current alerts setting so a later resume reactivates the job
-        // with the correct value (the resume path itself never re-stamps it).
-        const desiredSilent = !RUNTIME_MEMORY_DREAMING_ALERTS_ENABLED;
-        if (existing.silent !== desiredSilent) {
-          await deps.opsRepository.updateJob(jobId, { silent: desiredSilent });
-        }
+        await deps.opsRepository.updateJob(jobId, {
+          execution_context: target.executionContext,
+          notification_routes: target.notificationRoutes,
+          silent: !RUNTIME_MEMORY_DREAMING_ALERTS_ENABLED,
+        });
         continue;
       }
       const computedNextRun = computeNextJobRun(
@@ -243,12 +249,6 @@ export async function registerSystemJobs(
       );
       const nextRun = existing?.next_run || computedNextRun;
       const desiredStatus = existing?.status === 'paused' ? 'paused' : 'active';
-      const target = buildCanonicalJobLifecycleTarget({
-        conversationJid: jid,
-        workspaceKey: group.folder,
-        threadId: null,
-        label: 'primary',
-      });
 
       const systemJob = {
         id: jobId,
@@ -282,17 +282,18 @@ export async function registerSystemJobs(
   const primary = registrations[0];
   if (RUNTIME_MEMORY_DREAMING_ENABLED && primary) {
     const existing = await deps.opsRepository.getJobById(BRAIN_DREAMING_JOB_ID);
+    const target = buildCanonicalJobLifecycleTarget({
+      conversationJid: primary.jid,
+      workspaceKey: primary.group.folder,
+      threadId: null,
+      providerAccountId: primary.group.providerAccountId,
+      label: 'primary',
+    });
     if (existing?.status !== 'dead_lettered') {
       const computedNextRun = computeNextJobRun(
         { schedule_type: 'cron', schedule_value: MEMORY_DREAMING_CRON },
         nowIso,
       );
-      const target = buildCanonicalJobLifecycleTarget({
-        conversationJid: primary.jid,
-        workspaceKey: primary.group.folder,
-        threadId: null,
-        label: 'primary',
-      });
       await deps.opsRepository.upsertJob({
         id: BRAIN_DREAMING_JOB_ID,
         name: 'Brain Dreaming',
@@ -314,6 +315,12 @@ export async function registerSystemJobs(
       } as unknown as Parameters<
         SchedulerDependencies['opsRepository']['upsertJob']
       >[0]);
+    } else {
+      await deps.opsRepository.updateJob(BRAIN_DREAMING_JOB_ID, {
+        execution_context: target.executionContext,
+        notification_routes: target.notificationRoutes,
+        silent: true,
+      });
     }
   }
 
@@ -321,17 +328,18 @@ export async function registerSystemJobs(
     const existing = await deps.opsRepository.getJobById(
       MEMORY_EMBEDDING_BACKFILL_JOB_ID,
     );
+    const target = buildCanonicalJobLifecycleTarget({
+      conversationJid: primary.jid,
+      workspaceKey: primary.group.folder,
+      threadId: null,
+      providerAccountId: primary.group.providerAccountId,
+      label: 'primary',
+    });
     if (existing?.status !== 'dead_lettered') {
       const computedNextRun = computeNextJobRun(
         { schedule_type: 'cron', schedule_value: MEMORY_BACKFILL_CRON },
         nowIso,
       );
-      const target = buildCanonicalJobLifecycleTarget({
-        conversationJid: primary.jid,
-        workspaceKey: primary.group.folder,
-        threadId: null,
-        label: 'primary',
-      });
       const backfillJob = {
         id: MEMORY_EMBEDDING_BACKFILL_JOB_ID,
         name: 'Memory Embedding Backfill',
@@ -356,6 +364,12 @@ export async function registerSystemJobs(
           SchedulerDependencies['opsRepository']['upsertJob']
         >[0],
       );
+    } else {
+      await deps.opsRepository.updateJob(MEMORY_EMBEDDING_BACKFILL_JOB_ID, {
+        execution_context: target.executionContext,
+        notification_routes: target.notificationRoutes,
+        silent: true,
+      });
     }
 
     const existingBrain = await deps.opsRepository.getJobById(
@@ -366,12 +380,6 @@ export async function registerSystemJobs(
         { schedule_type: 'cron', schedule_value: MEMORY_BACKFILL_CRON },
         nowIso,
       );
-      const target = buildCanonicalJobLifecycleTarget({
-        conversationJid: primary.jid,
-        workspaceKey: primary.group.folder,
-        threadId: null,
-        label: 'primary',
-      });
       const brainBackfillJob = {
         id: BRAIN_EMBEDDING_BACKFILL_JOB_ID,
         name: 'Brain Embedding Backfill',
@@ -396,6 +404,12 @@ export async function registerSystemJobs(
           SchedulerDependencies['opsRepository']['upsertJob']
         >[0],
       );
+    } else {
+      await deps.opsRepository.updateJob(BRAIN_EMBEDDING_BACKFILL_JOB_ID, {
+        execution_context: target.executionContext,
+        notification_routes: target.notificationRoutes,
+        silent: true,
+      });
     }
   }
 

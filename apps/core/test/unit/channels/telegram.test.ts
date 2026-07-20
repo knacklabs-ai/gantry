@@ -920,11 +920,6 @@ function permissionClaimRepository(
         return true;
       },
     ),
-    listPendingInteractions: vi.fn(async () =>
-      interactions
-        .map(normalize)
-        .filter((interaction) => interaction.status === 'pending'),
-    ),
     updatePendingInteractionPayload: vi.fn((input) =>
       updatePendingInteractionPayload(interactions, input),
     ),
@@ -1014,9 +1009,6 @@ describe('TelegramChannel', () => {
       repository: {
         ...permissionClaimRepository(
           telegramPromptBindingBehavior.interactions,
-        ),
-        listPendingInteractions: vi.fn(
-          async () => telegramPromptBindingBehavior.interactions,
         ),
         updatePendingInteractionPayload: vi.fn((input) =>
           updatePendingInteractionPayload(
@@ -4583,7 +4575,6 @@ describe('TelegramChannel', () => {
       configurePendingInteractionDurability({
         repository: {
           ...claims,
-          listPendingInteractions: vi.fn(async () => interactions),
           updatePendingInteractionPayload: vi.fn((input) =>
             updatePendingInteractionPayload(interactions, input),
           ),
@@ -4802,7 +4793,6 @@ describe('TelegramChannel', () => {
       configurePendingInteractionDurability({
         repository: {
           ...permissionClaimRepository(requests),
-          listPendingInteractions: vi.fn(async () => requests),
           updatePendingInteractionPayload: vi.fn((input) =>
             updatePendingInteractionPayload(requests, input),
           ),
@@ -4879,7 +4869,6 @@ describe('TelegramChannel', () => {
       configurePendingInteractionDurability({
         repository: {
           ...permissionClaimRepository(requests),
-          listPendingInteractions: vi.fn(async () => requests),
           updatePendingInteractionPayload: vi.fn((input) =>
             updatePendingInteractionPayload(requests, input),
           ),
@@ -4983,7 +4972,6 @@ describe('TelegramChannel', () => {
       configurePendingInteractionDurability({
         repository: {
           ...claims,
-          listPendingInteractions: vi.fn(async () => requests),
           updatePendingInteractionPayload: vi.fn((input) =>
             updatePendingInteractionPayload(requests, input),
           ),
@@ -5109,7 +5097,6 @@ describe('TelegramChannel', () => {
       }));
       const repository = {
         ...permissionClaimRepository(requests),
-        listPendingInteractions: vi.fn(async () => requests),
         updatePendingInteractionPayload: vi.fn((input) =>
           updatePendingInteractionPayload(requests, input),
         ),
@@ -5231,7 +5218,6 @@ describe('TelegramChannel', () => {
       const claims = permissionClaimRepository(requests);
       const repository = {
         ...claims,
-        listPendingInteractions: vi.fn(async () => requests),
         updatePendingInteractionPayload: vi.fn((input) =>
           updatePendingInteractionPayload(requests, input),
         ),
@@ -6410,7 +6396,6 @@ describe('TelegramChannel', () => {
         const interactions = telegramPromptBindingBehavior.interactions;
         const repository = {
           ...permissionClaimRepository(interactions),
-          listPendingInteractions: vi.fn(async () => interactions),
           updatePendingInteractionPayload: vi.fn((input) =>
             updatePendingInteractionPayload(interactions, input),
           ),

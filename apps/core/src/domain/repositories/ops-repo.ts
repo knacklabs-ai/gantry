@@ -37,8 +37,8 @@ export interface JobUpsertInput {
   lease_run_id?: string | null;
   lease_expires_at?: string | null;
   pause_reason?: string | null;
-  execution_context?: Job['execution_context'];
-  notification_routes?: Job['notification_routes'];
+  execution_context: Job['execution_context'];
+  notification_routes: Job['notification_routes'];
   access_requirements?: Job['access_requirements'];
   setup_state?: Job['setup_state'];
   recovery_intent?: Job['recovery_intent'];

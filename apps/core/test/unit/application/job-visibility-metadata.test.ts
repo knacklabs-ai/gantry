@@ -50,6 +50,14 @@ function makeJob(overrides: Partial<Job> = {}): Job {
     lease_run_id: null,
     lease_expires_at: null,
     pause_reason: null,
+    execution_context: {
+      conversationJid: 'tg:team',
+      threadId: null,
+      workspaceKey: 'tg:team',
+    },
+    notification_routes: [
+      { conversationJid: 'tg:team', threadId: null, label: 'primary' },
+    ],
     ...overrides,
   };
 }
@@ -117,6 +125,15 @@ describe('job visibility metadata', () => {
     const metadata = await buildJobVisibilityMetadata({
       job: makeJob({
         session_id: 'session-app-one',
+        workspace_key: 'legacy-mirror',
+        notification_routes: [
+          {
+            conversationJid: 'tg:team',
+            threadId: null,
+            providerAccountId: 'telegram-main',
+            label: 'primary',
+          },
+        ],
       }),
       appId: 'app-one',
       ops: {
@@ -133,6 +150,10 @@ describe('job visibility metadata', () => {
       appId: 'app-one',
       agentId: 'agent:tg:team',
     });
+    expect(metadata.target.workspaceKey).toBe('tg:team');
+    expect(metadata.notificationRoutes[0]?.providerAccountId).toBe(
+      'telegram-main',
+    );
     expect(metadata.toolAccess.inheritedAgentTools).toEqual(['Browser']);
     expect(metadata.toolAccess.effectiveAllowedTools).toEqual(['Browser']);
   });
