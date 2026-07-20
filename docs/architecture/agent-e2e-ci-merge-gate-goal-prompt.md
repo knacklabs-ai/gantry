@@ -141,9 +141,12 @@ capability grant, permission decisions, and the agent turn are ALL driven by API
 calls. For each step assert BOTH the API contract (status code, response shape)
 AND the persisted/runtime effect (settings revision appended, Postgres
 projection, post-restart survival, the turn's actual behavior). Reuse existing
-endpoints; no production-only test routes. Any operation lacking an API is a
-finding: either it gets an API or the gate documents the CLI/desired-state path
-it must use and why.
+endpoints; no production-only test routes. **Any operation lacking an API gets
+the API IMPLEMENTED as part of this lane** (user directive 2026-07-20) — a
+first-class, reviewed, documented endpoint (contracts-first if it needs a public
+DTO, honoring the ponytail Phase-4 collision rules), not a test-only backdoor.
+The gate then consumes the new API like any client. CLI/desired-state
+workarounds are not acceptable substitutes.
 - **Onboarding via API:** create agent + binding via the supported endpoints;
   assert contract + persisted revision + post-restart survival.
 - **Model selection via API:** select the `haiku` alias / default slot / per-agent
@@ -208,6 +211,74 @@ via API against the disposable DB, then tears down. This proves the onboarding +
 model-selection + grant APIs actually work (the API-for-everything directive) and
 catches setup-path regressions — the failure class behind this session's
 incidents. Fully isolated; the small extra per-run time is accepted.
+
+## Isolation guarantee (v3.1, user directive — HARD contract)
+The gate NEVER touches the live local runtime. Every run builds a runtime home
+FROM SCRATCH and destroys it:
+- `GANTRY_HOME` = a fresh temp dir per run (mktemp-style), never `~/gantry`.
+  The harness REFUSES to start (hard assert) if the resolved GANTRY_HOME is the
+  user's real runtime home or if the database URL matches the live `gantry` DB.
+- Fresh disposable Postgres per run (CI service container / local throwaway
+  database or unique schema), migrated from zero. Never the live DB.
+- All runtime secrets (SECRET_ENCRYPTION_KEY, GANTRY_IPC_AUTH_SECRET, control
+  API keys) generated fresh per run — never read from `~/gantry/.env`.
+- Input secrets (E2E_ANTHROPIC_API_KEY, label-gated Slack/Google) come from a
+  gitignored `<repo>/.env.e2e` locally or protected-environment secrets in CI —
+  NOT from any file under `~/gantry`.
+- Full teardown after the run (temp home removed, DB dropped). A failed run
+  leaves its evidence bundle, not a half-alive runtime.
+- (Distinct by design: `scripts/agent-job-smoke.sh` deliberately targets the
+  LIVE runtime for the user-approved KnackLabs live smoke; the CI gate does not.)
+
+## Fixture kit (v3.1 — complete inventory)
+Beyond the MCP test server, the gate needs these test doubles/fixtures:
+- **Attachment fixture:** a small file the agent must SEND during a turn; assert
+  outbound delivery via the #234 workspace-direct path (regression: file-send
+  broke in the 2026-07-20 incident with zero coverage).
+- **Loopback webhook receiver:** asserts job/event webhook delivery fires with
+  the expected payload shape.
+- **Egress fixture pair:** one denylisted hostname + one allowed loopback host;
+  assert denylist block + `egress.connect` attribution records.
+- **Delegation target agent:** a second minimal agent so `AgentDelegation` is
+  exercisable in the all-tools sweep.
+- **Always-failing job fixture:** deterministically drives retry → dead-letter.
+- **Deep-MCP scenario (user, 2026-07-20 — label-gated):** a VENDORED, real
+  published version of `@modelcontextprotocol/server-everything` (exact version
+  pinned by content hash, full dependency closure vendored — no test-time
+  install; runs beside the harness in the correct network namespace).
+  Rationale: gantry is an MCP CLIENT PLATFORM — if it mishandles any MCP
+  capability class a compliant server offers (tools, resources, prompts,
+  sampling, progress, logging, completions), that is a PRODUCT BUG, not a test
+  limitation. The scenario walks every capability class the server advertises;
+  for each: either gantry handles it correctly (asserted behaviorally) or the
+  gate FAILS with a per-capability finding. A deliberate non-support decision
+  must be recorded explicitly in docs (fail-honest), not discovered by users.
+  The in-process echo/get-sum fixture remains the required-gate MCP test
+  (fast, recorded); deep-MCP runs on the label-gated lane.
+- **Inline-lane turn:** one cheap haiku call through the inline runtime / LLM API
+  lane (the second execution path) so both lanes are proven, not just the worker.
+- stdio-MCP transport stays at the integration layer (existing `ipc-mcp-stdio`
+  coverage); the E2E MCP fixture tests Streamable HTTP.
+
+## Memory coverage (v3.1, user directive — was missing)
+- Integration (deterministic, test Postgres): memory write → recall → subject
+  BOUNDARY scoping (person/group/channel isolation — a memory stored for one
+  subject is not recalled for another); retention/dedup behavior as implemented.
+- E2E behavioral (part of the haiku turn): turn 1 states a distinctive fact via
+  API → assert a durable memory record was collected (persisted row + audit, not
+  phrasing); turn 2 asks for it → assert the memory READ occurred and the reply
+  is consistent with recall (behavioral). Post-restart: the memory survives and
+  is still recallable.
+- Job-run memory: after the scheduled-job scenario completes, assert the
+  "collected durable memory after successful job run" path persisted its record.
+
+## Jobs lifecycle coverage (v3.1, user directive — expanded)
+- E2E (real turn): create a job via API → trigger → the run completes → delivery
+  recorded → job health `completed` (the API twin of scripts/agent-job-smoke.sh).
+- Lifecycle via API: pause → resume → trigger; assert state transitions +
+  events. Forced-failure path: a job that always fails exhausts retries →
+  dead-letter state + a clean terminal event (no zombie).
+- Autonomous dead-end regression (below) covers the ungranted-tool case.
 
 ## Regression scenarios — this session's incidents codified (v3, grill)
 Named permanent guards so the failures that motivated this gate can't silently
@@ -367,6 +438,76 @@ command.)
 - Testing not-yet-built behavior (command-name promotion, conversation-scoped
   grants, auto_strict gate-bypass) — those get coverage when the permission lane
   ships them.
+
+## Round-3 outcome → v4 restage plan (2026-07-20)
+Round 3 (`agent-e2e-plan-validation-round3.md`): NOT APPROVED, but the model
+boundary is now FEASIBLE (round-2 blocker resolved; needs launch-posture
+pinning). The remaining work splits into:
+
+### API gaps — RE-ADJUDICATED (user directive: NO test-only APIs)
+Rule: an API is built ONLY if it's justified as product surface on its own; the
+gate never gets an endpoint the product wouldn't want. Round-3's six gaps recut:
+1. **Session targets the onboarded agent — KEEP (it's a BUG FIX, not a new
+   API).** `sessions/ensure` accepts `agentId` and silently drops it — any SDK
+   user talking to "their agent" is actually getting a synthetic folder. Fix the
+   existing route to honor its own contract. Sequence after ponytail Phase 4.
+2. **Permission decision API — DROPPED (user, 2026-07-20).** Permission
+   decisions belong to the human approver (channel buttons) or the
+   auto-classifier; agents only REQUEST. A decide-via-API endpoint would create
+   a new authority surface (key holder approves anything, bypassing the
+   conversation-bound approver). Testing instead drives the REAL paths:
+   auto-classifier decisions at the integration layer; the channel interaction
+   callback (the actual button-resolution path) invoked in-process at the
+   integration layer; the real Slack button in the label-gated channel loop.
+3. **Conversation creation — NOT a new API.** The desired-state/settings import
+   surface already creates conversations + installs; the gate drives that
+   existing surface. If a true gap is proven during implementation, it returns
+   as a product proposal, not a gate workaround.
+4. **Per-agent model mutation — DEFERRED to the model-management lane.** That
+   finalized goal owns model-selection APIs as product. Until it ships, the
+   gate sets the model through the existing desired-state surface.
+5. **Semantic-capability registration — NOT an API.** Capabilities are
+   settings-defined BY DESIGN (settings as source of truth); the gate registers
+   its stub capability through the existing settings/desired-state surface.
+6. **Effective-tool enumeration — internal inspector, not a public API (for
+   now).** The all-tools sweep enumerates from the runtime's own effective-tool
+   computation via test code. If product debuggability wants it exposed later
+   ("what can my agent actually do"), that ships via contracts-first as its own
+   decision.
+Net: ONE bug fix, zero new endpoints. Everything else uses surfaces that exist.
+
+**Testing ladder (user, 2026-07-20):** (1) drive the PUBLIC API where one
+exists; (2) where none exists and none is product-justified, test the SERVICE
+layer underneath in-process at the integration layer (real service + test
+Postgres, no HTTP); (3) NEVER invent an endpoint for testing. Service-layer
+tests still assert the same three layers (contract of the service call,
+persisted effect, runtime behavior).
+
+### Corrections to fold into v4 (mechanical)
+- **All-tools sweep scoping:** classify the effective set into invocation
+  classes (read-only / side-effecting-fixture-backed / authority-lifecycle);
+  the sweep exercises the first two; authority/lifecycle tools are covered by
+  their own scenarios, not blind invocation.
+- **Fixture topology:** the packaged runtime runs in a container — loopback
+  fixtures on the host are unreachable. Pin: fixtures run in-container beside
+  the runtime (or the harness runs on the host network with the container) —
+  choose one topology and specify it.
+- **Image reality:** Chrome and `gog` are NOT in the packaged image. Re-tier:
+  the gog/Sheets real-tier + Browser exercises run in the LOCAL (host) smoke
+  variant; the CI container gate covers them via stub capabilities until the
+  image ships those binaries (media-render lane owns Chrome provisioning).
+- **Slack loop constraint:** gantry ignores bot-authored inbound messages and a
+  bot cannot fake a human button click. The Slack scenario needs a real-user
+  test message pattern or a separately-reviewed signed-callback fixture —
+  re-scope in v4 (possibly manual-assisted, not fully automated).
+- **Regression scenarios:** the MCP-race fix is NOW on main (`c6d175057`);
+  route-loader + receipt fixes land from their lanes. The branch rebases on
+  main before implementing those scenarios; the route-corruption seed uses
+  direct test-DB row insertion (documented exception to API-for-everything —
+  corrupt states are not creatable via APIs by design).
+- gantry-admin prose cleanup (scenario already correct); image-artifact
+  head-SHA verification + stale-artifact rejection + fork-execution contract;
+  budget: pin initial shard timeouts (raise-not-flake rule stays).
 
 ## Validation history
 - Round 1: NOT APPROVED — no credential-free completed turn + matrix drift +

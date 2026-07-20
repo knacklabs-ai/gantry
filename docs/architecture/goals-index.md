@@ -39,23 +39,21 @@ B2 hardening batch.
    4-6; Phases 7-9 (DB baselining + live restamp) LAST, only after explicit user
    cutover go + the live-settings runbook in the branch execution ledger.
    _(worktree `wt-ponytail`, `feature/ponytail-audit`)_
-2. **S3/MinIO file-artifact bytes** — the attach lane's follow-on (attachments
-   shipped as PR #234). Stage 1 (bytes port + `S3FileArtifactBytes` + factory
-   driver switch) in review; then presigned-link Teams delivery, host-side
-   workspace registration, terraform prefix + MinIO CI leg.
-   `artifact-store-s3-goal-prompt.md` _(worktree `wt-attach`, `feature/s3-file-artifacts`)_
-3. **Durable-work primitive** — plan-validation COMPLETE; validated goal doc
-   committed (19-consumer inventory, 9 stages, 20 invariants; fold/don't-fold
-   verdicts guard against over-unification). Implementation starts on user
-   sign-off. `durable-work-primitive-goal-prompt.md`
+2. **S3/MinIO file-artifact bytes** — PROTOCOL DECIDED (user 2026-07-20):
+   pending-state row + upload + verified commit + TTL janitor for orphans. Lane
+   stays LOW PRIORITY (live uses local; opt-in path) — resume with that protocol
+   when prioritized. `artifact-store-s3-goal-prompt.md`
+   _(worktree `wt-attach`, `feature/s3-file-artifacts`)_
+3. **Durable-work primitive** — DEFERRED until ponytail ships (user
+   2026-07-20): it refactors jobs/interactions state that Phases 5-6 delete/move.
+   Becomes the FIRST post-cutover lane on the settled tree. Plan-validation
+   COMPLETE. `durable-work-primitive-goal-prompt.md`
    _(worktree `wt-convo`, `feature/durable-work-primitive`)_
-4. **Media render capability + environment-facts guidance** — user-locked
-   2026-07-20 (grill): out-of-box in-sandbox video/screenshot rendering
-   (pinned chrome-headless-shell single-process recipe, empirically proven
-   under srt), full pre-provision at setup, `media.render` semantic capability
-   + bundled skill, generated environment-facts guidance section. Starts
-   immediately in parallel (user accepts contract-surface merge risk vs
-   ponytail Phase 4+). `media-render-goal-prompt.md`
+4. **Media render capability + environment-facts guidance** — V4 SHAPE LOCKED
+   (user 2026-07-20): FACADE-PREFLIGHT v1 — provisioner + facade + selected
+   skill + env-facts; capability/inventory/admission machinery CUT (3 rounds
+   NOT-SAFE → YAGNI). One focused validation round on the v4 delta, then
+   implementation queues after the E2E gate lane. `media-render-goal-prompt.md`
    _(worktree `wt-media`, `feature/media-render-capability`)_
 5. **Route-loader dedup + conversationId leak (incident closeout)** — the
    durable fix behind the 2026-07-20 routing incident: loader imports every
@@ -91,15 +89,11 @@ commit. Merge only on explicit user "merge NNN".
 **Next — PRIORITIZED by user 2026-07-19 ("UX improvements and latency of agent
 messages as next, that's important"):**
 
-4. **Messaging hot-path latency + ambient liveness + dead-plumbing cleanup** —
-   **NOW A RUNNING LANE** (plan-validation in flight on `feature/messaging-hotpath`,
-   wt-convo). SCOPED from two parallel audits (Codex latency/over-engineering +
-   Fable UX). Cuts time-to-first-reply (history-hydration watermark, ~20 redundant
-   per-message upserts, double message-fetch/context-hydration) and revives dead
-   liveness plumbing as AMBIENT-ONLY signals (heartbeat card edit, typing/ack
-   parity, reaction flips) under the no-clutter rule. Net deletion. Absorbs the
-   deepagents/Anthropic-SDK model-client latency audit findings (prompt-caching,
-   TTFT, streaming) as they land. `messaging-hotpath-and-liveness-goal-prompt.md`
+4. **Messaging hot-path** — Stages 1-2 SHIPPED (#235 cleanup, #236 latency:
+   first-token piping, cache parity, SDK off critical path). **Stage 3 CLOSED
+   (user 2026-07-20, YAGNI)**: hydration watermark / upsert-collapse /
+   double-fetch / liveness-heartbeat contracts stay unbuilt — reopen ONLY on a
+   real latency/liveness complaint. `messaging-hotpath-and-liveness-goal-prompt.md`
 5. **Model management: unify then UX** — FINALIZED 2026-07-19; starts when the
    ponytail lane closes (shares the settings parser/renderer surface). 8 decisions
    locked (aggressive knob collapse, sticky conversation switch via
