@@ -63,7 +63,7 @@ const ExactToolTargetSchema = z.object({
     .string()
     .min(1)
     .describe(
-      'Exact durable Gantry tool rule, such as AgentDelegation or mcp__gantry__request_settings_update. For connected third-party MCP tools, use an exact mcp__server__tool name only for one-off temporary access when reviewed capability bindings are stale. Use run_command for scoped commands.',
+      'Exact durable Gantry tool rule, such as AgentDelegation or mcp__gantry__request_settings_update. Use run_command for scoped commands.',
     ),
 });
 
@@ -82,7 +82,7 @@ export function registerAccessRequestTool(
     [
       'Request agent access for review. Use this as the normal path when an action is missing.',
       'target.kind=capability requests an already-reviewed semantic capability by id.',
-      'target.kind=tool requests an exact durable Gantry tool rule such as AgentDelegation or mcp__gantry__request_settings_update, or one-off temporary access to an exact connected third-party MCP tool such as mcp__server__tool when its reviewed semantic capability binding is stale.',
+      'target.kind=tool requests an exact durable Gantry tool rule such as AgentDelegation or mcp__gantry__request_settings_update.',
       'target.kind=run_command requests a scoped temporary exact-command fallback such as "npm test *" when no reviewed capability fits.',
       'Set temporaryOnly=true for one-off transient access; leave it false for durable grants.',
       'Source setup and raw skill, MCP, CLI, browser, or network details are review metadata, not durable authority.',
@@ -192,7 +192,7 @@ export function registerAccessRequestTool(
                   type: 'text' as const,
                   text: [
                     `No exact requestable Gantry tool matches "${target.name}".`,
-                    'Use target.kind=tool only for exact Gantry facade tools such as AgentDelegation, exact Gantry admin tools such as mcp__gantry__request_settings_update, or one-off exact connected third-party MCP tools such as mcp__server__tool.',
+                    'Use target.kind=tool only for exact Gantry facade tools such as AgentDelegation or exact Gantry admin tools such as mcp__gantry__request_settings_update.',
                     'Use target.kind=capability for reviewed semantic capability ids, and target.kind=run_command for scoped command access.',
                   ].join('\n'),
                 },
@@ -300,17 +300,11 @@ function submitExactToolRequest(input: {
     permissionKind: 'tool',
     capabilityRequestSource: 'request_access',
     toolName: input.toolName,
-    temporaryOnly: isThirdPartyMcpFullToolName(input.toolName)
-      ? true
-      : (input.args.temporaryOnly ?? false),
+    temporaryOnly: input.args.temporaryOnly ?? false,
     broadAccess: input.args.broadAccess,
     riskClass: input.args.riskClass,
     reason: input.args.reason,
   });
-}
-
-function isThirdPartyMcpFullToolName(value: string): boolean {
-  return /^mcp__(?!gantry__)[A-Za-z0-9._-]+__[A-Za-z0-9._-]+$/.test(value);
 }
 
 function normalizeExactRequestableToolName(value: string): string | null {
@@ -320,7 +314,6 @@ function normalizeExactRequestableToolName(value: string): string | null {
     return 'AgentDelegation';
   }
   if (isAdminMcpToolFullName(trimmed)) return trimmed;
-  if (isThirdPartyMcpFullToolName(trimmed)) return trimmed;
   if (isAdminMcpToolName(trimmed)) return adminMcpToolFullName(trimmed);
   if (isGantryFacadeExactToolName(trimmed)) {
     const validation = validateDurableAccessRule(trimmed);

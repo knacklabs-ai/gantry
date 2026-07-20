@@ -112,13 +112,13 @@ describe('ToolExecutionPolicyService', () => {
     ).toEqual(
       expect.objectContaining({
         status: 'deny',
-        recoveryAction: expect.stringContaining('"kind": "tool"'),
+        recoveryAction: expect.stringContaining('reviewed admin capability'),
       }),
     );
     expect(
       policy.evaluate({ request, autonomousAllowedToolRules: [] })
         .recoveryAction,
-    ).toContain('mcp__gantry__service_restart');
+    ).toContain('exact tool grants are not accepted');
   });
 
   it('denies protected capability file targets through canonical policy', () => {

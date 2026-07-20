@@ -33,20 +33,8 @@ function escapeRegex(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-function normalizeBotMentionTrigger(
-  text: string,
-  input: { botUserId: string; trigger: string },
-): string {
-  const mentionPattern = new RegExp(
-    `<@${escapeRegex(input.botUserId)}>(?:[,:])?\\s*`,
-    'gi',
-  );
-  if (!mentionPattern.test(text)) return text;
-  const withoutMention = text
-    .replace(mentionPattern, ' ')
-    .trim()
-    .replace(/\s+/g, ' ');
-  return `${input.trigger}${withoutMention ? ` ${withoutMention}` : ''}`;
+function leadingBotMentionPattern(botUserId: string): RegExp {
+  return new RegExp(`^<@${escapeRegex(botUserId)}>[,:]?\\s*`);
 }
 function dedupeRouteAliases(matches: SlackRouteMatch[]): SlackRouteMatch[] {
   const byIdentity = new Map<
@@ -167,15 +155,12 @@ export async function ingestSlackMessage(input: {
   const rawContent = enriched.text;
   const content =
     input.botUserId && singleRoute
-      ? normalizeBotMentionTrigger(rawContent, {
-          botUserId: input.botUserId,
-          trigger: triggerForRoute(singleRoute),
-        })
+      ? rawContent.replace(
+          leadingBotMentionPattern(input.botUserId),
+          `${triggerForRoute(singleRoute)} `,
+        )
       : input.botUserId && routeMatches.length > 1
-        ? rawContent.replace(
-            new RegExp(`^<@${escapeRegex(input.botUserId)}>\\s*`),
-            '',
-          )
+        ? rawContent.replace(leadingBotMentionPattern(input.botUserId), '')
         : rawContent;
   if (!content) return;
   const triggeredRoutes =

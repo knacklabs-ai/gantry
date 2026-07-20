@@ -1661,7 +1661,7 @@ describe('Slack channel', () => {
     );
   });
 
-  it('promotes inline authenticated Slack bot mentions to the route trigger', async () => {
+  it('strips only the leading Slack bot invocation and preserves the rest of the message', async () => {
     const opts = createOpts();
     opts.conversationRoutes.mockReturnValue({
       [makeAgentThreadQueueKey('sl:C123', null, null, 'slack_default')]: {
@@ -1683,13 +1683,27 @@ describe('Slack channel', () => {
         text: 'yes <@U_BOT> you can request permission',
       },
     });
+    await handlers[0]({
+      event: {
+        channel: 'C123',
+        ts: '1710000000.000400',
+        user: 'U123',
+        text: '<@U_BOT>: deploy  now',
+      },
+    });
 
-    expect(opts.onMessage).toHaveBeenCalledWith(
+    expect(opts.onMessage).toHaveBeenNthCalledWith(
+      1,
       'sl:C123',
       expect.objectContaining({
-        content: '@Gantry yes you can request permission',
+        content: 'yes <@U_BOT> you can request permission',
         thread_id: '1710000000.000100',
       }),
+    );
+    expect(opts.onMessage).toHaveBeenNthCalledWith(
+      2,
+      'sl:C123',
+      expect.objectContaining({ content: '@Gantry deploy  now' }),
     );
   });
 

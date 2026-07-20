@@ -97,7 +97,6 @@ const expectedControlRoutes = [
   'POST /v1/mcp-servers',
   'GET /v1/mcp-servers/{serverId}',
   'POST /v1/mcp-servers/{serverId}/disable',
-  'POST /v1/mcp-servers/{serverId}/sync-capability',
   'POST /v1/mcp-servers/{serverId}/test',
   'GET /v1/memory',
   'POST /v1/memory',
