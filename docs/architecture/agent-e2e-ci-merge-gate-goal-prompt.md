@@ -151,6 +151,27 @@ it must use and why.
   routes to the selected model (evidence alias/route/provider/harness matches) —
   catches model-API contract drift.
 
+## Channel loop via a dedicated test Slack app (v3, user offer — label-gated)
+A dedicated Slack app + test workspace lets the gate test the FULL channel loop,
+not just the Control API turn: inbound Slack message → agent turn → outbound
+Slack delivery, plus the interactive permission-approval block rendering + the
+approve/deny callback path. This upgrades the previously-deferred channel row.
+Constraints:
+- **Label-gated, NOT the always-required gate.** Slack API availability, rate
+  limits, and socket-mode connect time make it too flaky to block every routine
+  PR. It runs on `live-agent-e2e`-labeled (risky) PRs alongside the model matrix,
+  or on a schedule — never gating a docs/typo PR.
+- Credentials (bot/app tokens) = protected-environment secrets, never exposed to
+  fork-PR code, same trust boundary as model creds.
+- Scenario: post a message to a dedicated test channel via the Slack API → assert
+  the agent's outbound reply lands in-channel (message + any attachment) → trigger
+  a permission-requiring tool → assert the approval BLOCK renders (Slack
+  header/context blocks) → drive the approve callback via the Slack API → assert
+  the tool proceeds + audit records the decision. Behavioral (assert the delivered
+  block structure + callback effect), not exact copy.
+- Isolated: a dedicated app/workspace/channel so runs never touch real user
+  conversations; each run uses a fresh thread and cleans up.
+
 ## Agent exercises ALL its tools (v3, user directive)
 The real-model turn must prove the agent can actually USE every tool available to
 it, not just one. After onboarding + granting the full tool set via API (skills,
@@ -164,6 +185,46 @@ runtime. This is the comprehensive "the agent can use all its tools" proof —
 behavioral (assert the call + effect), not exact reply text. Enumerate the
 agent's effective tool set from the API (its granted/effective tools) so the
 exercise stays in sync as tools are added.
+
+## External dependency tiers (v3, grill)
+The all-tools exercise can't call every real backend without flaking. Tier it:
+- **REAL (gate-owned test accounts, protected-environment secrets):** the model
+  (`haiku`), the dedicated test Slack app, and ONE throwaway Google Sheet for the
+  `gog`/sheets capability. These prove real integrations end to end — the exact
+  class the KnackLabs job needed (gog auth + real Sheets write).
+- **STUB (loopback):** every other external tool — arbitrary capabilities,
+  third-party MCP — hits a loopback stub that asserts the CALL shape + args (proves
+  the agent can INVOKE the tool), not the remote effect. Keeps the gate reliable.
+- **Browser:** exercise against a loopback static page (real Chrome via the host
+  browser capability, no external web) — proves the browser tool path without
+  external-web flakiness.
+A tool is "exercised" if it was invoked with correct args and its
+result/stub-response + audit recorded; only the REAL tier also asserts the remote
+effect.
+
+## Fresh onboarding per run (v3, grill)
+Every gate run creates a NEW agent + conversation binding + tool/capability grants
+via API against the disposable DB, then tears down. This proves the onboarding +
+model-selection + grant APIs actually work (the API-for-everything directive) and
+catches setup-path regressions — the failure class behind this session's
+incidents. Fully isolated; the small extra per-run time is accepted.
+
+## Regression scenarios — this session's incidents codified (v3, grill)
+Named permanent guards so the failures that motivated this gate can't silently
+return (each maps to a fix landed/landing this session):
+- **MCP-readiness race:** a job starting under slow SDK init must NOT hard-fail —
+  transient `pending`/`connecting` tolerated, only terminal `failed`/`needs-auth`/
+  `disabled` fails (fix: `mcp-server-validation.ts` terminal-status set).
+- **Route-loader corruption:** divergent-`conversationId` rows must still load —
+  derive-canonical-on-read (no throw), dedup keeps the qualified route (fix:
+  `canonical-binding-ops-service.ts` dedup + `bindingRowToGroup` derive).
+- **Autonomous tool dead-end:** a scheduled job needing an ungranted tool surfaces
+  cleanly (setup-required / clear terminal outcome), not a mid-run death on an
+  unanswerable permission prompt.
+- **Permission-receipt silence:** allow-for-future posts NO chat receipt (matches
+  allow-once) (fix: `ipc-interaction-processing.ts`).
+Most can run at the integration layer (fast, deterministic); the MCP-race one
+needs the packaged real-turn path.
 
 ## Packaged-runtime E2E proofs (thin, real image + real haiku turn)
 Typed `AgentE2EScenario` + `AgentE2EEvidence` under `apps/core/test/agent-e2e/`.
@@ -274,7 +335,7 @@ command.)
 | SDK/contracts | Unchanged by design | Existing clients reused; new types test-internal. |
 | CLI | Unchanged by design | Gate is API-driven; CLI unchanged. |
 | Gantry MCP/admin tools | Read-only/observable | `admin_permission_list` exercised (gantry-admin NOT installed — reserved name). |
-| Channel/provider adapters | Providers observable; channels deferred | Model harness(es) tested; channel UI/approval out of gate. |
+| Channel/provider adapters | Providers observable; Slack channel loop label-gated | Model harness(es) tested every PR; the full Slack inbound→turn→outbound + approval-block loop runs on labeled PRs via a dedicated test Slack app. |
 | CI workflow / GitHub ruleset | Changed | New workflow, path-map, aggregator, branch-protection activation; model-credential protected-environment secret. |
 | Image provenance | Changed | Immutable artifact handoff bound to head SHA (`docker save`→upload→download→load). No image content change. |
 | Docs/prompts | Changed | This goal prompt + CI/scenario/evidence docs. |
