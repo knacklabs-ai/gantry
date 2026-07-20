@@ -20,6 +20,8 @@
 // PRs, so the suite self-skips) AND GANTRY_TEST_DATABASE_URL (throwaway admin
 // Postgres, same as the hermetic lane).
 
+import fs from 'node:fs';
+import { globSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -82,14 +84,21 @@ maybeDescribe('agent-e2e haiku turn (real model, behavioral)', () => {
   afterAll(async () => {
     if (evidence && harness) {
       if (sawFailure) {
-        const tail = redactText(
-          harness.logs().slice(-12000),
-          harness.secrets.concat(apiKey ? [apiKey] : []),
-        );
+        const secrets = harness.secrets.concat(apiKey ? [apiKey] : []);
+        const tail = redactText(harness.logs().slice(-12000), secrets);
         evidence.evidence.redactedFailure = tail.slice(-4000);
         // CI keeps only test output, not the disposable home — surface the
         // runtime log tail where the failed job log can show it.
         console.error(`[haiku-turn] runtime log tail on failure:\n${tail}`);
+        for (const agentLog of globSync(
+          path.join(harness.home, 'agents', '*', 'logs', '*.log'),
+        )) {
+          const body = fs.readFileSync(agentLog, 'utf8');
+          console.error(
+            `[haiku-turn] ${path.basename(agentLog)} tail:\n` +
+              redactText(body.slice(-8000), secrets),
+          );
+        }
       }
       evidence.write(
         process.env.AGENT_E2E_EVIDENCE_DIR ??

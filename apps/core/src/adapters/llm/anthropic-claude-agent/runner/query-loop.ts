@@ -389,6 +389,9 @@ export async function runQuery(
       allowedTools: [...capabilities.allowedTools],
       disallowedTools: [...capabilities.disallowedTools],
       env: isolatedSdkEnv,
+      // Without this the subprocess's own stderr is lost and startup failures
+      // surface only as "Claude Code process exited with code 1".
+      stderr: (data: string) => log(`[claude-code stderr] ${data}`),
       ...(claudeCodeExecutable
         ? { pathToClaudeCodeExecutable: claudeCodeExecutable }
         : {}),
