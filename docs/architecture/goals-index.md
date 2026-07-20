@@ -75,6 +75,14 @@ B2 hardening batch.
    `publishGatewayUseAudit` has thrown ~98× since 2026-07-04 (WARN-swallowed);
    durable credential/model-usage audit silently not persisting. Fix the insert
    + add a failure counter so silent audit loss can't hide. Not yet scoped.
+8. **Agent E2E CI merge gate** — grill-scoped 2026-07-20, full build one goal.
+   Packaged real-image runtime + real agent turn + evidence artifacts; wire the
+   omitted `test:integration:postgres` into CI; GRANULAR permission + capability
+   matrices at the integration layer (dedup existing tests) + thin real-turn E2E
+   proofs; skill (internal-comms) + MCP (everything server) fixtures; path-map
+   policy classifier with `e2e-reviewed` override; hermetic always-required +
+   label-gated live model matrix; `agent-e2e-gate` required check. i-have-adhd
+   hard-excluded. `agent-e2e-ci-merge-gate-goal-prompt.md` — plan-validation next.
 
 Per-lane loop: codex lands → independent verify (typecheck + FULL unit +
 throwaway-DB integration when schema touched) → local autoreview to clean →
