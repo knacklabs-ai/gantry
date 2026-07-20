@@ -1,6 +1,21 @@
 # Media render capability + environment-facts guidance — goal prompt
 
-Status: RESTAGED v3 (2026-07-20) after plan-validation rounds 1 and 2 — see
+Status: **V4 SHAPE LOCKED (user, 2026-07-20): FACADE-PREFLIGHT v1.** Three
+validation rounds all failed on Stage 3's capability/inventory/admission
+machinery — so v1 CUTS it entirely. Ships: setup provisioner (browser + ffmpeg +
+warm template) + the `media-render` facade + the skill (durably selected for new
+agents via the existing reviewed-skill path) + env-facts honesty. The facade
+PREFLIGHTS the toolchain itself at invocation and fails honestly; doctor and
+env-facts consult the same small inspector. CUT from v1: semantic-capability
+registration, admission preflight, worker advertisement, durable capability
+selection — return only if a second provisioned capability ever needs them
+(YAGNI). Stages 1 (sandbox/env plumbing, HOME-rewrite guard), 2 (provisioner,
+SAFE at round 2), 4 (skill via SkillService + desired-state), and 5 (env facts)
+survive as staged below with Stage-3 references reduced to the facade's own
+preflight. One focused validation round on the v4 delta before implementation;
+implementation queues after the E2E gate lane.
+
+Prior status: RESTAGED v3 (2026-07-20) after plan-validation rounds 1 and 2 — see
 `media-render-plan-validation.md` (round 1) and
 `media-render-plan-validation-round2.md` (round 2). Round 2 cleared 10 of 13
 round-1 contradictions and marked Stage 2 SAFE; this v3 resolves the surviving
