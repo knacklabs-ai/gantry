@@ -9,6 +9,11 @@ import type {
   GroupProcessingRepository,
 } from './group-processing-types.js';
 
+type MemoryUserIdValue =
+  | string
+  | undefined
+  | (() => Promise<string | undefined>);
+
 export function createGroupProcessingSessionCommandHandlers(input: {
   ops: () => GroupProcessingRepository;
   appId: string;
@@ -17,7 +22,7 @@ export function createGroupProcessingSessionCommandHandlers(input: {
   chatJid: string;
   threadId: string | null;
   defaultScope: 'user' | 'group';
-  memoryUserId?: string;
+  memoryUserId?: MemoryUserIdValue;
   collectMemory?: GroupProcessingDeps['collectSessionMemory'];
   deps: Pick<
     GroupProcessingDeps,

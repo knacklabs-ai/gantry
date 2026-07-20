@@ -40,7 +40,7 @@ export type MemorySubjectRef = z.infer<typeof MemorySubjectRefSchema>;
 export const MemorySearchRequestSchema = z.object({
   appId: z.string().optional(),
   agentId: z.string().optional(),
-  userId: z.string().optional(),
+  personId: z.string().optional(),
   groupId: z.string().optional(),
   channelId: z.string().optional(),
   conversationId: z.string().optional(),
@@ -60,7 +60,7 @@ export const MemoryItemResponseSchema = z.object({
   agentId: z.string().nullable().optional(),
   subjectType: MemorySubjectTypeSchema.optional(),
   subjectId: z.string().optional(),
-  userId: z.string().nullable().optional(),
+  personId: z.string().nullable().optional(),
   conversationId: z.string().nullable().optional(),
   subject: MemorySubjectRefSchema,
   kind: MemoryKindSchema,
@@ -105,7 +105,7 @@ export const MemoryIpcRequestSchema = z.object({
       appId: z.string().optional(),
       agentId: z.string().optional(),
       threadId: z.string().optional(),
-      userId: z.string().optional(),
+      personId: z.string().optional(),
       defaultScope: z.enum(['user', 'group']).optional(),
     })
     .optional(),

@@ -30,7 +30,6 @@ import {
 } from './runtime-settings-validation.js';
 import type {
   RuntimeSettings,
-  AgentRuntime,
   RuntimeSettingsValidationResult,
 } from './runtime-settings-types.js';
 import { validateReadableAgentToolRule } from '../../shared/agent-tool-references.js';
@@ -463,9 +462,15 @@ export function ensureConfiguredConversationBinding(
 
 function stripProviderPrefix(jid: string, providerId: string): string {
   const provider = getProvider(providerId);
-  return provider && jid.startsWith(provider.jidPrefix)
-    ? jid.slice(provider.jidPrefix.length)
-    : jid;
+  if (!provider) return jid;
+  if (jid.startsWith(provider.jidPrefix)) {
+    return jid.slice(provider.jidPrefix.length);
+  }
+  const providerLabelPrefix = `${provider.id}:`;
+  if (jid.startsWith(providerLabelPrefix)) {
+    return jid.slice(providerLabelPrefix.length);
+  }
+  return jid;
 }
 
 function configuredConversationId(input: {

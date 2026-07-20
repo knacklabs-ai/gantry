@@ -11,6 +11,7 @@ import { PartialMessageDeliveryError } from '@core/domain/messages/partial-deliv
 import { RUNTIME_EVENT_TYPES } from '@core/domain/events/runtime-event-types.js';
 import { buildProviderSessionAccessFingerprint } from '@core/runtime/provider-session-access-fingerprint.js';
 import { createAgentExecutionAdapterRegistry } from '@core/application/agent-execution/agent-execution-adapter-registry.js';
+import { normalizeProviderId } from '@core/channels/provider-registry.js';
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -271,6 +272,13 @@ function makeDeps(
     setGroupThinkingOverride: vi.fn(),
     setGroupPermissionModeOverride: vi.fn(),
     collectSessionMemory: vi.fn().mockResolvedValue({ saved: 0 }),
+    normalizeProviderId,
+    resolvePersonIdentity: vi.fn(async (input) => ({
+      status: 'resolved',
+      personId: `person:${input.externalUserId}`,
+      memoryHydrationEligible: true,
+      verificationStatus: 'verified',
+    })),
     executionAdapter: {
       id: 'anthropic:claude-agent-sdk',
       isMissingProviderSessionError: (error: string | undefined) =>
@@ -1428,15 +1436,18 @@ describe('createGroupProcessor', () => {
       const { processGroupMessages } = createGroupProcessor(deps);
 
       await expect(processGroupMessages('group1@g.us')).resolves.toBe(true);
-      expect(publishRuntimeEvent).toHaveBeenCalledWith(
+      const usageEvent = publishRuntimeEvent.mock.calls
+        .map(([event]) => event)
+        .find((event) => event.eventType === RUNTIME_EVENT_TYPES.MODEL_USAGE);
+      expect(usageEvent).toEqual(
         expect.objectContaining({
           eventType: RUNTIME_EVENT_TYPES.MODEL_USAGE,
-          payload: {
+          payload: expect.objectContaining({
             usage,
             usageEventId: 'usage-event-1',
             modelAlias: 'sonnet',
             providerId: 'test-provider',
-          },
+          }),
         }),
       );
     });
@@ -1470,9 +1481,11 @@ describe('createGroupProcessor', () => {
     });
 
     it('delivers output when normalized model usage publication fails', async () => {
-      const publishRuntimeEvent = vi
-        .fn()
-        .mockRejectedValue(new Error('usage event insert failed'));
+      const publishRuntimeEvent = vi.fn().mockImplementation(async (event) => {
+        if (event.eventType === RUNTIME_EVENT_TYPES.MODEL_USAGE) {
+          throw new Error('usage event insert failed');
+        }
+      });
       const { deps, channel } = setupHappyPath({
         agentOutput: {
           status: 'success',
@@ -1532,11 +1545,13 @@ describe('createGroupProcessor', () => {
           appId: 'app-one',
           agentId: 'agent-one',
           runId: 'run-one',
-          conversationId: 'group1@g.us',
           eventType: 'sandbox.blocked',
           actor: 'runner',
           responseMode: 'none',
-          payload: { phase: 'startup' },
+          payload: {
+            phase: 'startup',
+            conversationJid: 'group1@g.us',
+          },
         }),
       );
     });
@@ -1577,7 +1592,11 @@ describe('createGroupProcessor', () => {
       const result = await processGroupMessages('group1@g.us');
 
       expect(result).toBe(false);
-      expect(publishRuntimeEvent).toHaveBeenCalledTimes(2);
+      expect(
+        publishRuntimeEvent.mock.calls.filter(
+          ([event]) => event.eventType === 'sandbox.blocked',
+        ),
+      ).toHaveLength(2);
     });
 
     it('does not fail the turn for non-JSON runtime event payloads', async () => {
@@ -2400,7 +2419,7 @@ describe('createGroupProcessor', () => {
           executionProviderId: 'anthropic:claude-agent-sdk',
           conversationJid: 'group1@g.us',
           conversationKind: undefined,
-          memoryUserId: 'user1@s.whatsapp.net',
+          memoryUserId: undefined,
           expectedAgentSessionId: 'agent-session:1',
           expectedAgentSessionResetAt: null,
         }),
@@ -2468,7 +2487,7 @@ describe('createGroupProcessor', () => {
           executionProviderId: 'anthropic:claude-agent-sdk',
           conversationJid: 'group1@g.us',
           conversationKind: undefined,
-          memoryUserId: 'user1@s.whatsapp.net',
+          memoryUserId: undefined,
           expectedAgentSessionId: 'agent-session:1',
           expectedAgentSessionResetAt: null,
         }),
@@ -2519,7 +2538,7 @@ describe('createGroupProcessor', () => {
           agentFolder: group.folder,
           conversationJid: 'sl:D123',
           conversationKind: 'dm',
-          memoryUserId: 'sl:U123',
+          memoryUserId: 'person:sl:U123',
         }),
       );
       expect(deps.opsRepository.setSession).toHaveBeenCalledWith(
@@ -2530,9 +2549,127 @@ describe('createGroupProcessor', () => {
           executionProviderId: 'anthropic:claude-agent-sdk',
           conversationJid: 'sl:D123',
           conversationKind: 'dm',
-          memoryUserId: 'sl:U123',
+          memoryUserId: 'person:sl:U123',
           expectedAgentSessionId: 'agent-session:dm',
           expectedAgentSessionResetAt: null,
+        }),
+      );
+    });
+
+    it('keeps channel turns conversation-scoped even when sender identity is resolvable', async () => {
+      const agentOutput: AgentOutput = {
+        status: 'success',
+        result: 'response',
+        newSessionId: 'channel-sess-123',
+      };
+      const group = makeGroup({
+        requiresTrigger: false,
+        conversationKind: 'channel',
+        providerAccountId: 'channel-providerAccount:test:slack',
+      });
+      const messages = [makeMessage({ sender: 'sl:U123', content: 'hello' })];
+      const { deps } = setupHappyPath({ group, messages, agentOutput });
+      (deps.opsRepository as any).getAgentTurnContext = vi
+        .fn()
+        .mockResolvedValue({
+          appId: 'app:test',
+          agentId: 'agent:test',
+          agentSessionId: 'agent-session:channel',
+          agentSessionResetAt: null,
+        });
+
+      const { processGroupMessages } = createGroupProcessor(deps);
+      await processGroupMessages('sl:C123');
+
+      expect(deps.resolvePersonIdentity).toHaveBeenCalledWith(
+        expect.objectContaining({
+          appId: 'default',
+          provider: 'slack',
+          providerAccountId: 'channel-providerAccount:test:slack',
+          externalUserId: 'sl:U123',
+          evidenceType: 'provider_user',
+        }),
+        expect.any(Function),
+      );
+      expect(deps.opsRepository.getAgentTurnContext).toHaveBeenCalledWith(
+        expect.objectContaining({
+          conversationJid: 'sl:C123',
+          conversationKind: 'channel',
+          memoryUserId: undefined,
+        }),
+      );
+      expect(deps.opsRepository.setSession).toHaveBeenCalledWith(
+        group.folder,
+        'channel-sess-123',
+        null,
+        expect.objectContaining({
+          conversationJid: 'sl:C123',
+          conversationKind: 'channel',
+          memoryUserId: undefined,
+        }),
+      );
+    });
+
+    it('keeps only conversation-scoped memory when sender identity stays unresolved', async () => {
+      const group = makeGroup({
+        requiresTrigger: false,
+        conversationKind: 'channel',
+      });
+      const messages = [makeMessage({ sender: 'sl:U404', content: 'hello' })];
+      const { deps } = setupHappyPath({ group, messages });
+      deps.resolvePersonIdentity = vi.fn(async () => ({
+        status: 'unresolved',
+        personId: null,
+        memoryHydrationEligible: false,
+      }));
+      (deps.opsRepository as any).getAgentTurnContext = vi
+        .fn()
+        .mockResolvedValue({
+          appId: 'app:test',
+          agentId: 'agent:test',
+          agentSessionId: 'agent-session:channel',
+          agentSessionResetAt: null,
+        });
+
+      const { processGroupMessages } = createGroupProcessor(deps);
+      await processGroupMessages('sl:C404');
+
+      expect(deps.opsRepository.getAgentTurnContext).toHaveBeenCalledWith(
+        expect.objectContaining({
+          conversationJid: 'sl:C404',
+          conversationKind: 'channel',
+          memoryUserId: undefined,
+        }),
+      );
+    });
+
+    it('skips dm personal memory when identity resolution errors mid-turn', async () => {
+      const group = makeGroup({
+        requiresTrigger: false,
+        conversationKind: 'dm',
+      });
+      const messages = [makeMessage({ sender: 'sl:U500', content: 'hello' })];
+      const { deps } = setupHappyPath({ group, messages });
+      deps.resolvePersonIdentity = vi.fn(async () => {
+        throw new Error('people repository unavailable');
+      });
+      (deps.opsRepository as any).getAgentTurnContext = vi
+        .fn()
+        .mockResolvedValue({
+          appId: 'app:test',
+          agentId: 'agent:test',
+          agentSessionId: 'agent-session:dm',
+          agentSessionResetAt: null,
+        });
+
+      const { processGroupMessages } = createGroupProcessor(deps);
+      await processGroupMessages('sl:D500');
+
+      expect(deps.opsRepository.getAgentTurnContext).toHaveBeenCalledWith(
+        expect.objectContaining({
+          conversationJid: 'sl:D500',
+          conversationKind: 'dm',
+          memoryUserId: undefined,
         }),
       );
     });
@@ -5028,7 +5165,7 @@ describe('createGroupProcessor', () => {
         providerAccountId: undefined,
         threadId: null,
         conversationKind: 'channel',
-        memoryUserId: 'user1@s.whatsapp.net',
+        memoryUserId: undefined,
         hydrationMode: 'first_visible',
         promoteReadyProviderSession: true,
         query: 'hello',
@@ -6307,7 +6444,7 @@ describe('createGroupProcessor', () => {
       expect(mockSaveProcedure).toHaveBeenCalledWith(
         expect.objectContaining({
           subjectType: 'user',
-          userId: 'user-dm',
+          userId: 'person:user-dm',
           key: 'procedure:Travel flow',
           value: 'Book direct.',
         }),
@@ -6375,8 +6512,8 @@ describe('createGroupProcessor', () => {
           appId: 'default',
           agentId: 'agent:dm-agent',
           subjectType: 'user',
-          subjectId: 'user-dm',
-          userId: 'user-dm',
+          subjectId: 'person:user-dm',
+          userId: 'person:user-dm',
           phase: 'all',
         }),
       );
@@ -6425,7 +6562,7 @@ describe('createGroupProcessor', () => {
         expect.objectContaining({
           appId: 'default',
           agentId: 'agent:status-dm',
-          userId: 'user-dm',
+          userId: 'person:user-dm',
           subjectTypes: ['user'],
           includeCommon: false,
         }),
@@ -6851,7 +6988,7 @@ describe('createGroupProcessor', () => {
           executionProviderId: 'anthropic:claude-agent-sdk',
           conversationJid: 'group1@g.us',
           conversationKind: undefined,
-          memoryUserId: 'user1@s.whatsapp.net',
+          memoryUserId: undefined,
           expectedAgentSessionId: 'agent-session:1',
           expectedAgentSessionResetAt: null,
         }),
@@ -6913,7 +7050,7 @@ describe('createGroupProcessor', () => {
           executionProviderId: 'anthropic:claude-agent-sdk',
           conversationJid: 'group1@g.us',
           conversationKind: undefined,
-          memoryUserId: 'user1@s.whatsapp.net',
+          memoryUserId: undefined,
           expectedAgentSessionId: 'agent-session:1',
           expectedAgentSessionResetAt: '2026-05-11T00:00:00.000Z',
         }),

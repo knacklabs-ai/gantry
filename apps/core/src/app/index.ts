@@ -21,6 +21,7 @@ import {
   getRuntimeEventExchange,
   getRuntimeSkillArtifactStore,
   getRuntimeStorage,
+  resolveRuntimePersonIdentity,
   tryAcquireRuntimeAdvisoryLease,
 } from '../adapters/storage/postgres/runtime-store.js';
 import { startControlServer } from '../control/server/index.js';
@@ -310,6 +311,7 @@ export async function startGantryRuntime(
         getLiveAdmissionWakeupSource: () => storage.liveAdmissionWakeupSource,
         getLiveTurnCommandWakeupSource: () =>
           storage.liveTurnCommandWakeupSource,
+        resolvePersonIdentity: resolveRuntimePersonIdentity,
         getRuntimeDependencyRepository: () =>
           storage.repositories.runtimeDependencies,
         publishRuntimeEvent: async (event) => {

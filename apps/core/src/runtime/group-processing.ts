@@ -5,10 +5,7 @@ import {
 } from '../shared/message-cursor.js';
 import { logger } from '../infrastructure/logging/logger.js';
 import { MessageSendOptions } from '../domain/types.js';
-import {
-  createSerializedAgentOutputCallbacks,
-  isAgentTurnCompleteMarker,
-} from './agent-output-callbacks.js';
+import * as agentOutputCallbacks from './agent-output-callbacks.js';
 import * as progress from './progress-updates.js';
 import { finalizeGroupAgentUserVisibleOutput } from './group-output-finalization.js';
 import { formatMessages } from '../messaging/router.js';
@@ -27,6 +24,7 @@ import { createRuntimeModelStatusAccess } from './model-status-store.js';
 import { getConfiguredModelProvidersForApp } from '../adapters/storage/postgres/runtime-store.js';
 import { resolveGroupProcessingRouteContext } from './command-override-route-key.js';
 import { memoryScopeForConversationKind } from './group-run-context.js';
+import { createGroupProcessingPersonResolver } from './group-person-identity.js';
 import { getGroupBrowserStatus } from './group-browser-status.js';
 import {
   handleFailure,
@@ -47,10 +45,8 @@ import {
   startGroupProgressHeartbeats,
 } from './group-progress-heartbeats.js';
 import { createProgressChannelSender } from './group-progress-channel-sender.js';
-import {
-  createGroupAgentRunner,
-  type GroupAgentRunResult,
-} from './group-agent-runner.js';
+import { createGroupAgentRunner } from './group-agent-runner.js';
+import type { GroupAgentRunResult } from './group-agent-runner.js';
 import { createSessionCommandAgentRunners } from './group-session-command-runner.js';
 import {
   isModelAccessAuthFailure,
@@ -107,6 +103,8 @@ export function createGroupProcessor(deps: GroupProcessingDeps) {
     const { messages: missedMessages } = replay;
     if (missedMessages.length === 0) return true;
     const latestMessage = missedMessages[missedMessages.length - 1];
+    const cursorForMessage = (message: typeof latestMessage) =>
+      encodeGroupMessageCursor(toGroupMessageCursor(message));
     const latestMessageReactionRef =
       latestMessage.external_message_id &&
       !latestMessage.external_message_id.startsWith('external-ingress:')
@@ -156,11 +154,20 @@ export function createGroupProcessor(deps: GroupProcessingDeps) {
       finalizingGenerations: finalizingProgressGenerations,
       log: logger,
     });
-    const memoryUserId =
-      options.memoryContext?.userId ?? resolveMemoryUserId(missedMessages);
     const defaultMemoryScope = memoryScopeForConversationKind(
       group.conversationKind,
     );
+    const rawMemoryUserId =
+      options.memoryContext?.userId ?? resolveMemoryUserId(missedMessages);
+    const resolveActionMemoryUserId = createGroupProcessingPersonResolver({
+      deps,
+      appId: turnAppId,
+      rawUserId: rawMemoryUserId,
+      group,
+      messages: missedMessages,
+      chatJid,
+      threadId: activeThreadId,
+    });
     const modelStatus = createRuntimeModelStatusAccess(
       group.folder,
       activeThreadId,
@@ -184,7 +191,7 @@ export function createGroupProcessor(deps: GroupProcessingDeps) {
           group,
           chatJid,
           queueJid,
-          memoryUserId,
+          memoryUserId: resolveActionMemoryUserId,
           activeThreadId,
           missedMessages,
           existingRunId: options.existingRunId,
@@ -244,28 +251,29 @@ export function createGroupProcessor(deps: GroupProcessingDeps) {
           chatJid,
           threadId: activeThreadId ?? null,
           defaultScope: defaultMemoryScope,
-          memoryUserId,
+          memoryUserId: resolveActionMemoryUserId,
           collectMemory: collectSessionMemory,
           deps,
         }),
-        clearCurrentSession: () =>
+        clearCurrentSession: async () =>
           deps.clearSession(group.folder, activeThreadId, {
             appId: turnAppId,
             conversationJid: chatJid,
             providerAccountId: group.providerAccountId,
             conversationKind: group.conversationKind,
-            memoryUserId,
+            memoryUserId: await resolveActionMemoryUserId(),
           }),
         stopCurrentRun: () => deps.queue.stopGroup?.(queueJid) ?? false,
-        runMemoryDreaming: () =>
+        runMemoryDreaming: async () =>
           runDreamingForGroup({
             folder: group.folder,
             conversationId: chatJid,
-            userId: memoryUserId,
+            userId: await resolveActionMemoryUserId(),
             activeThreadId,
             defaultScope: defaultMemoryScope,
           }),
         getMemoryStatus: async () => {
+          const memoryUserId = await resolveActionMemoryUserId();
           const memory = config.getRuntimeSettingsForConfig().memory;
           return getGroupMemoryStatus(
             {
@@ -289,7 +297,7 @@ export function createGroupProcessor(deps: GroupProcessingDeps) {
         saveProcedure: createSaveProcedureHandler({
           folder: group.folder,
           conversationId: chatJid,
-          userId: memoryUserId,
+          userId: resolveActionMemoryUserId,
           defaultScope: defaultMemoryScope,
           threadId: activeThreadId,
           isAdminWrite: true,
@@ -309,15 +317,13 @@ export function createGroupProcessor(deps: GroupProcessingDeps) {
         messages: missedMessages,
       })
     ) {
-      deps.setCursor(
-        queueJid,
-        encodeGroupMessageCursor(toGroupMessageCursor(latestMessage)),
-      );
+      deps.setCursor(queueJid, cursorForMessage(latestMessage));
       await deps.saveState();
       if (replay.hasMore) deps.queue.enqueueMessageCheck(queueJid);
       return true;
     }
     await notifyFirstProgress();
+    const memoryUserId = await resolveActionMemoryUserId();
     const { prompt, recallQuery } =
       await buildGroupProcessingConversationContext({
         deps,
@@ -334,9 +340,7 @@ export function createGroupProcessor(deps: GroupProcessingDeps) {
     const previousCursor = (await deps.getCursor(queueJid)) || '';
     deps.setCursor(
       queueJid,
-      encodeGroupMessageCursor(
-        toGroupMessageCursor(missedMessages[missedMessages.length - 1]),
-      ),
+      cursorForMessage(missedMessages[missedMessages.length - 1]),
     );
     await deps.saveState();
     resetGroupStreamingForTurn({
@@ -589,7 +593,8 @@ export function createGroupProcessor(deps: GroupProcessingDeps) {
     const finalizeStreamingOutput = outputBuffer.flushBufferedOutput;
     let output: GroupAgentRunResult = 'error';
     const handleAgentOutput = async (result: AgentOutput) => {
-      const isTurnCompleteMarker = isAgentTurnCompleteMarker(result);
+      const isTurnCompleteMarker =
+        agentOutputCallbacks.isAgentTurnCompleteMarker(result);
       const wasAwaitingResponseReceipt = awaitingResponseReceipt;
       if (
         awaitingResponseReceipt &&
@@ -602,9 +607,7 @@ export function createGroupProcessor(deps: GroupProcessingDeps) {
         await sendResponseReceipt();
       }
       if (result.result) {
-        if (!typingActive) {
-          await setTypingState(true);
-        }
+        if (!typingActive) await setTypingState(true);
         activeGenerationHasOutput = true;
         const raw =
           typeof result.result === 'string'
@@ -653,9 +656,7 @@ export function createGroupProcessor(deps: GroupProcessingDeps) {
         ) {
           await sendTrackedDoneProgress(markerProgressState);
         }
-        if (typingActive) {
-          await setTypingState(false);
-        }
+        if (typingActive) await setTypingState(false);
         startNextStreamingMessage();
         resetIdleTimer();
       }
@@ -678,12 +679,13 @@ export function createGroupProcessor(deps: GroupProcessingDeps) {
         await setTypingState(false);
       }
     };
-    const outputCallbacks = createSerializedAgentOutputCallbacks({
-      handle: handleAgentOutput,
-      onError: (err) => {
-        outputCallbackError ??= err;
-      },
-    });
+    const outputCallbacks =
+      agentOutputCallbacks.createSerializedAgentOutputCallbacks({
+        handle: handleAgentOutput,
+        onError: (err) => {
+          outputCallbackError ??= err;
+        },
+      });
     try {
       output = await runAgent(
         group,

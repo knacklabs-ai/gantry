@@ -1067,14 +1067,14 @@ describe('agent-spawn timeout behavior', () => {
         appId: 'app-one',
         agentId: 'agent-one',
         runId: 'run-one',
-        conversationId: 'conversation:test@g.us',
-        threadId: 'thread:test@g.us:reply-one',
         eventType: 'run.startup_diagnostic',
         actor: 'runtime',
         responseMode: 'none',
         payload: expect.objectContaining({
           provider: 'host',
           diagnostic: 'host_startup_projection',
+          conversationJid: 'test@g.us',
+          threadId: 'reply-one',
           executionProviderId: 'anthropic:claude-agent-sdk',
           toolPolicyRuleCount: 1,
           gantryMcpToolCount: 2,
@@ -1092,6 +1092,12 @@ describe('agent-spawn timeout behavior', () => {
           },
         }),
       }),
+    );
+    expect(publishRuntimeEvent.mock.calls[0]?.[0]).not.toHaveProperty(
+      'conversationId',
+    );
+    expect(publishRuntimeEvent.mock.calls[0]?.[0]).not.toHaveProperty(
+      'threadId',
     );
     expect(JSON.stringify(publishRuntimeEvent.mock.calls)).not.toContain(
       '/tmp/secret-path',
@@ -1222,6 +1228,7 @@ describe('agent-spawn timeout behavior', () => {
       env.GANTRY_MEMORY_IPC_ACTIONS_JSON,
     ) as string[];
     const runnerContext = {
+      appId: env.GANTRY_APP_ID,
       chatJid: env.GANTRY_CHAT_JID,
       threadId: env.GANTRY_THREAD_ID,
       userId: env.GANTRY_MEMORY_USER_ID,
@@ -1237,6 +1244,15 @@ describe('agent-spawn timeout behavior', () => {
       expiresAt: new Date(Date.now() + 60_000).toISOString(),
     };
 
+    expect(allowedActions).toEqual([
+      'memory_search',
+      'memory_save',
+      'brain_search',
+      'brain_query',
+      'brain_write',
+      'continuity_summary',
+      'procedure_save',
+    ]);
     expect(
       parseMemoryIpcRequest(
         createSignedIpcRequestEnvelope(
@@ -1335,6 +1351,7 @@ describe('agent-spawn timeout behavior', () => {
           action: 'memory_review_pending',
           payload: { limit: 10 },
           context: {
+            appId: env.GANTRY_APP_ID,
             chatJid: env.GANTRY_CHAT_JID,
             threadId: env.GANTRY_THREAD_ID,
             userId: env.GANTRY_MEMORY_USER_ID,

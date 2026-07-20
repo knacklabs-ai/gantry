@@ -47,6 +47,7 @@ import {
   RunAgentOptions,
 } from './agent-spawn-types.js';
 import { selectedMemoryIpcActionsFromToolRules } from '../shared/memory-ipc-actions.js';
+import { memoryAgentIdForWorkspaceFolder } from '../memory/app-memory-boundaries.js';
 import { isCanonicalBrowserCapabilityRule } from '../shared/agent-tool-references.js';
 import { agentIdForFolder } from '../domain/agent/agent-folder-id.js';
 import { conversationBoundAgentIdsForRoute } from '../application/core-tools/callable-agent-tools.js';
@@ -408,6 +409,7 @@ async function spawnAgentWithContext(
     const memoryIpcAllowedActions = selectedMemoryIpcActionsFromToolRules(
       trustedToolPolicyRules ?? [],
       {
+        excludeAuthorityTools: hideAuthorityTools,
         memoryReviewerIsControlApprover: input.memoryReviewerIsControlApprover,
       },
     );
@@ -553,8 +555,10 @@ async function spawnAgentWithContext(
           )
         : undefined,
       memoryIpcAuthToken: computeMemoryIpcAuthToken(group.folder, {
+        appId: runnerAppId,
+        agentId: input.agentId ?? memoryAgentIdForWorkspaceFolder(group.folder),
         chatJid: input.chatJid,
-        userId: input.memoryUserId,
+        personId: input.memoryUserId,
         defaultScope: input.memoryDefaultScope || 'group',
         threadId: input.threadId,
         allowedActions: memoryIpcAllowedActions,

@@ -118,6 +118,7 @@ export async function handleTelegramTextMessage(input: {
     id: msgId,
     chat_jid: chatJid,
     provider: 'telegram',
+    providerAccountId: input.opts.providerAccountId,
     sender,
     sender_name: senderName,
     content,

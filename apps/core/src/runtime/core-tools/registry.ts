@@ -19,7 +19,6 @@ import {
   permissionDecisionName,
   permissionTelemetryContext,
 } from '../ipc-permission-telemetry.js';
-import { processMemoryRequest } from '../../memory/memory-ipc.js';
 import {
   runDurablePermissionInteraction,
   runDurableQuestionInteraction,
@@ -45,6 +44,7 @@ import type {
   CoreToolInputSchema,
   CoreToolSchemas,
 } from './schemas.js';
+import { memoryResult } from './memory-result.js';
 import type {
   CoreToolDefinition,
   CoreToolHandlerContext,
@@ -582,39 +582,6 @@ function coreToolGateName(name: string): 'AgentDelegation' | null {
     isCallableAgentToolName(name)
     ? 'AgentDelegation'
     : null;
-}
-
-async function memoryResult(
-  action: 'memory_search' | 'memory_save',
-  payload: Record<string, unknown>,
-  deps: CoreToolRegistryDeps,
-  id: (prefix: string) => string,
-): Promise<McpCompatibleToolResult> {
-  const response = await processMemoryRequest(
-    {
-      requestId: id('memory'),
-      action,
-      payload,
-      allowedActions: ['memory_search', 'memory_save'],
-      context: {
-        chatJid: deps.context.conversationId,
-        threadId: deps.context.threadId,
-        userId: deps.context.memoryUserId,
-        defaultScope: deps.context.memoryDefaultScope ?? 'group',
-      },
-    },
-    deps.context.sourceAgentFolder,
-  );
-  if (!response.ok) {
-    return errorResult(
-      `${action === 'memory_search' ? 'Memory search' : 'Memory save'} failed: ${response.error || 'unknown error'}`,
-    );
-  }
-  return textResult(
-    action === 'memory_search'
-      ? deps.formatMemorySearchResponse(response)
-      : deps.formatMemoryWriteResponse(action, response),
-  );
 }
 
 async function publishPermissionEvent(

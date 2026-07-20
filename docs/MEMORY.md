@@ -10,11 +10,11 @@ Every memory record has:
 - `appId`: the application or personal runtime namespace.
 - `agentId`: the agent/runtime owner for the memory.
 - one subject: `user`, `group`, `channel`, or `common`.
-- optional subject ids: `userId`, `groupId`, `channelId`.
+- optional subject ids: `personId`, `groupId`, `channelId`.
 
 Boundary names are provider-neutral:
 
-- `userId` is the human actor when the provider exposes one.
+- `personId` is the canonical human identity when the provider exposes one.
 - `groupId` is the logical Gantry/app group or configured agent group. It is not
   limited to Telegram groups.
 - `channelId` is the external conversation where the bot is present: Telegram
@@ -41,7 +41,7 @@ channelId=<Telegram/Slack/Teams/app conversation id>
 
 This `appId=default` value is the runtime's internal default memory app id.
 SDK applications should pass stable external ids for `appId`, `agentId`,
-`userId`, `groupId`, and `channelId`. Two apps never share memory
+`personId`, `groupId`, and `channelId`. Two apps never share memory
 unless the host explicitly writes separate records into both apps.
 
 ## Storage
@@ -238,7 +238,7 @@ chooses the scope from the inbound chat jid and the bound provider:
 flowchart LR
   In[Inbound message<br/>chatJid] --> IsGroup["Provider.isGroupJid(jid)?"]
   IsGroup -- yes --> Conv["MemorySubject = conversation<br/>subjectId = chatJid<br/>memoryDefaultScope = 'group'"]
-  IsGroup -- no --> User["MemorySubject = user<br/>subjectId = userId<br/>memoryDefaultScope = 'user'"]
+  IsGroup -- no --> User["MemorySubject = user<br/>subjectId = personId<br/>memoryDefaultScope = 'user'"]
   Conv --> Items[(memory_items<br/>unique by appId, agentId,<br/>subjectType, subjectId, kind, key)]
   User --> Items
 ```
@@ -272,22 +272,26 @@ The server-side SDK exposes:
 - `client.memory.delete()`
 - `client.memory.dreaming.trigger()`
 - `client.memory.dreaming.status()`
+- `client.identity.resolve()`
+- `client.people.list()`, `client.people.get()`, alias management, and merge
+  preview/apply
 
 The caller's API key app binding controls `appId` access. `common` writes require
-admin memory scope.
+admin memory scope. Personal memory APIs accept `personId`; raw provider user
+ids should be resolved through identity first.
 
 ## First-Slice Surface Impact Matrix
 
-| Surface | Classification | Reason |
-| --- | --- | --- |
-| Runtime behavior | Changed | Durable memory reads and writes use flattened `memory_items`; retrieval is hybrid lexical + pgvector (RRF) when embeddings are enabled and indexed, with lexical fallback. |
-| `settings.yaml` | Changed | `memory.embeddings.{model,dimensions,backfill.*}` defaults (`text-embedding-3-small`/1536, backfill schedule/mode) are read; the backfill CLI/job index existing memories. |
-| Postgres/runtime projection | Changed | `memory_items` is the canonical durable item table; `memory_review_requests` stores pending review proposals and decisions. |
-| Control API | Changed | Memory save/search/list/patch/delete and dreaming routes operate over the app-bound memory service. |
-| SDK/contracts | Changed | Server-side SDK memory methods are the API-first management surface. |
-| CLI | Changed | `gantry memory status`/`doctor` report memory, embeddings, dreaming, and live vector recall status; `gantry memory embeddings backfill` runs/resumes item indexing with truthful complete/paused/submitted output. |
-| Gantry MCP tools/admin skill | Changed | Agent tools can search, save, request `continuity_summary`, request reviewed memory changes, list pending memory reviews, and apply review decisions through host IPC/MCP. |
-| Channel/provider adapters | Unchanged by design | Channels only provide source identity and conversation scope; memory storage stays channel-neutral. |
-| Docs/prompts | Changed | Active docs state flattened memory items, hybrid lexical + vector retrieval with lexical fallback, resumable embedding backfill, and no compact-summary replay. |
-| Audit/events | Changed | Evidence, recall, dream run, dream decision, review proposal, reviewer decision, and apply outcome rows remain audit surfaces for memory lifecycle decisions. |
-| Tests/verification | Changed | Memory unit and integration checks verify lexical recall works without embeddings, hybrid recall + RRF when embeddings are indexed, and resumable backfill pause/resume. |
+| Surface                      | Classification      | Reason                                                                                                                                                                                                                                               |
+| ---------------------------- | ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Runtime behavior             | Changed             | Durable memory reads and writes use flattened `memory_items`; retrieval is hybrid lexical + pgvector (RRF) when embeddings are enabled and indexed, with lexical fallback.                                                                           |
+| `settings.yaml`              | Changed             | `memory.embeddings.{model,dimensions,backfill.*}` defaults (`text-embedding-3-small`/1536, backfill schedule/mode) are read; the backfill CLI/job index existing memories.                                                                           |
+| Postgres/runtime projection  | Changed             | `memory_items` is the canonical durable item table; `memory_review_requests` stores pending review proposals and decisions.                                                                                                                          |
+| Control API                  | Changed             | Memory save/search/list/patch/delete and dreaming routes operate over the app-bound memory service.                                                                                                                                                  |
+| SDK/contracts                | Changed             | Server-side SDK memory methods are the API-first management surface.                                                                                                                                                                                 |
+| CLI                          | Changed             | `gantry memory status`/`doctor` report memory, embeddings, dreaming, and live vector recall status; `gantry memory embeddings backfill` runs/resumes item indexing with truthful complete/paused/submitted output.                                   |
+| Gantry MCP tools/admin skill | Changed             | Agent tools can search, save, request `continuity_summary`, request reviewed memory changes, list pending memory reviews, and apply review decisions through host IPC/MCP. |
+| Channel/provider adapters    | Unchanged by design | Channels only provide source identity and conversation scope; memory storage stays channel-neutral.                                                                                                                                                  |
+| Docs/prompts                 | Changed             | Active docs state flattened memory items, hybrid lexical + vector retrieval with lexical fallback, resumable embedding backfill, and no compact-summary replay.                                                                                      |
+| Audit/events                 | Changed             | Evidence, recall, dream run, dream decision, review proposal, reviewer decision, and apply outcome rows remain audit surfaces for memory lifecycle decisions.                                                                                        |
+| Tests/verification           | Changed             | Memory unit and integration checks verify lexical recall works without embeddings, hybrid recall + RRF when embeddings are indexed, and resumable backfill pause/resume.                                                                             |

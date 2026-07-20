@@ -49,9 +49,11 @@ export interface ParsedMemoryIpcRequest {
   deadlineAtMs?: number;
   allowedActions: readonly MemoryIpcAction[];
   context?: {
+    appId: string;
+    agentId: string;
     threadId?: string;
     chatJid?: string;
-    userId?: string;
+    personId?: string;
     defaultScope?: 'user' | 'group';
     reviewerIsControlApprover?: boolean;
   };
@@ -250,13 +252,18 @@ export function parseMemoryIpcRequest(
   if (!isPlainObject(raw)) throw new Error('Invalid memory IPC payload');
   const {
     authThreadId: threadId,
+    appId,
+    agentId,
     chatJid,
     responseKeyId,
-    userId,
+    userId: personId,
     defaultScope,
     reviewerIsControlApprover,
     allowedActions,
   } = validateMemoryIpcAuthRequest(raw, sourceAgentFolder, 'memory IPC');
+  if (!appId) {
+    throw new Error('memory IPC context.appId is required');
+  }
   if (!responseKeyId) {
     throw new Error('memory IPC responseKeyId is required');
   }
@@ -280,6 +287,9 @@ export function parseMemoryIpcRequest(
   }
   const rawExpiresAt = typeof raw.expiresAt === 'string' ? raw.expiresAt : '';
   const deadlineAtMs = Date.parse(rawExpiresAt);
+  if (!agentId) {
+    throw new Error('memory IPC context.agentId is required');
+  }
   return {
     requestId,
     action: action as MemoryIpcAction,
@@ -287,16 +297,20 @@ export function parseMemoryIpcRequest(
     allowedActions,
     ...(responseKeyId ? { responseKeyId } : {}),
     ...(Number.isFinite(deadlineAtMs) ? { deadlineAtMs } : {}),
-    ...(threadId ||
+    ...(appId ||
+    agentId ||
+    threadId ||
     chatJid ||
-    userId ||
+    personId ||
     defaultScope ||
     reviewerIsControlApprover
       ? {
           context: {
+            appId,
+            agentId,
             ...(threadId ? { threadId } : {}),
             ...(chatJid ? { chatJid } : {}),
-            ...(userId ? { userId } : {}),
+            ...(personId ? { personId } : {}),
             ...(defaultScope ? { defaultScope } : {}),
             ...(reviewerIsControlApprover ? { reviewerIsControlApprover } : {}),
           },

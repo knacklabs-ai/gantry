@@ -1,6 +1,7 @@
 import type { JsonSchema } from './openapi-route-helpers.js';
 import { listModelRouteProviders } from '../../shared/model-provider-registry.js';
 import { modelCredentialSchemas } from './openapi-model-credential-schemas.js';
+import { peopleOpenApiSchemas } from './openapi-people.js';
 import {
   agentHarnessProp,
   modelPreviewSchemas,
@@ -183,6 +184,7 @@ export const openApiSchemas: Record<string, JsonSchema> = {
     },
   },
   CapabilityListResponse: arrayEnvelope('capabilities', 'CapabilityManifest'),
+  ...peopleOpenApiSchemas,
   ...modelCredentialSchemas,
   AgentSourceSelection: {
     type: 'object',
@@ -630,12 +632,25 @@ export const openApiSchemas: Record<string, JsonSchema> = {
     properties: {
       appId: { type: 'string', description: 'Optional API key app assertion.' },
       conversationId: { type: 'string' },
+      conversationKind: {
+        type: 'string',
+        enum: ['dm', 'channel'],
+        description: 'Session conversation scope; appUser requires dm.',
+      },
       title: { type: 'string' },
       responseMode: {
         type: 'string',
         enum: ['sse', 'webhook', 'both', 'none'],
       },
       webhookId: { type: 'string' },
+      appUser: {
+        type: 'object',
+        required: ['authorityId', 'subject'],
+        properties: {
+          authorityId: { type: 'string' },
+          subject: { type: 'string' },
+        },
+      },
     },
   },
   SessionEnsureResponse: {
@@ -646,6 +661,14 @@ export const openApiSchemas: Record<string, JsonSchema> = {
       appId: { type: 'string' },
       conversationId: { type: 'string' },
       chatJid: { type: 'string' },
+      appUser: {
+        type: 'object',
+        required: ['authorityId', 'subject'],
+        properties: {
+          authorityId: { type: 'string' },
+          subject: { type: 'string' },
+        },
+      },
     },
   },
   SendSessionMessageRequest: {
