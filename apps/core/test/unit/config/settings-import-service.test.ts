@@ -1143,6 +1143,32 @@ describe('importFleetSettingsRevision', () => {
     ).toBe(true);
   });
 
+  it('repairs legacy provider account secret refs when reading settings revisions', () => {
+    const restored = settingsFromRevisionDocument({
+      providers: { slack: { enabled: true } },
+      provider_accounts: {
+        'channel-providerConnection:default:slack': {
+          agent: 'main_agent',
+          provider: 'slack',
+          label: 'Slack Default',
+          runtime_secret_refs: {
+            bot_token: 'gantry-secret:CUSTOM_SLACK_BOT_TOKEN',
+          },
+        },
+      },
+      conversations: {},
+      agents: { main_agent: { name: 'Main Agent' } },
+    });
+
+    expect(
+      restored.providerAccounts['channel-providerConnection:default:slack']
+        .runtimeSecretRefs,
+    ).toEqual({
+      bot_token: 'gantry-secret:CUSTOM_SLACK_BOT_TOKEN',
+      app_token: 'env:SLACK_APP_TOKEN',
+    });
+  });
+
   it('migrates legacy per-agent bindings when reading settings revisions', () => {
     const restored = settingsFromRevisionDocument({
       providers: { slack: { enabled: true } },
