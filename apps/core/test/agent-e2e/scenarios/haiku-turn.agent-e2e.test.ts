@@ -85,7 +85,7 @@ maybeDescribe('agent-e2e haiku turn (real model, behavioral)', () => {
     if (evidence && harness) {
       if (sawFailure) {
         const secrets = harness.secrets.concat(apiKey ? [apiKey] : []);
-        const tail = redactText(harness.logs().slice(-12000), secrets);
+        const tail = redactText(harness.logs().slice(-24000), secrets);
         evidence.evidence.redactedFailure = tail.slice(-4000);
         // CI keeps only test output, not the disposable home — surface the
         // runtime log tail where the failed job log can show it.
