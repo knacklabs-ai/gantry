@@ -106,6 +106,7 @@ jobs:
           run_check npm run test:e2e:postgres
           run_check npm run test:integration:postgres
           run_check npm run test:integration:postgres:chaos
+          run_check npm run test:e2e:agent:hermetic
 
       - name: Debug CI Hang Context
         if: ${{ always() && steps.tests.outcome != 'success' }}
