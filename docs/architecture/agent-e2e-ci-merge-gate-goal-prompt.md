@@ -426,6 +426,56 @@ command.)
   grants, auto_strict gate-bypass) — those get coverage when the permission lane
   ships them.
 
+## Round-3 outcome → v4 restage plan (2026-07-20)
+Round 3 (`agent-e2e-plan-validation-round3.md`): NOT APPROVED, but the model
+boundary is now FEASIBLE (round-2 blocker resolved; needs launch-posture
+pinning). The remaining work splits into:
+
+### NEW APIs to BUILD in-lane (user-authorized; the round-3 gap list)
+Contracts-first where a public DTO is needed; sequence AFTER ponytail Phase 4
+lands (it owns the OpenAPI/contracts surface right now):
+1. **Session targets the onboarded agent** — `sessions/ensure` accepts `agentId`
+   but the route DROPS it and creates a synthetic app-session folder. Fix so the
+   Control API turn runs AS the created agent with its grants. (The gate is
+   meaningless without this — highest priority.)
+2. **Permission decision API** — decide a pending permission (allow_once /
+   allow_persistent_rule / cancel / deny) via API; unlocks testing
+   allow-once/future/cancel without a chat client.
+3. **Conversation creation API** — generic conversation create (not only
+   provider-discovered) so onboarding is fully API-driven.
+4. **Per-agent model mutation API** — set/override an agent's model via API.
+5. **Semantic-capability registration API** — register a reviewed capability
+   definition via API (test registers its loopback-stub capability).
+6. **Effective-tool enumeration API** — return the agent's EFFECTIVE runtime
+   tool manifest (drives the all-tools sweep; today's access API is not the
+   runtime manifest).
+
+### Corrections to fold into v4 (mechanical)
+- **All-tools sweep scoping:** classify the effective set into invocation
+  classes (read-only / side-effecting-fixture-backed / authority-lifecycle);
+  the sweep exercises the first two; authority/lifecycle tools are covered by
+  their own scenarios, not blind invocation.
+- **Fixture topology:** the packaged runtime runs in a container — loopback
+  fixtures on the host are unreachable. Pin: fixtures run in-container beside
+  the runtime (or the harness runs on the host network with the container) —
+  choose one topology and specify it.
+- **Image reality:** Chrome and `gog` are NOT in the packaged image. Re-tier:
+  the gog/Sheets real-tier + Browser exercises run in the LOCAL (host) smoke
+  variant; the CI container gate covers them via stub capabilities until the
+  image ships those binaries (media-render lane owns Chrome provisioning).
+- **Slack loop constraint:** gantry ignores bot-authored inbound messages and a
+  bot cannot fake a human button click. The Slack scenario needs a real-user
+  test message pattern or a separately-reviewed signed-callback fixture —
+  re-scope in v4 (possibly manual-assisted, not fully automated).
+- **Regression scenarios:** the MCP-race fix is NOW on main (`c6d175057`);
+  route-loader + receipt fixes land from their lanes. The branch rebases on
+  main before implementing those scenarios; the route-corruption seed uses
+  direct test-DB row insertion (documented exception to API-for-everything —
+  corrupt states are not creatable via APIs by design).
+- gantry-admin prose cleanup (scenario already correct); image-artifact
+  head-SHA verification + stale-artifact rejection + fork-execution contract;
+  budget: pin initial shard timeouts (raise-not-flake rule stays).
+
 ## Validation history
 - Round 1: NOT APPROVED — no credential-free completed turn + matrix drift +
   fixture/provenance/merge-policy/budget gaps. `agent-e2e-plan-validation.md`.
