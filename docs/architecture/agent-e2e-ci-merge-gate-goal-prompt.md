@@ -431,24 +431,37 @@ Round 3 (`agent-e2e-plan-validation-round3.md`): NOT APPROVED, but the model
 boundary is now FEASIBLE (round-2 blocker resolved; needs launch-posture
 pinning). The remaining work splits into:
 
-### NEW APIs to BUILD in-lane (user-authorized; the round-3 gap list)
-Contracts-first where a public DTO is needed; sequence AFTER ponytail Phase 4
-lands (it owns the OpenAPI/contracts surface right now):
-1. **Session targets the onboarded agent** — `sessions/ensure` accepts `agentId`
-   but the route DROPS it and creates a synthetic app-session folder. Fix so the
-   Control API turn runs AS the created agent with its grants. (The gate is
-   meaningless without this — highest priority.)
-2. **Permission decision API** — decide a pending permission (allow_once /
-   allow_persistent_rule / cancel / deny) via API; unlocks testing
-   allow-once/future/cancel without a chat client.
-3. **Conversation creation API** — generic conversation create (not only
-   provider-discovered) so onboarding is fully API-driven.
-4. **Per-agent model mutation API** — set/override an agent's model via API.
-5. **Semantic-capability registration API** — register a reviewed capability
-   definition via API (test registers its loopback-stub capability).
-6. **Effective-tool enumeration API** — return the agent's EFFECTIVE runtime
-   tool manifest (drives the all-tools sweep; today's access API is not the
-   runtime manifest).
+### API gaps — RE-ADJUDICATED (user directive: NO test-only APIs)
+Rule: an API is built ONLY if it's justified as product surface on its own; the
+gate never gets an endpoint the product wouldn't want. Round-3's six gaps recut:
+1. **Session targets the onboarded agent — KEEP (it's a BUG FIX, not a new
+   API).** `sessions/ensure` accepts `agentId` and silently drops it — any SDK
+   user talking to "their agent" is actually getting a synthetic folder. Fix the
+   existing route to honor its own contract. Sequence after ponytail Phase 4.
+2. **Permission decision API — DROPPED (user, 2026-07-20).** Permission
+   decisions belong to the human approver (channel buttons) or the
+   auto-classifier; agents only REQUEST. A decide-via-API endpoint would create
+   a new authority surface (key holder approves anything, bypassing the
+   conversation-bound approver). Testing instead drives the REAL paths:
+   auto-classifier decisions at the integration layer; the channel interaction
+   callback (the actual button-resolution path) invoked in-process at the
+   integration layer; the real Slack button in the label-gated channel loop.
+3. **Conversation creation — NOT a new API.** The desired-state/settings import
+   surface already creates conversations + installs; the gate drives that
+   existing surface. If a true gap is proven during implementation, it returns
+   as a product proposal, not a gate workaround.
+4. **Per-agent model mutation — DEFERRED to the model-management lane.** That
+   finalized goal owns model-selection APIs as product. Until it ships, the
+   gate sets the model through the existing desired-state surface.
+5. **Semantic-capability registration — NOT an API.** Capabilities are
+   settings-defined BY DESIGN (settings as source of truth); the gate registers
+   its stub capability through the existing settings/desired-state surface.
+6. **Effective-tool enumeration — internal inspector, not a public API (for
+   now).** The all-tools sweep enumerates from the runtime's own effective-tool
+   computation via test code. If product debuggability wants it exposed later
+   ("what can my agent actually do"), that ships via contracts-first as its own
+   decision.
+Net: ONE bug fix, zero new endpoints. Everything else uses surfaces that exist.
 
 ### Corrections to fold into v4 (mechanical)
 - **All-tools sweep scoping:** classify the effective set into invocation
