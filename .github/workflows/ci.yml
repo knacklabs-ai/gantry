@@ -108,6 +108,16 @@ jobs:
           run_check npm run test:integration:postgres:chaos
           run_check npm run test:e2e:agent:hermetic
 
+      # Real-model turn: the key is a protected secret (empty on fork PRs, so
+      # the scenario self-skips). The key reaches ONLY this step's env.
+      - name: Agent E2E turn (real model)
+        env:
+          E2E_ANTHROPIC_API_KEY: ${{ secrets.E2E_ANTHROPIC_API_KEY }}
+        run: |
+          set -o pipefail
+          export GANTRY_TEST_DATABASE_URL=postgres://postgres:postgres@localhost:${{ job.services.postgres.ports[5432] }}/gantry_test
+          timeout 900s env LOG_LEVEL=fatal CI=true npm run test:e2e:agent:turn 2>&1 | tee -a /tmp/vitest.log
+
       - name: Debug CI Hang Context
         if: ${{ always() && steps.tests.outcome != 'success' }}
         run: |
