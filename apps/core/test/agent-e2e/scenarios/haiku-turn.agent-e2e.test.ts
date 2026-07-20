@@ -26,7 +26,11 @@ import path from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 
 import { AgentE2EApiClient, type SessionEvent } from '../harness/api-client.js';
-import { startEvidenceRun, type EvidenceRun } from '../harness/evidence.js';
+import {
+  redactText,
+  startEvidenceRun,
+  type EvidenceRun,
+} from '../harness/evidence.js';
 import {
   startRuntimeHarness,
   type RuntimeHarness,
@@ -78,7 +82,14 @@ maybeDescribe('agent-e2e haiku turn (real model, behavioral)', () => {
   afterAll(async () => {
     if (evidence && harness) {
       if (sawFailure) {
-        evidence.evidence.redactedFailure = harness.logs().slice(-4000);
+        const tail = redactText(
+          harness.logs().slice(-12000),
+          harness.secrets.concat(apiKey ? [apiKey] : []),
+        );
+        evidence.evidence.redactedFailure = tail.slice(-4000);
+        // CI keeps only test output, not the disposable home — surface the
+        // runtime log tail where the failed job log can show it.
+        console.error(`[haiku-turn] runtime log tail on failure:\n${tail}`);
       }
       evidence.write(
         process.env.AGENT_E2E_EVIDENCE_DIR ??
@@ -86,7 +97,9 @@ maybeDescribe('agent-e2e haiku turn (real model, behavioral)', () => {
       );
     }
     await harness?.teardown({ failed: sawFailure });
-  });
+    // Teardown can exceed the 10s default when the runtime is mid-turn
+    // (graceful stop -> SIGKILL fallback).
+  }, 60_000);
 
   it(
     'boots, seeds the anthropic credential via API, selects haiku',
