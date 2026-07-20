@@ -1,9 +1,12 @@
 # Agent E2E CI Merge Gate — goal prompt
 
-Status: RESTAGED v2 (2026-07-20) after plan-validation round 1 returned NOT
-APPROVED. v2 resolves the model-boundary blocker (deterministic provider +
-user-supplied live credentials) and all 5 minimum-restage items. Round-2
-validation gate required before implementation.
+Status: RESTAGED v3 (2026-07-20) after plan-validation rounds 1 and 2. Round 2
+marked the permission/capability semantic matrices SAFE but kept the
+deterministic-model-boundary NOT-SAFE (a registered adapter can't bypass the
+credential gateway). v3 DROPS the deterministic provider entirely (user
+decision): the gate runs a real low-spend model (haiku) with user-supplied
+credentials and BEHAVIORAL assertions. Round-3 validation required before
+implementation.
 
 **Hard exclusion:** `i-have-adhd` is a conversation-only communication skill.
 NEVER copied/installed/inspected/fixtured/asserted by any E2E test. A guard test
@@ -20,27 +23,35 @@ permission/capability → audit) is unproven per-PR. This session's incidents
 (route corruption, render sandbox, permission flood, silent audit loss) slipped
 through because nothing exercised the packaged runtime end to end.
 
-## Model boundary — RESOLVED (v2)
-Validation confirmed: NO agent turn completes today without a Gantry Model
-Gateway credential (broker defaults `gantry`; both Anthropic + DeepAgents lanes
-reject credential-free/non-Gantry projection; the packaged registry has only the
-two production adapters — `default-runtime-adapters.ts:34-43`). Resolution:
-1. **Deterministic test model provider (NEW) drives the always-required hermetic
-   gate.** A packaged-compatible canned/record-replay adapter registered in the
-   runtime adapter registry, SELECTED ONLY via test desired-state config (a model
-   alias routed to it) — NOT via any production-only test route. It returns
-   scripted tool-call sequences + text, needs no external credential or internet,
-   and produces EXACT tool traces so assertions are stable. Its authority is
-   constrained to the same tool-permission path as any model (no bypass). This is
-   the pattern the plan's cited OpenClaw deterministic lane uses; it is also
-   reusable for local dev/demo and other lanes' tests.
-2. **User-supplied real credentials drive the label-gated live lane.** Dedicated
-   low-spend protected-environment credentials (NOT production) power the real
-   haiku/gpt-mini matrix. Never exposed to fork-PR code (see merge-policy trust
-   boundary). So the always-on gate proves a real composed turn deterministically
-   AND real models are proven on labeled PRs.
-- Runtime surface change: the deterministic provider is part of the exact
-  packaged image (test-config-gated). Surface matrix marks Runtime = Changed.
+## Model boundary — RESOLVED (v3): real model + behavioral assertions
+Round 2 proved a deterministic adapter CANNOT bypass the credential gateway by
+registration alone — the host projects credentials and the gateway throws before
+the adapter's `prepare()` runs (broker defaults `gantry`;
+`default-runtime-adapters.ts:34-43`, `gantry-model-gateway.ts:135-154`). Rather
+than build a credential-free route, the gate uses the PRODUCTION path with a real
+model:
+1. **The gate runs a real low-spend model (`haiku`, anthropic_sdk) via the normal
+   gantry gateway**, credentials supplied by CI (protected-environment secret,
+   user-provided, NOT production). No new adapter, no runtime change, no
+   credential-free route — the exact production model path is exercised.
+2. **Assertions are BEHAVIORAL, robust to phrasing** — NOT exact output text.
+   Assert: the turn reached completion; the expected skill/MCP/tool was invoked
+   (from tool traces + audit events + persisted records); the permission decision
+   fired on the right path; the capability preflight passed/failed-closed; the
+   status was delivered. Do NOT assert exact reply strings, exact `get-sum=42` in
+   the reply text, or an exact 3P-format body — assert the tool was CALLED with
+   the right args and the structured record exists. (Same shape as the existing
+   KnackLabs CLI smoke: it asserts `health == completed`, not reply text.)
+3. **Not fully offline** — the gate needs model-API credentials + egress to the
+   model host. Fixtures (skills, MCP) stay LOCAL/vendored; the "no external
+   network" rule narrows to: no npm/git/registry/fixture fetches during test
+   execution; the model API is the only permitted external call.
+4. **Broader model coverage stays label-gated.** The always-required gate runs
+   `haiku` only; `gpt-mini`/deepagents and the base/head catalog diff run on
+   risky (`live-agent-e2e`-labeled) PRs. All model creds are protected-environment,
+   never exposed to fork-PR code.
+- NO runtime/image surface change from a test provider (that idea is dropped).
+  Surface matrix Runtime row reverts to Read-only/observable.
 
 ## What already exists (dedup — do NOT rebuild)
 Deep unit + integration coverage exists for permission/capability LOGIC. THE GAP:
@@ -120,28 +131,67 @@ chain audit/log credential-absence.
   Test the CURRENT contract (denylist blocks + `egress.connect` attribution), not
   an allowlist.
 
-## Packaged-runtime E2E proofs (thin, real image + real turn via deterministic provider)
+## API for EVERYTHING (v3, user directive)
+Every setup, configuration, and interaction step in the gate goes through the
+Control API / SDK against the disposable test Postgres — NEVER hand-written DB
+rows, settings files, or CLI-only paths. This makes the gate a full API contract
+test in the same pass: agent onboarding, conversation binding, model
+selection/routing, skill install + selection, MCP registration + approval,
+capability grant, permission decisions, and the agent turn are ALL driven by API
+calls. For each step assert BOTH the API contract (status code, response shape)
+AND the persisted/runtime effect (settings revision appended, Postgres
+projection, post-restart survival, the turn's actual behavior). Reuse existing
+endpoints; no production-only test routes. Any operation lacking an API is a
+finding: either it gets an API or the gate documents the CLI/desired-state path
+it must use and why.
+- **Onboarding via API:** create agent + binding via the supported endpoints;
+  assert contract + persisted revision + post-restart survival.
+- **Model selection via API:** select the `haiku` alias / default slot / per-agent
+  override via the model-management API; assert the response AND that the turn
+  routes to the selected model (evidence alias/route/provider/harness matches) —
+  catches model-API contract drift.
+
+## Agent exercises ALL its tools (v3, user directive)
+The real-model turn must prove the agent can actually USE every tool available to
+it, not just one. After onboarding + granting the full tool set via API (skills,
+MCP tools, gantry tools, capabilities, RunCommand rules, WebSearch/WebRead,
+Browser), drive the agent (via directive prompts, one tool-family per step or a
+scripted multi-tool task) so it invokes EACH available tool at least once, and
+assert per tool: the tool was CALLED (tool trace + audit event), it returned its
+expected structured effect, and no granted tool silently failed to be reachable.
+The gate FAILS if any granted tool is unreachable/never-invocable in the composed
+runtime. This is the comprehensive "the agent can use all its tools" proof —
+behavioral (assert the call + effect), not exact reply text. Enumerate the
+agent's effective tool set from the API (its granted/effective tools) so the
+exercise stays in sync as tools are added.
+
+## Packaged-runtime E2E proofs (thin, real image + real haiku turn)
 Typed `AgentE2EScenario` + `AgentE2EEvidence` under `apps/core/test/agent-e2e/`.
 Start the EXACT CI-built image (immutable artifact) with isolated `GANTRY_HOME`,
 disposable Postgres, real migrations, isolated non-production encryption/IPC
 secrets, an enforcing `sandbox_runtime` config (the production image sets
 NODE_ENV=production → security posture requires enforcing sandbox + non-prod
 secrets independent of model access — `security-posture.ts:31-80`), restart once,
-then a real Control API turn: `POST /v1/sessions/ensure` (sessions:write) →
-`POST /v1/sessions/{id}/messages` (returns 202 — NOT completion) → observe events
-via sessions:read until visible completion. A 202 is NOT a completed turn.
+then drive onboarding + model selection via API (above), then a real Control API
+turn: `POST /v1/sessions/ensure` (sessions:write) → `POST
+/v1/sessions/{id}/messages` (returns 202 — NOT completion) → observe events via
+sessions:read until visible completion. A 202 is NOT a completed turn. The turn
+runs on real `haiku`; assertions are behavioral (tool traces / audit / persisted
+records), not exact reply text.
 Evidence: scenario, image digest, model alias/route, provider, harness, run/
 session IDs, selected skills, MCP calls, capability decisions, audit IDs, timings,
 redacted failure detail.
-Scenarios (behavioral assertions — state transitions/tool traces/persisted
-records/structured formats, NOT NL snapshots), all driven by the deterministic
-provider so tool selection is exact:
+Scenarios (BEHAVIORAL assertions on a real `haiku` turn — tool traces / audit /
+persisted records / structured records, NOT exact reply text; steer the turn with
+a directive prompt so the model reliably invokes the target tool, and assert the
+tool CALL + its structured effect, not the phrasing):
 | Scenario | Proof |
 |---|---|
+| Onboarding+model API | Agent + binding created via Control API/SDK; model selected via model-management API; assert API contract (status/shape) + persisted revision + post-restart survival + the turn routes to the selected `haiku` alias. |
 | Runtime/model | Image starts, migrations current, turn completes; evidence identifies alias/route/provider/family/harness. |
-| Skill lifecycle | `internal-comms` (vendored subtree + license + provenance + content hash, pinned commit) installs via `/v1/skills/install` zip, binds, survives restart, materializes assets incl. `examples/3p-updates.md` via progressive disclosure, produces the pinned Progress/Plans/Problems format (deterministic provider emits it). `gantry-admin` installed via API, exercised via read-only `admin_permission_list`. |
-| MCP lifecycle | In-process Streamable HTTP test server (extend the existing `inline-agent-runtime.integration.test.ts:328-357` pattern) exposing `echo` + `get-sum` — do NOT depend on `@modelcontextprotocol/server-everything@2.0.0` (does not exist; E404). Only echo+get-sum approved; discovery, schema, `get-sum(20,22)=42`, output validation, denied-tool invisibility, MCP audit. |
-| Permission real-turn | One real turn where a RunCommand is permission-decided (deterministic provider issues it; decided via current auto/human path) + audit recorded. |
+| Skill lifecycle | `internal-comms` (vendored subtree + license + provenance + content hash, pinned commit) installs via `/v1/skills/install` zip, binds, survives restart, materializes assets incl. `examples/3p-updates.md`; assert the skill was SELECTED + its files materialized + (behaviorally) the model produced the Progress/Plans/Problems STRUCTURE — assert the structural sections exist, not exact wording. `gantry-admin` is NOT installed (reserved name — `/v1/skills/install` rejects it); instead assert its already-bundled read-only tool `admin_permission_list` is callable and returns the expected shape. |
+| MCP lifecycle | In-process Streamable HTTP test server (extend the existing `inline-agent-runtime.integration.test.ts:328-357` pattern) exposing `echo` + `get-sum` — do NOT depend on `@modelcontextprotocol/server-everything@2.0.0` (does not exist; E404). Only echo+get-sum approved; discovery, schema, denied-tool invisibility, MCP audit; assert the model CALLED `get-sum(20,22)` and the tool returned `42` (assert the tool result + audit, not that `42` appears in the reply text). |
+| Permission real-turn | A directive prompt makes the model issue a RunCommand; assert it's permission-decided on the current auto/human path + audit recorded. |
 | Capability real-turn | `admin_permission_list` succeeds; a local_cli capability preflight passes / fails-closed in the real image. |
 | Recovery/security | Skill+MCP selections survive restart; transient authority (allow_once) does NOT; logs/evidence credential-scrubbed. |
 Scripts: `test:e2e:agent:policy`, `test:e2e:agent:hermetic`, `test:e2e:agent:live`;
@@ -171,14 +221,17 @@ production.
 
 ## Merge policy — trust boundary sealed (validation §7)
 `.github/workflows/agent-e2e.yml`, triggers: PR open/synchronize/reopen/label/unlabel.
-- Hermetic E2E + (extended) test:integration:postgres run for every non-docs PR.
+- The required gate (real `haiku` agent turn + all-tools exercise, API-driven) +
+  (extended) test:integration:postgres run for every non-docs PR. It needs the
+  protected-environment model credential (so it runs on same-repo PRs; fork PRs
+  route through the trusted-artifact path, never seeing secrets).
 - Path-map (checked-in globs → risk area) classifies changed paths. UNKNOWN stays
   RISKY for live-gate purposes until the path-map is updated; `e2e-reviewed` may
   ACKNOWLEDGE a mapping miss but MUST NOT silently downgrade unknown code to
   non-risky.
 - Risky PRs fail until `live-agent-e2e`; the label starts the protected-environment
-  live job against the immutable prebuilt image artifact (same digest, never a
-  rebuild).
+  extended-model job (gpt-mini/deepagents + catalog diff) against the immutable
+  prebuilt image artifact (same digest, never a rebuild).
 - **Fork-secret safety:** protected model secrets never exposed to untrusted fork
   PR code. Trust boundary = same-repository PRs + protected-environment approval,
   or a trusted workflow executing an already-built reviewed artifact. NO
@@ -188,8 +241,9 @@ production.
   not a required gate by itself).
 
 ## Failure & evidence policy
-- Hermetic failures NOT retried. Live 429/5xx/timeout/transport retried once; a
-  retry-pass = `FLAKY` and STILL blocks merge.
+- Deterministic (non-model) failures NOT retried. Model-transient failures
+  (429/5xx/timeout/transport) retried ONCE; a retry-pass = `FLAKY` and STILL
+  blocks merge (so real regressions can't hide behind flakiness).
 - Success AND failure upload redacted JSON evidence + audit/event extracts +
   container logs + timings + targeted rerun command.
 
@@ -200,47 +254,66 @@ baselines. If the cold required gate can't reliably finish under 15 min with
 headroom, RAISE the timeout rather than make a flaky performance promise. (Current
 CI allows 30 min / 900s per command.)
 
-## Surface Impact Matrix (corrected)
+## Budget — real-model turn factored in
+The gate now runs a real `haiku` turn (plus image boot + migrations + restart +
+the all-tools exercise), so it is NOT credential-free and the turn adds real
+model latency. 15 min is a TARGET, not a promise: shard the work (integration-
+postgres shard, agent-turn+all-tools shard, policy shard), use a Docker layer-
+cache/immutable-artifact strategy, and MEASURE cold + warm baselines. If the cold
+required gate can't finish under 15 min with headroom, RAISE the timeout rather
+than make a flaky performance promise. (Current CI allows 30 min / 900s per
+command.)
+
+## Surface Impact Matrix (v3)
 | Surface | Classification | Reason |
 |---|---|---|
-| Runtime behavior | Changed | Deterministic test provider is part of the exact packaged image (test-config-gated). |
-| `settings.yaml` | Read-only/observable | Isolated desired-state ops; verify synchronized output. |
+| Runtime behavior | Read-only/observable | Exact production image + real `haiku` model path exercised; NO test provider in the image (deterministic-provider idea dropped). |
+| `settings.yaml` | Read-only/observable | API-driven desired-state ops; verify synchronized output. |
 | Postgres/runtime projection | Read-only/observable | Disposable rows verify revisions, bindings, restart projection, transient expiry. |
-| Control API | Read-only/observable | Existing endpoints exercised. |
+| Control API + model-management API | Gate target (contract-tested) | Onboarding, model selection, skill/MCP/capability/permission all driven via API and asserted for contract + effect. Existing endpoints; no new routes. |
 | SDK/contracts | Unchanged by design | Existing clients reused; new types test-internal. |
-| CLI | Unchanged by design | No CLI feature added. |
-| Gantry MCP/admin skill | Read-only/observable | Exercised without changing authority. |
-| Channel/provider adapters | Providers observable; channels deferred | Both harnesses tested; channel UI/approval out of gate. |
-| CI workflow / GitHub ruleset | Changed | New workflow, path-map, aggregator, branch-protection activation. |
-| Image packaging / provenance | Changed | Immutable artifact handoff; deterministic provider in image; skill-install-via-API. |
+| CLI | Unchanged by design | Gate is API-driven; CLI unchanged. |
+| Gantry MCP/admin tools | Read-only/observable | `admin_permission_list` exercised (gantry-admin NOT installed — reserved name). |
+| Channel/provider adapters | Providers observable; channels deferred | Model harness(es) tested; channel UI/approval out of gate. |
+| CI workflow / GitHub ruleset | Changed | New workflow, path-map, aggregator, branch-protection activation; model-credential protected-environment secret. |
+| Image provenance | Changed | Immutable artifact handoff bound to head SHA (`docker save`→upload→download→load). No image content change. |
 | Docs/prompts | Changed | This goal prompt + CI/scenario/evidence docs. |
 | Audit/events | Read-only/observable | Existing events become assertions/evidence. |
-| Tests/verification | Changed | Runner, fixtures, packaged harness, granular integration additions, live matrix, policy classifier, aggregator, i-have-adhd guard. |
+| Tests/verification | Changed | Runner, fixtures, packaged harness, all-tools exercise, granular integration additions, live matrix, policy classifier, aggregator, i-have-adhd guard. |
 | Deployment workflows | Deferred | Deploy automation + real TG/Slack canaries excluded; pre-merge CI in scope. |
 
 ## Acceptance criteria
-- All existing suites green. Extended `test:integration:postgres` runs in CI and gates.
-- Hermetic agent E2E completes a REAL turn via the deterministic provider with NO
-  internet or model credentials.
+- All existing suites green. Extended `test:integration:postgres` (incl. the
+  fleet-capability + postgres-domain-repositories suites) runs in CI and gates.
+- The agent E2E gate completes a REAL `haiku` turn, everything driven via API, and
+  proves the agent can invoke EVERY tool in its effective set (behavioral
+  assertions).
+- Onboarding + model-selection APIs are contract-tested (status/shape) AND their
+  persisted/runtime effect verified.
 - Granular permission (every current-semantics mode+path) and capability (every
   lifecycle stage) pass at the integration layer, each citing existing coverage +
   its added gap.
-- Risky PRs can't merge without `live-agent-e2e` + passing live matrix; UNKNOWN
-  path changes stay risky; fork PRs never see protected secrets.
+- Risky PRs can't merge without `live-agent-e2e` + passing extended model matrix;
+  UNKNOWN path changes stay risky; fork PRs never see protected secrets.
 - `agent-e2e-gate` is the verified required branch-protection check.
 - `i-have-adhd` zero references in E2E surfaces (scoped guard).
 
 ## Non-goals
 - Deploy automation; real Telegram/Slack canaries. Production credentials in CI.
 - Rebuilding granular logic already unit/integration-tested.
+- A deterministic/canned model provider or a credential-free model route (dropped
+  — the gate uses a real low-spend model).
 - Testing not-yet-built behavior (command-name promotion, conversation-scoped
   grants, auto_strict gate-bypass) — those get coverage when the permission lane
   ships them.
 
 ## Validation history
-- Round 1 (2026-07-20): NOT APPROVED — critical blocker = no credential-free
-  completed turn; + matrix-semantics drift, nonexistent fixture version, offline-
-  fixture contradiction, image provenance/packaging gaps, merge-policy trust gaps,
-  unproven budget. Report: `agent-e2e-plan-validation.md`. v2 resolves all 5
-  minimum-restage items.
-- Round 2: REQUIRED before implementation.
+- Round 1: NOT APPROVED — no credential-free completed turn + matrix drift +
+  fixture/provenance/merge-policy/budget gaps. `agent-e2e-plan-validation.md`.
+- Round 2: NOT APPROVED — matrices SAFE, but deterministic adapter can't bypass
+  the credential gateway; gantry-admin reserved-name; provenance/budget open.
+  `agent-e2e-plan-validation-round2.md`.
+- v3 (this): DROPS the deterministic provider — real `haiku` + behavioral
+  assertions; API-for-everything + all-tools exercise (user directives);
+  gantry-admin via tool not install; provenance bound to head SHA; budget
+  sharded. Round-3 validation REQUIRED before implementation.
