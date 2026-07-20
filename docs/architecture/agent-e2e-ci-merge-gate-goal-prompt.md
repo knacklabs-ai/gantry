@@ -209,6 +209,23 @@ model-selection + grant APIs actually work (the API-for-everything directive) an
 catches setup-path regressions — the failure class behind this session's
 incidents. Fully isolated; the small extra per-run time is accepted.
 
+## Fixture kit (v3.1 — complete inventory)
+Beyond the MCP test server, the gate needs these test doubles/fixtures:
+- **Attachment fixture:** a small file the agent must SEND during a turn; assert
+  outbound delivery via the #234 workspace-direct path (regression: file-send
+  broke in the 2026-07-20 incident with zero coverage).
+- **Loopback webhook receiver:** asserts job/event webhook delivery fires with
+  the expected payload shape.
+- **Egress fixture pair:** one denylisted hostname + one allowed loopback host;
+  assert denylist block + `egress.connect` attribution records.
+- **Delegation target agent:** a second minimal agent so `AgentDelegation` is
+  exercisable in the all-tools sweep.
+- **Always-failing job fixture:** deterministically drives retry → dead-letter.
+- **Inline-lane turn:** one cheap haiku call through the inline runtime / LLM API
+  lane (the second execution path) so both lanes are proven, not just the worker.
+- stdio-MCP transport stays at the integration layer (existing `ipc-mcp-stdio`
+  coverage); the E2E MCP fixture tests Streamable HTTP.
+
 ## Memory coverage (v3.1, user directive — was missing)
 - Integration (deterministic, test Postgres): memory write → recall → subject
   BOUNDARY scoping (person/group/channel isolation — a memory stored for one
