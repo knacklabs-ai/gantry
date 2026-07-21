@@ -34,6 +34,7 @@ export interface AgentToolRuntimeRuleResolutionInput {
 export interface AgentToolRuntimePolicy {
   rules: string[];
   runtimeAccess: CapabilityRuntimeAccess[];
+  semanticCapabilities: SemanticCapabilityDefinition[];
   reviewedMcpReadBindings: ReviewedMcpReadBinding[];
 }
 
@@ -145,6 +146,7 @@ export async function resolveAgentToolRuntimePolicy(
   return {
     rules,
     runtimeAccess,
+    semanticCapabilities,
     reviewedMcpReadBindings: reviewedMcpReadBindingsForRuntimeAccess({
       runtimeAccess,
       semanticCapabilities,

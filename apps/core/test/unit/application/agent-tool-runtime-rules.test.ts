@@ -1,9 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
   resolveAgentToolRuntimePolicy,
   validateAgentToolRuntimeRules,
 } from '@core/application/agents/agent-tool-runtime-rules.js';
+import { resolveAgentPromptCapabilityCatalog } from '@core/application/agents/agent-prompt-capability-catalog.js';
 import { semanticCapabilityInputSchema } from '@core/shared/semantic-capabilities.js';
 
 function patternToolRepository() {
@@ -74,6 +75,106 @@ function legacyExactToolRepository() {
 }
 
 describe('reviewed MCP pattern projection', () => {
+  it('excludes selected skill actions whose backing skill is missing or disabled', async () => {
+    const tool = {
+      id: 'tool:skill-publish',
+      appId: 'app-one',
+      name: 'capability:skill.publisher.publish',
+      inputSchema: semanticCapabilityInputSchema({
+        capabilityId: 'skill.publisher.publish',
+        displayName: 'Publisher publish',
+        category: 'Publishing',
+        risk: 'write',
+        can: 'Publish prepared content.',
+        cannot: 'Read unrelated credentials.',
+        credentialSource: 'skill_secret',
+        implementationBindings: [
+          {
+            kind: 'tool_rule',
+            rule: 'RunCommand(skills/publisher/publish.py *)',
+          },
+        ],
+        source: {
+          kind: 'skill_action',
+          skillId: 'skill:publisher',
+          skillName: 'publisher',
+          actionId: 'publish',
+        },
+      }),
+    };
+    const repository = {
+      listAgentToolBindings: async () => [
+        { status: 'active', toolId: tool.id },
+      ],
+      getTool: async () => tool,
+    };
+
+    for (const skillRepository of [
+      undefined,
+      { listEnabledSkillsForAgent: async () => [] },
+    ]) {
+      const policy = await resolveAgentToolRuntimePolicy({
+        repository: repository as never,
+        ...(skillRepository
+          ? { skillRepository: skillRepository as never }
+          : {}),
+        appId: 'app-one',
+        agentId: 'agent-one',
+        errorSubject: 'Configured agent tool',
+      });
+      const catalog = await resolveAgentPromptCapabilityCatalog({
+        appId: 'app-one',
+        agentId: 'agent-one',
+        readySemanticCapabilities: policy.semanticCapabilities,
+      });
+
+      expect(policy.semanticCapabilities).toEqual([]);
+      expect(catalog.readyActions).toEqual([]);
+    }
+  });
+
+  it('excludes missing definitions and independently disabled bindings from ready actions', async () => {
+    const getTool = vi.fn(async (toolId: string) =>
+      toolId === 'tool:disabled'
+        ? {
+            appId: 'app-one',
+            name: 'capability:disabled.read',
+            inputSchema: semanticCapabilityInputSchema({
+              capabilityId: 'disabled.read',
+              displayName: 'Disabled read',
+              category: 'Test',
+              risk: 'read',
+              can: 'Read disabled data.',
+              cannot: 'Write data.',
+              credentialSource: 'none',
+              implementationBindings: [{ kind: 'adapter', adapterRef: 'test' }],
+            }),
+          }
+        : null,
+    );
+    const policy = await resolveAgentToolRuntimePolicy({
+      repository: {
+        listAgentToolBindings: async () => [
+          { status: 'active', toolId: 'tool:missing' },
+          { status: 'disabled', toolId: 'tool:disabled' },
+        ],
+        getTool,
+      } as never,
+      appId: 'app-one',
+      agentId: 'agent-one',
+      errorSubject: 'Configured agent tool',
+    });
+    const catalog = await resolveAgentPromptCapabilityCatalog({
+      appId: 'app-one',
+      agentId: 'agent-one',
+      readySemanticCapabilities: policy.semanticCapabilities,
+    });
+
+    expect(getTool).toHaveBeenCalledTimes(1);
+    expect(getTool).toHaveBeenCalledWith('tool:missing');
+    expect(catalog.readyActions).toEqual([]);
+  });
+
   it('projects pattern rules and mcp_server runtime access from the selected capability', async () => {
     const policy = await resolveAgentToolRuntimePolicy({
       repository: patternToolRepository(),
