@@ -276,6 +276,9 @@ export async function startRuntimeHarness(
     GANTRY_CONTROL_API_KEYS_JSON: controlKeysJson,
     GANTRY_IPC_AUTH_SECRET: ipcAuthSecret,
     SECRET_ENCRYPTION_KEY: secretEncryptionKey,
+    // Debug so live runner/subprocess stderr (streamed at logger.debug)
+    // reaches the harness log; only the failure dump ever surfaces it.
+    LOG_LEVEL: 'debug',
     // NODE_ENV deliberately NOT set in local-process mode: the security
     // posture stays local (the docker image pins NODE_ENV=production itself).
     ...options.env,
