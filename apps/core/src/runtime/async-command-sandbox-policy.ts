@@ -8,6 +8,7 @@ export interface AsyncCommandSandboxPolicy {
   providerAccountId?: string | null;
   threadId?: string | null;
   runId?: string;
+  correlationId?: string | null;
   jobId?: string;
   callerResolvedTools?: CallerResolvedToolsConfig;
   protectedReadPaths: readonly string[];
@@ -46,6 +47,7 @@ export function registerSpawnAsyncCommandSandboxPolicy(input: {
   providerAccountId?: string | null;
   threadId?: string | null;
   runId?: string;
+  correlationId?: string | null;
   jobId?: string;
   callerResolvedTools?: CallerResolvedToolsConfig;
   protectedReadPaths: readonly string[];
@@ -63,6 +65,7 @@ export function registerSpawnAsyncCommandSandboxPolicy(input: {
       providerAccountId: input.providerAccountId ?? null,
       threadId: input.threadId ?? null,
       runId: input.runId,
+      correlationId: input.correlationId ?? null,
       jobId: input.jobId,
       callerResolvedTools: input.callerResolvedTools,
       protectedReadPaths: input.protectedReadPaths,
@@ -83,6 +86,7 @@ export function configureSpawnAsyncCommandSandboxPolicy(input: {
   providerAccountId?: string | null;
   threadId?: string | null;
   runId?: string;
+  correlationId?: string | null;
   jobId?: string;
   callerResolvedTools?: CallerResolvedToolsConfig;
   protectedReadPaths: readonly string[];
@@ -107,6 +111,7 @@ export function configureSpawnAsyncCommandSandboxPolicy(input: {
     providerAccountId: input.providerAccountId,
     threadId: input.threadId,
     runId: input.runId,
+    correlationId: input.correlationId,
     jobId: input.jobId,
     callerResolvedTools: input.callerResolvedTools,
     protectedReadPaths: input.protectedReadPaths,

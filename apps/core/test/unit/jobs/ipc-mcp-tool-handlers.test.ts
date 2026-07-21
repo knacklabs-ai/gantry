@@ -722,9 +722,9 @@ describe('MCP IPC tool handlers', () => {
       (candidate) => candidate.kind === 'mcp_tool_call',
     );
     expect(task).toMatchObject({
-      parentRunId: null,
+      parentRunId: 'job-run-1',
       parentJobId: 'job-1',
-      parentJobRunId: 'job-run-1',
+      parentJobRunId: null,
     });
   });
 });

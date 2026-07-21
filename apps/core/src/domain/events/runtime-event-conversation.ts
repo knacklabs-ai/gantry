@@ -33,6 +33,12 @@ export function normalizeRuntimeEventThreadId(input: {
   const conversationId = normalizeRuntimeEventConversationId(
     input.conversationId,
   )?.trim();
+  const controlMatch = conversationId?.match(
+    /^control:([^:]+):conversation:(.+)$/,
+  );
+  if (controlMatch) {
+    return `${CANONICAL_THREAD_PREFIX}app:${controlMatch[1]}:${controlMatch[2]}:${threadId}` as ConversationThreadId;
+  }
   if (!conversationId?.startsWith(CANONICAL_CONVERSATION_PREFIX)) {
     return threadId as ConversationThreadId;
   }

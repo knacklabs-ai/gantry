@@ -403,6 +403,7 @@ describe('agent task lifecycle IPC handlers', () => {
         conversationId: 'sl:C123',
         threadId: 'thread-1',
         runId: 'run-id-1',
+        correlationId: 'chat-turn-1',
         callerResolvedTools: {
           sessionId: 'session-1',
           maxInteractions: 4,
@@ -443,6 +444,7 @@ describe('agent task lifecycle IPC handlers', () => {
         expect.objectContaining({
           sessionId: 'session-1',
           runId: 'run-id-1',
+          correlationId: 'chat-turn-1',
           eventType: 'interaction.pending',
           payload: expect.objectContaining({
             interactionType: 'caller_resolved_tool',
@@ -863,7 +865,7 @@ describe('agent task lifecycle IPC handlers', () => {
     expect(repository.tasks.get(child.id)?.status).toBe('cancelled');
   });
 
-  it('stores scheduled job run ids in the job-run parent column', async () => {
+  it('stores a scheduled agent run in the agent-run parent column', async () => {
     const runtimeHome = fs.mkdtempSync(
       path.join(os.tmpdir(), 'gantry-task-ipc-'),
     );
@@ -924,9 +926,9 @@ describe('agent task lifecycle IPC handlers', () => {
 
     const taskId = await waitForStatus(repository, 'running');
     expect(repository.tasks.get(taskId)).toMatchObject({
-      parentRunId: null,
+      parentRunId: 'job-run-1',
       parentJobId: 'job-1',
-      parentJobRunId: 'job-run-1',
+      parentJobRunId: null,
     });
     await agentTaskLifecycleHandlers.task_cancel(
       contextFor({
@@ -951,6 +953,7 @@ describe('agent task lifecycle IPC handlers', () => {
       registerAsyncCommandSandboxPolicy,
     } = await loadTaskLifecycleHandlers(runtimeHome);
     const repository = new MemoryAsyncTaskRepository();
+    const publishRuntimeEvent = vi.fn(async () => undefined);
     const runAgent = vi.fn(
       async (group, input, onProcess, onOutput, options) => {
         const child = new EventEmitter() as EventEmitter & {
@@ -996,6 +999,7 @@ describe('agent task lifecycle IPC handlers', () => {
         }) as never,
       runnerSandboxProvider: fakeEnforcingSandboxProvider(),
       runAgent,
+      publishRuntimeEvent,
       opsRepository: { getJobById: async () => null } as never,
     };
     registerAsyncCommandSandboxPolicy({
@@ -1081,9 +1085,9 @@ describe('agent task lifecycle IPC handlers', () => {
       { targetAgentId: 'agent:reviewer', workspaceFolder: 'reviewer' },
     );
     expect(repository.tasks.get(taskId!)).toMatchObject({
-      parentRunId: null,
+      parentRunId: 'run-id-1',
       parentJobId: 'job-1',
-      parentJobRunId: 'run-id-1',
+      parentJobRunId: null,
     });
     expect(
       readEncryptedAsyncTaskPayload<{ providerAccountId?: string }>(
@@ -1092,6 +1096,13 @@ describe('agent task lifecycle IPC handlers', () => {
     ).toMatchObject({ providerAccountId: 'slack-one' });
     await waitForStatus(repository, 'completed');
     expect(repository.tasks.get(taskId!)?.outputSummary).toBe('halfway done');
+    expect(publishRuntimeEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runId: 'run-id-1',
+        jobId: 'job-1',
+        eventType: 'task.updated',
+      }),
+    );
 
     runAgent.mockImplementationOnce(
       async (_group, _input, _onProcess, onOutput) => {

@@ -684,6 +684,7 @@ export async function spawnAgent(
       providerAccountId: group.providerAccountId,
       threadId: input.threadId,
       runId: input.runId,
+      correlationId: input.correlationId,
       jobId: input.jobId,
       callerResolvedTools: input.callerResolvedTools,
       protectedReadPaths: protectedFilesystemDenyReadPaths,

@@ -125,6 +125,27 @@ function createRepository(db: FakeDrizzleDb) {
 }
 
 describe('PostgresRuntimeEventRepository', () => {
+  it('canonicalizes an external thread after resolving its control conversation', async () => {
+    const db = new FakeDrizzleDb();
+    db.canonicalConversationId = 'control:tenant:conversation:chat';
+    const repository = createRepository(db);
+
+    await repository.appendRuntimeEvent({
+      appId: 'tenant' as never,
+      sessionId: 'session-app' as never,
+      conversationId: 'control:tenant:conversation:chat' as never,
+      threadId: '1784557836905' as never,
+      eventType: RUNTIME_EVENT_TYPES.SESSION_MESSAGE_REJECTED,
+      actor: 'runtime',
+      payload: { reason: 'queue_wait_timeout' },
+    });
+
+    expect(db.insertedRuntimeEvent).toMatchObject({
+      conversationId: 'control:tenant:conversation:chat',
+      threadId: 'thread:app:tenant:chat:1784557836905',
+    });
+  });
+
   it('commits the runtime event and webhook delivery in one transaction', async () => {
     const db = new FakeDrizzleDb();
     const repository = createRepository(db);

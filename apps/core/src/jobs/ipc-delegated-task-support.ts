@@ -34,7 +34,7 @@ export function createDelegatedTaskTerminalPublisher(
         ? { conversationId: task.conversationId as never }
         : {}),
       ...(task.threadId ? { threadId: task.threadId as never } : {}),
-      ...(task.parentJobRunId ? { runId: task.parentJobRunId as never } : {}),
+      ...(task.parentRunId ? { runId: task.parentRunId as never } : {}),
       jobId: task.parentJobId as never,
       eventType: RUNTIME_EVENT_TYPES.TASK_UPDATED,
       actor: 'gantry-runtime',

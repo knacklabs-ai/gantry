@@ -78,6 +78,7 @@ export interface AgentInput {
   jobId?: string;
   jobName?: string;
   runId?: string;
+  correlationId?: string | null;
   parentTaskId?: string;
   runLeaseToken?: string;
   runLeaseFencingVersion?: number;

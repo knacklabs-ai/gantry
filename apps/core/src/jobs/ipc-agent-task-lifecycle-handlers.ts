@@ -178,8 +178,8 @@ function taskBackend(
     service,
     owner,
     parentTaskId: parent.parentTaskId,
+    parentRunId: context.data.runId ?? null,
     parentJobId: context.data.jobId ?? null,
-    parentJobRunId: context.data.jobId ? (context.data.runId ?? null) : null,
     workspaceFolder: context.sourceAgentFolder,
     deliverTaskMessage,
   });
@@ -394,10 +394,9 @@ const asyncRunCommandHandler: TaskHandler = async (context) => {
   }
   const result = await service.start({
     ...scopedTaskOwner,
-    parentRunId: context.data.jobId ? null : (context.data.runId ?? null),
+    parentRunId: context.data.runId ?? null,
     parentTaskId: parentTask.parentTaskId,
     parentJobId: context.data.jobId ?? null,
-    parentJobRunId: context.data.jobId ? (context.data.runId ?? null) : null,
     command,
     cwd: resolveWorkspaceFolderPath(context.sourceAgentFolder),
     protectedReadPaths: sandboxPolicy.protectedReadPaths,
@@ -559,9 +558,8 @@ const delegateTaskHandler: TaskHandler = async (context) => {
   const sharedResult = await createCoreTaskLifecycleBackend({
     service,
     owner: { ...scopedTaskOwner, providerAccountId: target.providerAccountId },
-    parentRunId: context.data.jobId ? null : (context.data.runId ?? null),
+    parentRunId: context.data.runId ?? null,
     parentJobId: context.data.jobId ?? null,
-    parentJobRunId: context.data.jobId ? (context.data.runId ?? null) : null,
     workspaceFolder: group.folder,
     runDelegatedAgent: await createInheritedDelegatedAgentRunner({
       context,

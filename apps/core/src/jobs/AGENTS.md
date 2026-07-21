@@ -35,6 +35,11 @@
 - `task_wait` waits on durable delegated-task rows and the task-change signal;
   it must never ask the model to poll. Keyed delegated tasks are idempotent
   within their parent job run so replay cannot create duplicate children.
+- `outputSummary` is canonical machine-readable task output returned by
+  `task_wait`; never apply receipt or progress-message truncation to it.
+  Delegated-agent execution and sandboxed command execution are separate
+  paths even though they share durable task lifecycle storage. Keep only
+  human-facing receipts, logs, and progress text compact.
 - Scheduler terminal notifications are user-facing lifecycle receipts. Format
   job reports, system maintenance results, and next-run times into readable
   product copy before delivery; never surface raw queue bookkeeping JSON,

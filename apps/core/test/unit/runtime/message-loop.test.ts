@@ -681,6 +681,57 @@ describe('thread queue routing', () => {
     expect(deps.cursors).toEqual({});
   });
 
+  it('anchors an SDK admission at its message instead of replaying stale history', async () => {
+    const msg = {
+      ...makePendingMessage(5),
+      canonicalMessageId: 'message:group@g.us:5',
+      appResponseRoute: {
+        sessionId: 'session-1',
+        threadId: null,
+        responseMode: 'sse' as const,
+        webhookId: null,
+        correlationId: 'corr-1',
+      },
+    };
+    mockGetMessagesSince.mockReturnValueOnce([msg]);
+    const saveState = vi.fn();
+    const deps = makeDeps({
+      getOrRecoverCursor: () =>
+        JSON.stringify({
+          timestamp: '2024-01-01T00:00:01.000Z',
+          id: 'stale-message',
+        }),
+      saveState,
+    });
+
+    await expect(
+      processLiveAdmissionWorkItem(
+        deps,
+        makeAdmissionItem({
+          messageId: msg.canonicalMessageId,
+          messageCursor: JSON.stringify({
+            timestamp: msg.timestamp,
+            id: msg.id,
+          }),
+          requestFingerprint: 'sdk-request-fingerprint',
+        }),
+      ),
+    ).resolves.toBe('completed');
+
+    const anchoredCursor = JSON.stringify({
+      timestamp: '2024-01-01T00:00:04.999Z',
+      id: '\uffff',
+    });
+    expect(mockGetMessagesSince).toHaveBeenCalledWith(
+      'group@g.us',
+      anchoredCursor,
+      expect.any(Number),
+      { threadId: null },
+    );
+    expect(deps.cursors).toEqual({ 'group@g.us': anchoredCursor });
+    expect(saveState).toHaveBeenCalledOnce();
+  });
+
   it('starts a fresh turn for each message-owned app response route', async () => {
     const msg = {
       ...makePendingMessage(1),

@@ -317,28 +317,7 @@ export function buildLiveAdmissionProcessor(input: {
         hydrateMemory: false,
       });
       if (!turnContext?.agentSessionId) return false;
-      const scope: LiveTurnScope = {
-        appId: turnContext.appId,
-        agentSessionId: turnContext.agentSessionId,
-        conversationId: chatJid,
-        threadId: threadId ?? null,
-      };
       const replayCursor = await app.getOrRecoverCursor(queueJid);
-      // Pre-check: with N pollers the common case is that another worker already
-      // owns this scope. Route the continuation WITHOUT minting a run row that
-      // would just lose the claim and become an orphan.
-      const existing = await liveTurnAuthority.getActiveLiveTurn(scope);
-      if (existing) {
-        return routeScopeActive(
-          scope,
-          queueJid,
-          /* liveRunId */ '',
-          chatJid,
-          threadId ?? null,
-          replayCursor,
-          route,
-        );
-      }
       const pendingReplay = opsRepository.getMessagesSince
         ? await collectPendingMessagesSince({
             getMessagesSince:
@@ -356,6 +335,31 @@ export function buildLiveAdmissionProcessor(input: {
         : undefined;
       const turnMessage = pendingReplay?.messages.at(-1);
       const appResponseRoute = turnMessage?.appResponseRoute;
+      // App turns use a public SDK session for admission and response events,
+      // while the runtime may use a separate internal continuity session.
+      const liveSessionId =
+        appResponseRoute?.sessionId ?? turnContext.agentSessionId;
+      const scope: LiveTurnScope = {
+        appId: turnContext.appId,
+        agentSessionId: liveSessionId,
+        conversationId: chatJid,
+        threadId: threadId ?? null,
+      };
+      // Pre-check: with N pollers the common case is that another worker already
+      // owns this scope. Route the continuation WITHOUT minting a run row that
+      // would just lose the claim and become an orphan.
+      const existing = await liveTurnAuthority.getActiveLiveTurn(scope);
+      if (existing) {
+        return routeScopeActive(
+          scope,
+          queueJid,
+          /* liveRunId */ '',
+          chatJid,
+          threadId ?? null,
+          replayCursor,
+          route,
+        );
+      }
       const canonicalMessageId = turnMessage?.canonicalMessageId?.trim();
       if (canonicalMessageId) {
         controlledSdkMessageId = canonicalMessageId;
@@ -372,7 +376,7 @@ export function buildLiveAdmissionProcessor(input: {
         }
       }
       liveRunId = await opsRepository.createSessionAgentRun?.({
-        agentSessionId: turnContext.agentSessionId,
+        agentSessionId: liveSessionId,
         executionProviderId,
         providerSessionId: turnContext.providerSessionId,
         ...(appResponseRoute

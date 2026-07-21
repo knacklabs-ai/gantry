@@ -103,6 +103,9 @@ export function createCallerResolvedToolHandler(input: {
           ...(context.data.jobId ? { jobId: context.data.jobId as never } : {}),
           conversationId: scope.conversationId as never,
           ...(scope.threadId ? { threadId: scope.threadId as never } : {}),
+          ...(scope.sandboxPolicy.correlationId
+            ? { correlationId: scope.sandboxPolicy.correlationId as never }
+            : {}),
           eventType: RUNTIME_EVENT_TYPES.MCP_TOOL_ACTIVITY,
           actor: 'mcp-stdio-audit-proxy',
           responseMode: 'none',
@@ -130,6 +133,9 @@ export function createCallerResolvedToolHandler(input: {
               : {}),
             conversationId: scope.conversationId as never,
             ...(scope.threadId ? { threadId: scope.threadId as never } : {}),
+            ...(scope.sandboxPolicy.correlationId
+              ? { correlationId: scope.sandboxPolicy.correlationId as never }
+              : {}),
             eventType: RUNTIME_EVENT_TYPES.INTERACTION_PENDING,
             actor: 'gantry-runtime',
             payload: {

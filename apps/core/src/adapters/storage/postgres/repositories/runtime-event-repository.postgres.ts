@@ -33,6 +33,7 @@ import {
   requireRuntimeEventType,
   RUNTIME_EVENT_TYPES,
 } from '../../../../domain/events/runtime-event-types.js';
+import { normalizeRuntimeEventThreadId } from '../../../../domain/events/runtime-event-conversation.js';
 import type { RuntimeEventRepository } from '../../../../domain/ports/repositories.js';
 import { logger } from '../../../../infrastructure/logging/logger.js';
 import * as pgSchema from '../schema/schema.js';
@@ -243,6 +244,10 @@ export class PostgresRuntimeEventRepository implements RuntimeEventRepository {
     input: RuntimeEventPublishInput,
   ): Promise<RuntimeEvent> {
     const conversationId = await this.resolveConversationId(db, input);
+    const threadId = normalizeRuntimeEventThreadId({
+      conversationId: conversationId as never,
+      threadId: input.threadId,
+    });
     const rows = await db
       .insert(pgSchema.runtimeEventsPostgres)
       .values({
@@ -253,7 +258,7 @@ export class PostgresRuntimeEventRepository implements RuntimeEventRepository {
         jobId: optionalId(input.jobId),
         triggerId: optionalId(input.triggerId),
         conversationId,
-        threadId: optionalId(input.threadId),
+        threadId: optionalId(threadId),
         eventType: requireRuntimeEventType(input.eventType),
         actor: input.actor,
         correlationId: input.correlationId ?? null,

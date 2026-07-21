@@ -459,6 +459,7 @@ export async function claimLiveAdmissionWorkItems(
         WHERE sdk_prior."app_id" = ${items.appId}
           AND sdk_prior."agent_session_id" = ${items.agentSessionId}
           AND sdk_prior."request_fingerprint" IS NOT NULL
+          AND sdk_prior."state" IN ('queued', 'claimed', 'deferred')
           AND sdk_prior."turn_state" IN ('waiting', 'running')
           AND (sdk_prior."created_at", sdk_prior."id") <
               (${items.createdAt}, ${items.id})

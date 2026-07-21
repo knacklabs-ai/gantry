@@ -48,7 +48,7 @@ describe('startLiveExecutionServices', () => {
       opsRepository: {
         getAgentTurnContext: vi.fn(async () => ({
           appId: 'tenant',
-          agentSessionId: 'session-app',
+          agentSessionId: 'internal-continuity-session',
         })),
         getMessagesSince: vi.fn(async () => [
           {

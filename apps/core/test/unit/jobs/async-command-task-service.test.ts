@@ -1605,6 +1605,39 @@ describe('AsyncCommandTaskService', () => {
     ).not.toContain(citationId);
   });
 
+  it('preserves a complete command result through task_wait while keeping its receipt bounded', async () => {
+    const repository = new MemoryAsyncTaskRepository();
+    const citationId = 'evidence_search_chunk_701d788e6845';
+    const commandResult = `${'command output '.repeat(90)}${citationId}`;
+    expect(commandResult.indexOf(citationId)).toBeGreaterThan(1_000);
+    const service = new AsyncCommandTaskService(repository, {
+      run: async () => ({ outputSummary: commandResult }),
+    });
+
+    const started = await service.start(baseInput());
+    expect(started.ok).toBe(true);
+    if (!started.ok) return;
+
+    await waitForStatus(repository, started.task.id, 'completed');
+    const waited = await service.wait({
+      taskIds: [started.task.id],
+      appId: 'app-1',
+      agentId: 'agent-1',
+      conversationId: 'conversation-1',
+      timeoutMs: 100,
+    });
+
+    expect(waited).toMatchObject({
+      ok: true,
+      timedOut: false,
+      tasks: [{ outputSummary: commandResult }],
+    });
+    expect(waited.tasks?.[0]?.outputSummary).toContain(citationId);
+    expect(
+      repository.tasks.get(started.task.id)?.receiptJson?.completed,
+    ).not.toContain(citationId);
+  });
+
   it('wakes delegated task waits when async MCP child tasks finish', async () => {
     const repository = new MemoryAsyncTaskRepository();
     const service = new AsyncCommandTaskService(repository, {

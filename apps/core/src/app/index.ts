@@ -467,7 +467,7 @@ export async function startGantryRuntime(
               threadId: input.threadId,
             })
           : undefined;
-        const destination =
+        let destination =
           await getRuntimeStorage().repositories.outboundDeliveries.resolveDeliveryDestination(
             {
               appId: input.appId as never,
@@ -475,6 +475,25 @@ export async function startGantryRuntime(
               ...(threadId ? { threadId } : {}),
             },
           );
+        if (
+          !destination &&
+          input.threadId &&
+          !input.threadId.startsWith('thread:')
+        ) {
+          const conversationDestination =
+            await getRuntimeStorage().repositories.outboundDeliveries.resolveDeliveryDestination(
+              {
+                appId: input.appId as never,
+                conversationId: input.conversationId as never,
+              },
+            );
+          if (conversationDestination) {
+            destination = {
+              ...conversationDestination,
+              threadId: input.threadId,
+            };
+          }
+        }
         if (!destination) {
           throw new ApplicationError(
             'NOT_FOUND',

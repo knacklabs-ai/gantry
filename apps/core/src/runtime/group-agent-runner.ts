@@ -613,6 +613,9 @@ export function createGroupAgentRunner(input: {
               ? { sessionId: agentInput.resumeSessionId }
               : {}),
             ...(runState.runId ? { runId: runState.runId } : {}),
+            ...(turnResponseRoute?.correlationId
+              ? { correlationId: turnResponseRoute.correlationId }
+              : {}),
             ...(options?.existingRunLeaseToken
               ? { runLeaseToken: options.existingRunLeaseToken }
               : {}),

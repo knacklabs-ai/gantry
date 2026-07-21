@@ -536,6 +536,13 @@ export class PostgresCanonicalMessageRepository {
               and(
                 eq(m.conversationId, afterConversationId),
                 gt(m.id, afterMessageId),
+                // App-channel conversations are intentionally unscoped while
+                // their canonical message ids use the default installation
+                // scope. In that case messageIdFor() cannot reconstruct the
+                // exact canonical id from the public cursor alone. Exclude the
+                // cursor message by its provider id so it cannot replay
+                // forever at an equal timestamp.
+                sql<boolean>`COALESCE(${m.externalMessageId}, ${m.externalRefJson}->>'id', '') <> ${after.id}`,
               ),
             ),
           ),

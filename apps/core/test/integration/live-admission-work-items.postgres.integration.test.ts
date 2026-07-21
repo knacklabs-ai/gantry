@@ -293,7 +293,7 @@ maybeDescribe('live admission work items (Postgres)', () => {
     await expect(reserve(6)).resolves.toMatchObject({ outcome: 'promoted' });
   });
 
-  it('claims only the head SDK turn and releases the next turn after terminal settlement', async () => {
+  it('releases the next SDK turn after the prior admission is terminal even if its turn state is stale', async () => {
     const appId = 'sdk-serialized-app';
     const agentSessionId = 'sdk-serialized-session';
     const conversationId = 'conversation:sdk-serialized';
@@ -366,13 +366,6 @@ maybeDescribe('live admission work items (Postgres)', () => {
       claimToken: 'sdk-serialized-claim-1',
       state: 'completed',
     });
-    await runtime.service.db.transaction((tx) =>
-      settleSdkSessionTurnWithExecutor(tx, {
-        messageId: first.messageId,
-        state: 'completed',
-      }),
-    );
-
     const released = await liveTurns.claimLiveAdmissionWorkItems({
       appId,
       workerInstanceId: 'sdk-serialized-worker-2',
@@ -1166,6 +1159,68 @@ maybeDescribe('live admission work items (Postgres)', () => {
       limit: 10,
     });
     expect(claimed.map((item) => item.id)).toContain(result?.item.id);
+  });
+
+  it('does not replay an app message at its public cursor boundary', async () => {
+    const chatJid = 'app:cursor-regression:conversation';
+    const first = await runtime.ops.storeMessageWithLiveAdmission?.(
+      {
+        id: 'app-cursor-message-1',
+        chat_jid: chatJid,
+        provider: 'app',
+        sender: 'user-app-cursor',
+        sender_name: 'App Cursor User',
+        content: 'first controlled message',
+        timestamp: '2026-06-16T00:00:04.000Z',
+        is_from_me: false,
+        is_bot_message: false,
+      },
+      {
+        appId: 'default',
+        agentId: 'app_cursor_agent',
+        triggerDecision: { source: 'sdk_session' },
+      },
+    );
+    expect(first?.item.messageCursor).toBeTruthy();
+
+    await expect(
+      runtime.ops.getMessagesSince(
+        chatJid,
+        first?.item.messageCursor ?? '',
+        10,
+        { threadId: null },
+      ),
+    ).resolves.toEqual([]);
+
+    await runtime.ops.storeMessageWithLiveAdmission?.(
+      {
+        id: 'app-cursor-message-2',
+        chat_jid: chatJid,
+        provider: 'app',
+        sender: 'user-app-cursor',
+        sender_name: 'App Cursor User',
+        content: 'second controlled message',
+        timestamp: '2026-06-16T00:00:05.000Z',
+        is_from_me: false,
+        is_bot_message: false,
+      },
+      {
+        appId: 'default',
+        agentId: 'app_cursor_agent',
+        triggerDecision: { source: 'sdk_session' },
+      },
+    );
+
+    await expect(
+      runtime.ops.getMessagesSince(
+        chatJid,
+        first?.item.messageCursor ?? '',
+        10,
+        { threadId: null },
+      ),
+    ).resolves.toMatchObject([
+      { id: 'app-cursor-message-2', content: 'second controlled message' },
+    ]);
   });
 
   it('stores accepted runtime event and live admission atomically', async () => {

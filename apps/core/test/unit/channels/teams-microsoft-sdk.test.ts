@@ -437,6 +437,7 @@ describe('MicrosoftTeamsSdkClient', () => {
         replyToId: 'root-message-1',
       }),
     );
+    expect(client.getAuthenticatedConversationRegistrationCount()).toBe(1);
   });
 
   it('normalizes a thread reference to the base channel for a new root message', async () => {

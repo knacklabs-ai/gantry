@@ -639,7 +639,7 @@ export class AsyncCommandTaskService {
         status: 'completed',
         now,
         terminalAt: now,
-        outputSummary: truncate(result.outputSummary ?? ''),
+        outputSummary: result.outputSummary ?? '',
         errorSummary: truncate(result.errorSummary ?? ''),
         receiptJson: {
           completed: truncate(result.outputSummary || 'command completed'),

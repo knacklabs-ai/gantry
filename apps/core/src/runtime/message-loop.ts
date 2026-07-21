@@ -5,6 +5,7 @@ import {
   TIMEZONE,
 } from '../config/index.js';
 import {
+  decodeGroupMessageCursor,
   encodeGroupMessageCursor,
   toGroupMessageCursor,
 } from '../shared/message-cursor.js';
@@ -504,7 +505,18 @@ export async function processLiveAdmissionWorkItem(
     return 'listener_degraded';
   }
 
-  const recoveredCursor = await deps.getOrRecoverCursor(item.queueJid);
+  let recoveredCursor = await deps.getOrRecoverCursor(item.queueJid);
+  if (item.requestFingerprint) {
+    const target = decodeGroupMessageCursor(item.messageCursor);
+    const targetMs = Date.parse(target.timestamp);
+    if (!Number.isFinite(targetMs)) return 'listener_degraded';
+    recoveredCursor = encodeGroupMessageCursor({
+      timestamp: new Date(targetMs - 1).toISOString(),
+      id: '\uffff',
+    });
+    deps.setAgentCursor(item.queueJid, recoveredCursor);
+    await deps.saveState();
+  }
   const replay = await collectPendingMessagesSince({
     getMessagesSince: opsRepository.getMessagesSince.bind(opsRepository),
     chatJid,

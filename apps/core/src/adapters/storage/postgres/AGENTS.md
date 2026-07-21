@@ -64,6 +64,10 @@
   `direct`/`dm` rows return runtime `conversationKind: "dm"` and group/channel
   rows return `conversationKind: "channel"`. Do not infer DM-vs-group memory
   scope from trigger settings or binding memory-subject blobs.
+- Public message cursors may omit provider-account scope even when canonical
+  message ids include it. Equal-timestamp pagination must exclude the exact
+  provider message id instead of assuming the canonical id can be reconstructed
+  from the public cursor; otherwise the cursor message can replay forever.
 - JSON-shaped runtime payload columns that are queried, indexed, validated, or
   partially updated belong in native `jsonb`. Pass objects/arrays to Drizzle
   `jsonb` columns, keep canonical route/lease/audit/join fields typed, and do

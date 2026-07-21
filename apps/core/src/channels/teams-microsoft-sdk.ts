@@ -261,6 +261,9 @@ export class MicrosoftTeamsSdkClient implements TeamsSdkClient {
     const persisted = input.conversationReference
       ? conversationReference(input.conversationReference)
       : undefined;
+    if (persisted) {
+      this.rememberConversationReference(input.conversationId, persisted);
+    }
     const reference = persisted ?? this.references.get(input.conversationId);
     if (!reference) {
       throw new Error(

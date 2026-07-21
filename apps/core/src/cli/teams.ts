@@ -238,7 +238,7 @@ export async function runTeamsConnectCommand(
     [
       'Create or reuse a Microsoft Entra app for Teams Graph discovery.',
       'Grant Microsoft Graph application permissions for reading Teams and channels, then complete tenant admin consent.',
-      'This setup registers a Teams channel for Gantry. Live Teams message transport still requires a TeamsSdkClient adapter.',
+      'This setup registers a Teams channel for Gantry. The Microsoft Teams transport receives activities on /channels/teams/messages.',
       'Docs: https://learn.microsoft.com/en-us/graph/teams-concept-overview',
     ].join('\n'),
     'Teams app setup',
