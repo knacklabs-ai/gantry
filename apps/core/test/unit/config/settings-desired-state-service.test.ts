@@ -215,6 +215,309 @@ function makeOps(
 }
 
 describe('SettingsDesiredStateService', () => {
+  it('derives canonical route conversation ids instead of using settings keys', () => {
+    const settings = createDefaultRuntimeSettings();
+    settings.providers.slack.enabled = true;
+    settings.providerAccounts.slack_default = {
+      agentId: 'main_agent',
+      provider: 'slack',
+      label: 'Slack Default',
+      runtimeSecretRefs: {},
+    };
+    settings.agents.main_agent = {
+      name: 'Main',
+      folder: 'main_agent',
+      bindings: {},
+      sources: emptySources(),
+      capabilities: [],
+    };
+    settings.conversations.sales_slack = {
+      providerConnection: 'slack_default',
+      providerAccount: 'slack_default',
+      externalId: 'C123',
+      kind: 'channel',
+      displayName: 'Sales Slack',
+      senderPolicy: { allow: '*', mode: 'trigger' },
+      controlApprovers: [],
+      installedAgents: {},
+    };
+    settings.bindings.sales_slack = {
+      agent: 'main_agent',
+      conversation: 'sales_slack',
+      trigger: '@main',
+      addedAt: '2026-05-02T00:00:00.000Z',
+      requiresTrigger: true,
+      memoryScope: 'conversation',
+    };
+
+    expect(configuredRoutingBindings(settings)[0]).toMatchObject({
+      conversationId: 'conversation:slack_default:sl:C123',
+      jid: 'sl:C123',
+      providerAccountId: 'slack_default',
+    });
+  });
+
+  it('preserves existing legacy conversation ids across both route projections, including unprefixed agent keys', async () => {
+    const settings = createDefaultRuntimeSettings();
+    settings.providers.slack.enabled = true;
+    settings.providerAccounts.slack_default = {
+      agentId: 'main_agent',
+      provider: 'slack',
+      label: 'Slack Default',
+      runtimeSecretRefs: {},
+    };
+    settings.agents.main_agent = {
+      name: 'Main',
+      folder: 'main_agent',
+      bindings: {
+        sales: {
+          jid: 'sl:C123',
+          providerAccountId: 'slack_default',
+          trigger: '@main',
+          addedAt: '2026-05-02T00:00:00.000Z',
+          requiresTrigger: true,
+        },
+      },
+      sources: emptySources(),
+      capabilities: [],
+    };
+    settings.agents.side_agent = {
+      name: 'Side',
+      folder: 'side_agent',
+      bindings: {},
+      sources: emptySources(),
+      capabilities: [],
+    };
+    settings.conversations.sales_settings_key = {
+      providerConnection: 'slack_default',
+      providerAccount: 'slack_default',
+      externalId: 'C123',
+      kind: 'channel',
+      displayName: 'Sales Slack',
+      senderPolicy: { allow: '*', mode: 'trigger' },
+      controlApprovers: [],
+      installedAgents: {
+        main_agent: {
+          agentId: 'main_agent',
+          providerAccountId: 'slack_default',
+          status: 'active',
+          addedAt: '2026-05-02T00:00:00.000Z',
+          memoryScope: 'conversation',
+        },
+      },
+    };
+    settings.conversations.support_settings_key = {
+      providerConnection: 'slack_default',
+      providerAccount: 'slack_default',
+      externalId: 'C456',
+      kind: 'channel',
+      displayName: 'Support Slack',
+      senderPolicy: { allow: '*', mode: 'trigger' },
+      controlApprovers: [],
+      installedAgents: {},
+    };
+    settings.bindings.support = {
+      agent: 'side_agent',
+      conversation: 'support_settings_key',
+      trigger: '@side',
+      addedAt: '2026-05-02T00:00:00.000Z',
+      requiresTrigger: true,
+      memoryScope: 'conversation',
+    };
+    const mainRouteKey = makeAgentThreadQueueKey(
+      'sl:C123',
+      'main_agent',
+      undefined,
+      'slack_default',
+    );
+    const normalizedMainRouteKey = makeAgentThreadQueueKey(
+      'sl:C123',
+      'agent:main_agent',
+      undefined,
+      'slack_default',
+    );
+    const sideRouteKey = makeAgentThreadQueueKey(
+      'sl:C456',
+      'agent:side_agent',
+      undefined,
+      'slack_default',
+    );
+    const routes: Record<string, any> = {
+      [mainRouteKey]: {
+        name: 'Main',
+        folder: 'main_agent',
+        conversationId: 'sales_slack',
+        trigger: '@main',
+        added_at: '2026-05-02T00:00:00.000Z',
+        requiresTrigger: true,
+        providerAccountId: 'slack_default',
+        conversationKind: 'channel',
+      },
+      [sideRouteKey]: {
+        name: 'Side',
+        folder: 'side_agent',
+        conversationId: 'support_slack',
+        trigger: '@side',
+        added_at: '2026-05-02T00:00:00.000Z',
+        requiresTrigger: true,
+        providerAccountId: 'slack_default',
+        conversationKind: 'channel',
+      },
+    };
+    const routeChanges: string[] = [];
+    const ops = {
+      ...makeOps(),
+      getAllConversationRoutes: vi.fn(async () => ({ ...routes })),
+      setConversationRoute: vi.fn(async (jid: string, route: any) => {
+        if (JSON.stringify(routes[jid]) !== JSON.stringify(route)) {
+          routeChanges.push(jid);
+          routes[jid] = route;
+        }
+      }),
+    };
+
+    expect(
+      configuredRoutingBindings(settings, routes).map(
+        (binding) => binding.conversationId,
+      ),
+    ).toEqual(['sales_slack', 'support_slack']);
+
+    const service = new SettingsDesiredStateService({
+      ops,
+      repositories: makeRepositories(),
+    });
+    await service.reconcile(settings);
+    await service.reconcile(settings);
+
+    expect(routeChanges).toEqual([normalizedMainRouteKey]);
+    expect(routes[mainRouteKey]?.conversationId).toBe('sales_slack');
+    expect(routes[normalizedMainRouteKey]?.conversationId).toBe('sales_slack');
+    expect(routes[sideRouteKey]?.conversationId).toBe('support_slack');
+    expect(Object.values(routes)).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ conversationId: 'sales_settings_key' }),
+        expect.objectContaining({ conversationId: 'support_settings_key' }),
+      ]),
+    );
+  });
+
+  it('deduplicates explicit and inferred provider accounts for one route identity', () => {
+    const settings = createDefaultRuntimeSettings();
+    settings.providerAccounts.slack_default = {
+      agentId: 'main_agent',
+      provider: 'slack',
+      label: 'Slack Default',
+      runtimeSecretRefs: {},
+    };
+    settings.agents.main_agent = {
+      name: 'Main',
+      folder: 'main_agent',
+      bindings: {
+        explicit: {
+          jid: 'sl:C123',
+          providerAccountId: 'slack_default',
+          trigger: '@main',
+          addedAt: '2026-05-02T00:00:00.000Z',
+          requiresTrigger: true,
+        },
+        inferred: {
+          jid: 'sl:C123',
+          trigger: '@main',
+          addedAt: '2026-05-02T00:00:00.000Z',
+          requiresTrigger: true,
+        },
+      },
+      sources: emptySources(),
+      capabilities: [],
+    };
+    settings.conversations.sales_slack = {
+      providerConnection: 'slack_default',
+      providerAccount: 'slack_default',
+      externalId: 'C123',
+      kind: 'channel',
+      displayName: 'Sales Slack',
+      senderPolicy: { allow: '*', mode: 'trigger' },
+      controlApprovers: [],
+      installedAgents: {},
+    };
+
+    expect(configuredRoutingBindings(settings)).toEqual([
+      expect.objectContaining({
+        agentFolder: 'main_agent',
+        jid: 'sl:C123',
+        providerAccountId: 'slack_default',
+        conversationId: 'conversation:slack_default:sl:C123',
+      }),
+    ]);
+  });
+
+  it('rejects a directly keyed install for another thread and finds the matching install', () => {
+    const settings = createDefaultRuntimeSettings();
+    for (const providerAccountId of [
+      'slack_default',
+      'slack_wrong',
+      'slack_correct',
+    ]) {
+      settings.providerAccounts[providerAccountId] = {
+        agentId: 'main_agent',
+        provider: 'slack',
+        label: providerAccountId,
+        runtimeSecretRefs: {},
+      };
+    }
+    settings.agents.main_agent = {
+      name: 'Main',
+      folder: 'main_agent',
+      bindings: {
+        support_thread: {
+          jid: 'sl:C123',
+          threadId: 'thread-correct',
+          trigger: '@main',
+          addedAt: '2026-05-02T00:00:00.000Z',
+          requiresTrigger: true,
+        },
+      },
+      sources: emptySources(),
+      capabilities: [],
+    };
+    settings.conversations.sales_slack = {
+      providerConnection: 'slack_default',
+      providerAccount: 'slack_default',
+      externalId: 'C123',
+      kind: 'channel',
+      displayName: 'Sales Slack',
+      senderPolicy: { allow: '*', mode: 'trigger' },
+      controlApprovers: [],
+      installedAgents: {
+        main_agent: {
+          agentId: 'main_agent',
+          providerAccountId: 'slack_wrong',
+          threadId: 'thread-wrong',
+          status: 'active',
+          addedAt: '2026-05-02T00:00:00.000Z',
+          memoryScope: 'conversation',
+        },
+        main_agent_correct_thread: {
+          agentId: 'main_agent',
+          providerAccountId: 'slack_correct',
+          threadId: ' thread-correct ',
+          status: 'active',
+          addedAt: '2026-05-02T00:00:00.000Z',
+          memoryScope: 'conversation',
+        },
+      },
+    };
+
+    expect(configuredRoutingBindings(settings)).toEqual([
+      expect.objectContaining({
+        agentFolder: 'main_agent',
+        threadId: 'thread-correct',
+        providerAccountId: 'slack_correct',
+        conversationId: 'conversation:slack_correct:sl:C123',
+      }),
+    ]);
+  });
+
   it('validates capability references before reconciliation', async () => {
     const settings = createDefaultRuntimeSettings();
     settings.agents.main_agent = {
@@ -986,7 +1289,7 @@ describe('SettingsDesiredStateService', () => {
       expect.objectContaining({
         name: 'Main',
         folder: 'main_agent',
-        conversationId: 'sales_slack',
+        conversationId: 'conversation:slack_default:sl:C123',
         trigger: '@main',
         providerAccountId: 'slack_default',
       }),
@@ -1069,7 +1372,7 @@ conversations:
         'slack_one',
       ),
       expect.objectContaining({
-        conversationId: 'sales_one',
+        conversationId: 'conversation:slack_one:sl:slack:C123',
         providerAccountId: 'slack_one',
       }),
     );
@@ -1081,7 +1384,7 @@ conversations:
         'slack_two',
       ),
       expect.objectContaining({
-        conversationId: 'sales_two',
+        conversationId: 'conversation:slack_two:sl:slack:C123',
         providerAccountId: 'slack_two',
       }),
     );
@@ -1150,7 +1453,7 @@ conversations:
     expect(configuredRoutingBindings(settings)[0]).toMatchObject({
       agentFolder: 'main_agent',
       providerAccountId: 'slack_two',
-      conversationId: undefined,
+      conversationId: 'conversation:slack_two:sl:slack:C123',
     });
   });
 
@@ -3508,5 +3811,237 @@ conversations:
       liveApplied: [],
       restartRequired: ['observability'],
     });
+  });
+});
+
+describe('reconcile preserves agent-installed bindings', () => {
+  function agentInstalledSkill() {
+    return {
+      id: 'skill:agentic',
+      appId: 'default',
+      name: 'agentic-notes',
+      source: 'agent_created',
+      status: 'installed',
+      promptRefs: [],
+      toolIds: [],
+      workflowRefs: [],
+      storage: { type: 'local' },
+      createdAt: '2026-07-20T00:00:00.000Z',
+      updatedAt: '2026-07-20T00:00:00.000Z',
+    };
+  }
+
+  function agentSkillBinding(status: 'active' | 'disabled') {
+    return {
+      id: 'agent-skill-binding:agent:main_agent:skill:agentic',
+      appId: 'default',
+      agentId: 'agent:main_agent',
+      skillId: 'skill:agentic',
+      status,
+      createdAt: '2026-07-20T00:00:00.000Z',
+      updatedAt: '2026-07-20T00:00:00.000Z',
+    };
+  }
+
+  function agentRequestedMcpServer() {
+    return {
+      id: 'mcp:crm',
+      appId: 'default',
+      status: 'active',
+      name: 'crm',
+      createdSource: 'agent_request',
+      riskClass: 'medium',
+      transport: 'stdio_template',
+      config: { transport: 'stdio_template', templateId: 'crm' },
+      allowedToolPatterns: [],
+      autoApproveToolPatterns: [],
+      credentialRefs: [],
+    };
+  }
+
+  function agentMcpBinding(status: 'active' | 'disabled') {
+    return {
+      id: 'agent-mcp-binding:agent:main_agent:mcp:crm',
+      appId: 'default',
+      agentId: 'agent:main_agent',
+      serverId: 'mcp:crm',
+      status,
+      required: false,
+      permissionPolicyIds: [],
+      allowedToolPatterns: [],
+      createdAt: '2026-07-20T00:00:00.000Z',
+      updatedAt: '2026-07-20T00:00:00.000Z',
+    };
+  }
+
+  function repositoriesWithAgentInstalls(input: {
+    skillBindingStatus?: 'active' | 'disabled';
+    mcpBindingStatus?: 'active' | 'disabled';
+    mcpServer?: Record<string, unknown>;
+  }) {
+    const base = makeRepositories();
+    return makeRepositories({
+      skills: {
+        ...base.skills,
+        getSkill: vi.fn(async (id: string) =>
+          id === 'skill:agentic'
+            ? agentInstalledSkill()
+            : base.skills.getSkill(id),
+        ),
+        listAgentSkillBindings: vi.fn(async () => [
+          agentSkillBinding(input.skillBindingStatus ?? 'active'),
+        ]),
+      },
+      mcpServers: {
+        ...base.mcpServers,
+        getServer: vi.fn(async (id: string) =>
+          id === 'mcp:crm'
+            ? (input.mcpServer ?? agentRequestedMcpServer())
+            : base.mcpServers.getServer(id),
+        ),
+        listAgentBindings: vi.fn(async () => [
+          agentMcpBinding(input.mcpBindingStatus ?? 'active'),
+        ]),
+      },
+    });
+  }
+
+  it('unions agent-request-created active bindings into the replacement set', async () => {
+    const settings = createDefaultRuntimeSettings();
+    settings.agents.main_agent = {
+      name: 'Main',
+      folder: 'main_agent',
+      bindings: {},
+      sources: {
+        skills: [{ id: 'skill:admin' }],
+        mcpServers: [{ id: 'mcp:github' }],
+        tools: [],
+      },
+      capabilities: [],
+    };
+    const repositories = repositoriesWithAgentInstalls({});
+    const service = new SettingsDesiredStateService({
+      ops: makeOps(),
+      repositories,
+    });
+
+    await service.reconcile(settings);
+
+    const call =
+      repositories.agents.replaceAgentCapabilityBindings.mock.calls[0]?.[0];
+    expect(call.skillBindings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ skillId: 'skill:admin', status: 'active' }),
+        expect.objectContaining({ skillId: 'skill:agentic', status: 'active' }),
+      ]),
+    );
+    expect(call.mcpBindings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ serverId: 'mcp:github' }),
+        expect.objectContaining({ serverId: 'mcp:crm', status: 'active' }),
+      ]),
+    );
+  });
+
+  it('respects explicit removal: disabled agent-request bindings are not resurrected', async () => {
+    const settings = createDefaultRuntimeSettings();
+    settings.agents.main_agent = {
+      name: 'Main',
+      folder: 'main_agent',
+      bindings: {},
+      sources: {
+        skills: [{ id: 'skill:admin' }],
+        mcpServers: [],
+        tools: [],
+      },
+      capabilities: [],
+    };
+    const repositories = repositoriesWithAgentInstalls({
+      skillBindingStatus: 'disabled',
+      mcpBindingStatus: 'disabled',
+    });
+    const service = new SettingsDesiredStateService({
+      ops: makeOps(),
+      repositories,
+    });
+
+    await service.reconcile(settings);
+
+    const call =
+      repositories.agents.replaceAgentCapabilityBindings.mock.calls[0]?.[0];
+    expect(call.skillBindings).toEqual([
+      expect.objectContaining({ skillId: 'skill:admin' }),
+    ]);
+    expect(call.mcpBindings).toEqual([]);
+  });
+
+  it('does not preserve admin-created bindings absent from settings', async () => {
+    const settings = createDefaultRuntimeSettings();
+    settings.agents.main_agent = {
+      name: 'Main',
+      folder: 'main_agent',
+      bindings: {},
+      sources: { skills: [{ id: 'skill:admin' }], mcpServers: [], tools: [] },
+      capabilities: [],
+    };
+    const repositories = repositoriesWithAgentInstalls({
+      mcpServer: { ...agentRequestedMcpServer(), createdSource: 'admin' },
+    });
+    // The bound skill is admin-uploaded, not agent-created.
+    const previousGetSkill = repositories.skills.getSkill;
+    repositories.skills.getSkill = vi.fn(async (id: string) =>
+      id === 'skill:agentic'
+        ? { ...agentInstalledSkill(), source: 'admin_uploaded' }
+        : previousGetSkill(id),
+    );
+    const service = new SettingsDesiredStateService({
+      ops: makeOps(),
+      repositories,
+    });
+
+    await service.reconcile(settings);
+
+    const call =
+      repositories.agents.replaceAgentCapabilityBindings.mock.calls[0]?.[0];
+    expect(call.skillBindings).toEqual([
+      expect.objectContaining({ skillId: 'skill:admin' }),
+    ]);
+    expect(call.mcpBindings).toEqual([]);
+  });
+
+  it('warns and skips inactive configured MCP servers instead of failing the reconcile', async () => {
+    const { replaceDesiredStateCapabilities } =
+      await import('@core/config/settings/desired-state-capability-reconcile.js');
+    const repositories = makeRepositories();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      await replaceDesiredStateCapabilities({
+        appId: 'default' as never,
+        agentId: 'agent:main_agent' as never,
+        agent: {
+          name: 'Main',
+          folder: 'main_agent',
+          bindings: {},
+          sources: {
+            skills: [],
+            mcpServers: [{ id: 'mcp:github' }, { id: 'mcp:missing' }],
+            tools: [],
+          },
+          capabilities: [],
+        } as never,
+        repositories,
+        now: '2026-07-20T00:00:00.000Z',
+      });
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining('mcp:missing is not active'),
+      );
+    } finally {
+      warn.mockRestore();
+    }
+    const call =
+      repositories.agents.replaceAgentCapabilityBindings.mock.calls[0]?.[0];
+    expect(call.mcpBindings).toEqual([
+      expect.objectContaining({ serverId: 'mcp:github' }),
+    ]);
   });
 });

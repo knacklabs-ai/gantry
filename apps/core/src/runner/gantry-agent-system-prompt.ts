@@ -23,6 +23,10 @@ export interface GantryAgentSystemPromptInput {
   threadId?: string;
   isScheduledJob?: boolean;
   currentDateTimeIso?: string;
+  // IANA timezone for the conversation. Defaults to the process timezone,
+  // which in the runner is the conversation TZ projected into env by
+  // buildBaseRunnerEnv (agent-spawn-helpers.ts).
+  timezone?: string;
   sandboxSummary?: string;
 }
 
@@ -47,7 +51,7 @@ const PUBLIC_CATALOG = [
   'Files: FileSearch, FileRead, FileEdit, FileWrite, file',
   'Memory: memory_search, memory_save, reviewed memory tools',
   'Skills: selected skills and skill request tools',
-  'MCP/apps: mcp_list_tools, mcp_describe_tool, mcp_call_tool, async_mcp_call, request_mcp_server',
+  'MCP/apps: mcp_list_tools, mcp_search_tools, mcp_describe_tool, mcp_call_tool, async_mcp_call, request_mcp_server',
   'Commands: RunCommand(<argv pattern>)',
   'Tasks: todo_update; async_run_command/async_mcp_call/delegate_task/task_get/task_list/task_message/task_cancel only when mounted in this run',
   'Scheduler: scheduler_*',
@@ -102,6 +106,7 @@ export function buildGantryAgentSystemPrompt(
       mode,
       [...staticSections, documentationSection()],
       [
+        currentDateTimeSection(input),
         assistantOutputDirectivesSection(),
         runtimeSection(input),
         reasoningSection(),
@@ -162,7 +167,7 @@ function executionBiasSection(): string {
   return [
     '## Execution Bias',
     'Prefer concrete progress over commentary. Diagnose the real blocker, choose the smallest correct action, and verify the result.',
-    'Be a dependable operator for the team: keep the user informed, protect approvals, and complete the work with receipts.',
+    'Be a dependable operator for the team: keep the user informed, protect approvals, and complete the work.',
   ].join('\n');
 }
 
@@ -252,9 +257,14 @@ function sandboxSection(input: GantryAgentSystemPromptInput): string {
 }
 
 function currentDateTimeSection(input: GantryAgentSystemPromptInput): string {
+  const iso = input.currentDateTimeIso?.trim();
+  const timezone =
+    input.timezone?.trim() || Intl.DateTimeFormat().resolvedOptions().timeZone;
   return [
     '## Current Date & Time',
-    input.currentDateTimeIso?.trim() || 'Runtime did not provide a timestamp.',
+    iso
+      ? `${iso} (timezone: ${timezone}). As of turn start; use the date tool when precision matters.`
+      : 'Runtime did not provide a timestamp.',
   ].join('\n');
 }
 
