@@ -5,6 +5,7 @@ import {
 } from './configured-agent-tools.js';
 import { authorizedMcpServerIdsForAgent } from '../application/mcp/mcp-authorized-servers.js';
 import { skillActionDefinitionsForAgent } from '../application/agents/agent-capability-skill-actions.js';
+import { resolveAgentPromptCapabilityCatalog } from '../application/agents/agent-prompt-capability-catalog.js';
 import { selectedSkillDisplay } from '../domain/skills/skill-identity.js';
 import {
   semanticCapabilityFromToolCatalogItem,
@@ -25,6 +26,7 @@ export async function resolveTurnToolPolicy(
     return {
       toolPolicyRules: undefined,
       runtimeAccess: [],
+      semanticCapabilities: [],
     };
   }
   return resolveConfiguredToolPolicy({
@@ -72,6 +74,22 @@ export async function resolveTurnSelectedMcpServerIds(
     mcpServers,
     appId: turnContext.appId,
     agentId: turnContext.agentId,
+  });
+}
+
+export function resolveTurnPromptCapabilityCatalog(
+  deps: Pick<
+    GroupProcessingDeps,
+    'getSkillRepository' | 'getMcpServerRepository'
+  >,
+  scope: { appId: string; agentId: string },
+  readySemanticCapabilities: readonly SemanticCapabilityDefinition[],
+) {
+  return resolveAgentPromptCapabilityCatalog({
+    ...scope,
+    readySemanticCapabilities,
+    skillRepository: deps.getSkillRepository?.(),
+    mcpServerRepository: deps.getMcpServerRepository?.(),
   });
 }
 
