@@ -225,18 +225,19 @@ maybeDescribe('agent-e2e haiku turn (real model, behavioral)', () => {
         evidence.events.push(...events);
 
         evidence.phase('verify');
-        // The run exists and executed on the anthropic claude-agent-sdk lane.
-        const started = events.find((e) => e.eventType === 'run.started');
-        expect(started, 'run.started event').toBeDefined();
-        const startedPayload = payloadOf(started as SessionEvent);
-        expect(startedPayload.execution_provider_id).toBe(
-          'anthropic:claude-agent-sdk',
+        // The run exists and executed on the anthropic claude-agent-sdk
+        // lane. The durable runs API is the evidence source (the run.started
+        // EVENT may land in the feed after the reply match stops collection).
+        const runsListed = await api.request<{
+          runs: Array<{ id?: string; executionProviderId?: string }>;
+        }>('GET', `/v1/sessions/${encodeURIComponent(sessionId)}/runs?limit=5`);
+        expect(runsListed.status).toBe(200);
+        const run = runsListed.body.runs.find(
+          (candidate) =>
+            candidate.executionProviderId === 'anthropic:claude-agent-sdk',
         );
-        const runId = startedPayload.runId;
-        if (typeof runId === 'string') evidence.evidence.runId = runId;
-        if (typeof startedPayload.agent_engine === 'string') {
-          evidence.evidence.harness = startedPayload.agent_engine;
-        }
+        expect(run, 'durable run row on the anthropic lane').toBeDefined();
+        if (typeof run?.id === 'string') evidence.evidence.runId = run.id;
 
         // Durable persisted reply row exists. NO assertion on reply phrasing.
         expect(
