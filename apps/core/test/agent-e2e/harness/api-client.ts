@@ -154,11 +154,13 @@ export class AgentE2EApiClient {
   }
 
   /**
-   * Poll until a durable OUTBOUND message row with non-empty text exists for
-   * the session (GET /v1/sessions/{id}/messages). Live sessions stream the
-   * reply and keep the run open, so the persisted row — not a run.completed
-   * or outbound event — is the completion signal. A run-failure event
-   * observed before the reply is fatal.
+   * Poll until a durable assistant reply exists for the session. The app
+   * channel is event-sourced: replies arrive as session.message.outbound
+   * events or as session.message.streaming events whose terminal chunk has
+   * done=true — both persisted runtime_events rows (the delivery record for
+   * API sessions). Live sessions keep the run open after replying, so
+   * run.completed is NOT the completion signal; a run FAILURE event before
+   * the reply is fatal.
    */
   async waitForDurableAssistantReply(
     sessionId: string,
@@ -182,33 +184,25 @@ export class AgentE2EApiClient {
               `(payload: ${JSON.stringify(event.payload).slice(0, 300)})`,
           );
         }
-      }
-      const listed = await this.expect<{
-        messages: Array<{
-          direction?: string;
-          parts?: Array<{ kind: string; text?: string; markdown?: string }>;
-        }>;
-      }>(
-        200,
-        'GET',
-        `/v1/sessions/${encodeURIComponent(sessionId)}/messages?limit=50`,
-      );
-      const reply = listed.messages.find(
-        (message) =>
-          message.direction === 'outbound' &&
-          (message.parts ?? []).some(
-            (part) =>
-              (part.kind === 'text' && part.text?.trim()) ||
-              (part.kind === 'markdown' && part.markdown?.trim()),
-          ),
-      );
-      if (reply) {
-        return { reply: reply as Record<string, unknown>, events };
+        const payload = (event.payload ?? {}) as {
+          text?: unknown;
+          done?: unknown;
+        };
+        const hasText =
+          typeof payload.text === 'string' && payload.text.trim().length > 0;
+        if (
+          (event.eventType === 'session.message.outbound' && hasText) ||
+          (event.eventType === 'session.message.streaming' &&
+            payload.done === true &&
+            hasText)
+        ) {
+          return { reply: payload as Record<string, unknown>, events };
+        }
       }
       await new Promise((resolve) => setTimeout(resolve, 500));
     }
     throw new Error(
-      `No durable outbound assistant message for session ${sessionId} ` +
+      `No durable assistant reply for session ${sessionId} ` +
         `within ${timeoutMs}ms ` +
         `(events: ${events.map((event) => event.eventType).join(', ') || 'none'})`,
     );

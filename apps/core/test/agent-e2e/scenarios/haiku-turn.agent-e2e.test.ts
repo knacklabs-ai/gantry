@@ -239,7 +239,10 @@ maybeDescribe('agent-e2e haiku turn (real model, behavioral)', () => {
         }
 
         // Durable persisted reply row exists. NO assertion on reply phrasing.
-        expect(reply, 'durable outbound assistant message row').toBeDefined();
+        expect(
+          reply,
+          'durable assistant reply (event-sourced app channel)',
+        ).toBeDefined();
 
         // Usage evidence when surfaced: alias/provider consistent with haiku
         // on anthropic (covers alias or full runner model id).
