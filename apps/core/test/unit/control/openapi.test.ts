@@ -312,9 +312,7 @@ describe('control OpenAPI documentation', () => {
   it('documents observer insight type filtering and structured evidence', () => {
     const spec = getGantryOpenApiDocument();
 
-    expect(
-      spec.paths['/v1/observer/insights']?.get.parameters,
-    ).toContainEqual(
+    expect(spec.paths['/v1/observer/insights']?.get.parameters).toContainEqual(
       expect.objectContaining({
         name: 'type',
         schema: {
