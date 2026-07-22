@@ -8,8 +8,7 @@
 const CHANNEL_DIALECT_PREFIX = 'telegram-' as const;
 type ChannelFormattingDialect =
   `${typeof CHANNEL_DIALECT_PREFIX}${'html' | 'markdown-v2'}`;
-const CHANNEL_MARKDOWN_V2: ChannelFormattingDialect =
-  `${CHANNEL_DIALECT_PREFIX}markdown-v2`;
+const CHANNEL_MARKDOWN_V2: ChannelFormattingDialect = `${CHANNEL_DIALECT_PREFIX}markdown-v2`;
 
 export type FormattingDialect =
   | 'none'
