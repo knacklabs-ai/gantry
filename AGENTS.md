@@ -108,3 +108,8 @@ A task is not PR-ready until all of these exist:
   coordinating session, never nested reviewers.
 - Keep the template repo independent of any client-specific source repo.
 - Do not keep long policy blocks in `AGENTS.md`; move them into docs.
+- PRs: the orchestrator IS authorized to push story branches and raise PRs
+  once `pr_ready` evidence exists — one PR per story, never bundled
+  (client authorization 2026-07-22). MERGING stays human-gated: never
+  auto-merge, gate on literal green. No session links in PR bodies or
+  commit trailers.
