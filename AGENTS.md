@@ -113,3 +113,7 @@ A task is not PR-ready until all of these exist:
   (client authorization 2026-07-22). MERGING stays human-gated: never
   auto-merge, gate on literal green. No session links in PR bodies or
   commit trailers.
+- Every PR that changes runtime behavior adds or extends agent-e2e coverage
+  for it (hermetic; matrix rows in `docs/architecture/agent-e2e-test-matrix.md`
+  flip with test-file citations). A PR with no e2e delta states why in its
+  body. The agent-e2e gate is the merge bar (client directive 2026-07-22).
