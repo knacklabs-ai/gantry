@@ -81,6 +81,8 @@ function context(
 function configuredSettings() {
   const settings = createDefaultRuntimeSettings();
   settings.providers.telegram = { enabled: true };
+  settings.memory.embeddings.enabled = true;
+  settings.memory.embeddings.provider = 'openai';
   settings.observer = {
     enabled: true,
     owner: { recipient: 'owner-1', conversation: 'owner_dm' },
@@ -111,7 +113,13 @@ const insight: ProactiveInsight = {
   insightType: 'commitment',
   title: 'Follow up',
   summary: 'A promised follow-up is still open.',
-  evidenceRefs: [{ permalink: 'https://example.test/message/1' }],
+  evidenceRefs: [
+    {
+      conversationId: 'conversation:tg:observed-channel',
+      messageId: 'message-1',
+      ts: '2026-07-21T00:00:00.000Z',
+    },
+  ],
   batchSnapshotAt: '2026-07-21T00:00:00.000Z',
   evidenceVersion: 1,
   canonicalSignature: 'commitment:follow-up',
@@ -325,7 +333,7 @@ describe('observer control routes', () => {
     ]);
     const res = responseRecorder();
     const url = new URL(
-      `http://localhost/v1/observer/insights?subject=${SUBJECT}&state=pending&limit=2`,
+      `http://localhost/v1/observer/insights?subject=${SUBJECT}&type=commitment&state=pending&limit=2`,
     );
 
     await expect(
@@ -342,6 +350,7 @@ describe('observer control routes', () => {
     expect(observerRepository.list).toHaveBeenCalledWith({
       appId: 'default',
       subject: SUBJECT,
+      insightType: 'commitment',
       state: 'pending',
       limit: 3,
       before: undefined,
@@ -353,6 +362,29 @@ describe('observer control routes', () => {
         JSON.stringify({ createdAt: second.createdAt, id: second.id }),
       ).toString('base64url'),
     });
+  });
+
+  it('rejects an invalid insight type filter', async () => {
+    const res = responseRecorder();
+    const url = new URL(
+      'http://localhost/v1/observer/insights?type=not-an-insight',
+    );
+
+    await expect(
+      handleObserverRoutes(
+        request(),
+        res,
+        context(configuredSettings()),
+        url,
+        url.pathname,
+      ),
+    ).resolves.toBe(true);
+
+    expect(res.statusCode).toBe(400);
+    expect(JSON.parse(res.body)).toMatchObject({
+      error: { code: 'INVALID_REQUEST', message: 'type is invalid' },
+    });
+    expect(observerRepository.list).not.toHaveBeenCalled();
   });
 
   it('rejects a non-canonical subject filter', async () => {
