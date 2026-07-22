@@ -1,7 +1,21 @@
 # Permission engine redesign — empowered classifier + safety rails — goal prompt
 
 Status: GRILL + DOUBLE-CRITIQUE + PLAN-VALIDATION HARDENED 2026-07-22 (Fable + Codex
-critiques, then a Codex plan-validation whose 6 gaps are folded below). Supersedes
+critiques, then a Codex plan-validation whose 6 gaps are folded below).
+**L2 RE-VALIDATED 2026-07-22 (Codex, file:line evidence): seam CONFIRMED;
+`sandbox_runtime` isolation CONFIRMED; all six precedence sites CONFIRMED intact
+post-PAY-1; REFUTED — no independent credential denylist exists in direct mode (the
+`~/.ssh`/`~/.aws`/settings denies live INSIDE the SDK sandbox config, so the escape
+hatch alone would drop them; `allowAppleEvents`/`filesystem.disabled` absent from the
+SDK surface — deny path lists, `allowUnixSockets`, `allowMachLookup` exist).
+CLIENT RULING 2026-07-22 ("we already have a permission system for every action;
+the SDK sandbox makes the agent perform less"): authorization is the sole control.
+L2 therefore lands in TWO steps within the same story: L2i — immediately reduce the
+direct-mode SDK sandbox profile to credential/protected-path denies ONLY plus
+allowUnixSockets/allowMachLookup (no other enforcement; no escape hatch yet);
+L2ii — once the coordinator rails carry the protected-path/credential ask-floors,
+the sandbox stops enforcing entirely (escape hatch on, gated by rails). No
+credential-guard gap exists at any point.** Supersedes
 `permission-floor-and-promotion-goal-prompt.md`, folds `permission-simplification-goal-prompt.md`.
 RCA: session scratchpad `git-permission-rca.md` (NOT in-tree — its incident claims
 below are ASSUMPTIONS pending runtime re-verification, not repo-provable).
