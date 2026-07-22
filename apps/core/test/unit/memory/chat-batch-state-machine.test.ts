@@ -22,7 +22,7 @@ const APP_ID = 'app_test' as AppId;
 const NOW = new Date('2026-07-22T01:00:00.000Z');
 
 describe('ChatBatchStateMachine', () => {
-  it('persists intent before submit, then polls and transactionally applies accounting', async () => {
+  it('enters prefer-orphan only after upload and completes the happy submission path', async () => {
     const events: string[] = [];
     const repository = new InMemoryChatBatchRepository(events);
     const capability = fixtureCapability(events);
@@ -30,11 +30,12 @@ describe('ChatBatchStateMachine', () => {
 
     const submitted = await machine.submit(submitInput());
     expect(submitted.state).toBe('submitted');
-    expect(events.slice(0, 5)).toEqual([
+    expect(events.slice(0, 6)).toEqual([
       'provider_preflight',
       'intent',
+      'provider_upload',
       'submission_unknown',
-      'provider_submit',
+      'provider_create',
       'submitted',
     ]);
 
@@ -63,17 +64,40 @@ describe('ChatBatchStateMachine', () => {
     expect(events).toContain('applied');
   });
 
-  it('never auto-resubmits a submission_unknown intent after a crash-window error', async () => {
-    const repository = new InMemoryChatBatchRepository();
-    const capability = fixtureCapability();
-    vi.mocked(capability.submitBatch).mockImplementationOnce(async (opts) => {
-      await opts.onSubmissionStart();
-      throw new Error('connection lost after provider accept');
+  it('keeps upload failures retryable without entering prefer-orphan', async () => {
+    const events: string[] = [];
+    const repository = new InMemoryChatBatchRepository(events);
+    const capability = fixtureCapability(events);
+    vi.mocked(capability.submitBatch).mockImplementationOnce(async () => {
+      events.push('provider_upload');
+      throw new Error('input upload failed');
     });
     const machine = fixtureMachine(repository, capability);
 
     await expect(machine.submit(submitInput())).rejects.toThrow(
-      'connection lost after provider accept',
+      'input upload failed',
+    );
+    expect(repository.only()).toMatchObject({
+      state: 'preflight_failed',
+      providerBatchId: null,
+      lastError: 'input upload failed',
+    });
+    expect(events).toEqual(['provider_preflight', 'intent', 'provider_upload']);
+  });
+
+  it('enters prefer-orphan after upload when provider batch creation fails and never auto-resubmits', async () => {
+    const repository = new InMemoryChatBatchRepository();
+    const capability = fixtureCapability();
+    vi.mocked(capability.submitBatch).mockImplementationOnce(async (opts) => {
+      // Upload has succeeded; the provider batch create is the first ambiguous
+      // operation and must transition before it is sent.
+      await opts.onSubmissionStart();
+      throw new Error('connection lost during provider batch create');
+    });
+    const machine = fixtureMachine(repository, capability);
+
+    await expect(machine.submit(submitInput())).rejects.toThrow(
+      'connection lost during provider batch create',
     );
     await expect(machine.submit(submitInput())).resolves.toMatchObject({
       state: 'submission_unknown',
@@ -357,8 +381,9 @@ function fixtureCapability(events: string[] = []): MemoryLlmBatchCapability {
       events.push('provider_preflight');
     }),
     submitBatch: vi.fn(async (opts) => {
+      events.push('provider_upload');
       await opts.onSubmissionStart();
-      events.push('provider_submit');
+      events.push('provider_create');
       return { batchId: 'provider-batch-1' };
     }),
     pollBatch: vi.fn(async () => ({

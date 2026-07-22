@@ -33,6 +33,7 @@ export interface AgentCredentialBrokerBinding {
   modelCredentialProviderId?: ModelCredentialProvider;
   modelRouteId?: ModelRouteId;
   modelBatchRequestCount?: number;
+  modelBatchId?: string;
   agentIdentifier?: string;
   agentName?: string;
 }

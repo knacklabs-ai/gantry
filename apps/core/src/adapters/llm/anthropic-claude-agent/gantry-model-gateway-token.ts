@@ -10,6 +10,8 @@ import type { ModelProviderDefinition } from '../../../shared/model-provider-reg
 import {
   isProviderBatchPath,
   isProviderBatchSubmissionPath,
+  openAiBatchIdFromPath,
+  openAiFileContentIdFromPath,
 } from './gantry-model-gateway-routing.js';
 
 export interface GatewayTokenRecord {
@@ -24,6 +26,9 @@ export interface GatewayTokenRecord {
   tokenScope: string;
   purpose: AgentCredentialPurpose;
   modelBatchRequestCount: number;
+  modelBatchId?: string;
+  modelBatchUploadedFileIds: Set<string>;
+  modelBatchFileIds: Map<string, string>;
   agentId?: RuntimeEventPublishInput['agentId'];
   runId?: RuntimeEventPublishInput['runId'];
   apiKeyId?: string;
@@ -65,11 +70,97 @@ export function gatewayTokenAllowsPath(
   token: GatewayTokenRecord,
   provider: ModelProviderDefinition,
   providerPath: string,
+  method = 'POST',
 ): boolean {
-  return (
+  const purposeAllowsPath =
     isProviderBatchPath(provider, providerPath) ===
-    (token.purpose === 'model_batch')
+    (token.purpose === 'model_batch');
+  if (!purposeAllowsPath || token.purpose !== 'model_batch') {
+    return purposeAllowsPath;
+  }
+  if (provider.id !== 'openai' || method !== 'GET') return true;
+
+  const fileId = openAiFileContentIdFromPath(providerPath);
+  if (fileId) {
+    return (
+      Boolean(token.modelBatchId) &&
+      token.modelBatchFileIds.get(fileId) === token.modelBatchId
+    );
+  }
+  const batchId = openAiBatchIdFromPath(providerPath);
+  if (batchId) return token.modelBatchId === batchId;
+  return true;
+}
+
+export function gatewayTokenAllowsRequestBody(
+  token: GatewayTokenRecord,
+  provider: ModelProviderDefinition,
+  providerPath: string,
+  method: string,
+  body: Buffer,
+): boolean {
+  if (
+    token.purpose !== 'model_batch' ||
+    provider.id !== 'openai' ||
+    method !== 'POST' ||
+    providerPath !== '/v1/batches'
+  ) {
+    return true;
+  }
+  const inputFileId = jsonStringField(body, 'input_file_id');
+  return Boolean(
+    inputFileId && token.modelBatchUploadedFileIds.has(inputFileId),
   );
+}
+
+export function recordGatewayBatchFileAssociations(input: {
+  token: GatewayTokenRecord;
+  provider: ModelProviderDefinition;
+  providerPath: string;
+  method: string;
+  requestBody: Buffer;
+  responsePayload?: Record<string, unknown>;
+}): void {
+  const { token, provider, providerPath, method, responsePayload } = input;
+  if (
+    token.purpose !== 'model_batch' ||
+    provider.id !== 'openai' ||
+    !responsePayload
+  ) {
+    return;
+  }
+  if (method === 'POST' && providerPath === '/v1/files') {
+    const fileId = stringValue(responsePayload.id);
+    if (fileId) token.modelBatchUploadedFileIds.add(fileId);
+    return;
+  }
+  if (method === 'POST' && providerPath === '/v1/batches') {
+    const inputFileId = jsonStringField(input.requestBody, 'input_file_id');
+    const batchId = stringValue(responsePayload.id);
+    if (
+      !inputFileId ||
+      !batchId ||
+      !token.modelBatchUploadedFileIds.has(inputFileId)
+    ) {
+      return;
+    }
+    token.modelBatchId = batchId;
+    token.modelBatchFileIds.set(inputFileId, batchId);
+    return;
+  }
+  if (method !== 'GET') return;
+  const batchId = openAiBatchIdFromPath(providerPath);
+  if (
+    !batchId ||
+    token.modelBatchId !== batchId ||
+    stringValue(responsePayload.id) !== batchId
+  ) {
+    return;
+  }
+  for (const field of ['output_file_id', 'error_file_id']) {
+    const fileId = stringValue(responsePayload[field]);
+    if (fileId) token.modelBatchFileIds.set(fileId, batchId);
+  }
 }
 
 export function gatewayRateWeight(
@@ -110,4 +201,19 @@ export function runtimeEventRunIdFor(
     runId.startsWith('memory-query:')
     ? undefined
     : token.runId;
+}
+
+function jsonStringField(body: Buffer, field: string): string | undefined {
+  /* eslint-disable no-catch-all/no-catch-all -- malformed batch JSON fails closed */
+  try {
+    const parsed = JSON.parse(body.toString('utf8')) as Record<string, unknown>;
+    return stringValue(parsed[field]);
+  } catch {
+    return undefined;
+  }
+  /* eslint-enable no-catch-all/no-catch-all */
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value : undefined;
 }

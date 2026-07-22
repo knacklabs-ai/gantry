@@ -36,6 +36,7 @@ export type AgentCredentialInjectionInput =
       modelCredentialProviderId?: ModelCredentialProvider;
       modelRouteId?: ModelRouteId;
       modelBatchRequestCount?: number;
+      modelBatchId?: string;
       agentIdentifier?: string;
       broker: AgentCredentialBroker;
     }
@@ -59,6 +60,7 @@ function brokerBindingFor(input: {
   modelCredentialProviderId?: ModelCredentialProvider;
   modelRouteId?: ModelRouteId;
   modelBatchRequestCount?: number;
+  modelBatchId?: string;
   agentIdentifier?: string;
 }): AgentCredentialBrokerBinding {
   const purpose = input.purpose ?? 'model_runtime';
@@ -89,6 +91,9 @@ function brokerBindingFor(input: {
       : {}),
     ...('modelBatchRequestCount' in input && input.modelBatchRequestCount
       ? { modelBatchRequestCount: input.modelBatchRequestCount }
+      : {}),
+    ...('modelBatchId' in input && input.modelBatchId
+      ? { modelBatchId: input.modelBatchId }
       : {}),
     ...(purpose === 'tool_capability'
       ? { agentIdentifier: input.agentIdentifier }

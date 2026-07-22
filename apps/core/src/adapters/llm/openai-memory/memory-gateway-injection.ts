@@ -39,6 +39,7 @@ export async function resolveGatewayMemoryInjection(input: {
   runId: AgentRunId;
   purpose?: Extract<AgentCredentialPurpose, 'model_runtime' | 'model_batch'>;
   modelBatchRequestCount?: number;
+  modelBatchId?: string;
 }): Promise<GatewayMemoryInjection> {
   const brokerConfig = getCredentialBrokerRuntimeConfig();
   const configKey = `${brokerConfig.mode}:${brokerConfig.gatewayBindHost}`;
@@ -80,6 +81,7 @@ export async function resolveGatewayMemoryInjection(input: {
     ...(input.modelBatchRequestCount
       ? { modelBatchRequestCount: input.modelBatchRequestCount }
       : {}),
+    ...(input.modelBatchId ? { modelBatchId: input.modelBatchId } : {}),
     broker,
   });
   return {
@@ -95,6 +97,7 @@ export async function resolveGatewayMemoryInjection(input: {
           ...(input.modelBatchRequestCount
             ? { modelBatchRequestCount: input.modelBatchRequestCount }
             : {}),
+          ...(input.modelBatchId ? { modelBatchId: input.modelBatchId } : {}),
         },
       }) ?? Promise.resolve(),
   };

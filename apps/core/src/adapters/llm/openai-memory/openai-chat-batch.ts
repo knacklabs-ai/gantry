@@ -63,16 +63,16 @@ const OPENAI_BATCH_LIST_MAX_PAGES = 5;
 export function createOpenAiChatBatchCapability(): MemoryLlmBatchCapability {
   return {
     preflightBatch: async (opts) =>
-      withOpenAiGateway(opts, opts.requests.length, async () => {
+      withOpenAiGateway(opts, opts.requests.length, undefined, async () => {
         buildOpenAiBatchInput(opts);
       }),
     submitBatch: async (opts) =>
       withOpenAiGateway(
         opts,
         opts.requests.length,
+        undefined,
         async ({ baseUrl, token }) => {
           const input = buildOpenAiBatchInput(opts);
-          await opts.onSubmissionStart();
           const form = new FormData();
           form.append('purpose', 'batch');
           form.append(
@@ -94,6 +94,7 @@ export function createOpenAiChatBatchCapability(): MemoryLlmBatchCapability {
           if (!file.id) {
             throw new Error('OpenAI batch input upload returned no file id.');
           }
+          await opts.onSubmissionStart();
           const batch = await fetchBatchJson<OpenAiBatchRecord>({
             provider: 'OpenAI',
             operation: 'submission',
@@ -122,11 +123,11 @@ export function createOpenAiChatBatchCapability(): MemoryLlmBatchCapability {
         },
       ),
     pollBatch: async (opts) =>
-      withOpenAiGateway(opts, 1, async ({ baseUrl, token }) =>
+      withOpenAiGateway(opts, 1, opts.batchId, async ({ baseUrl, token }) =>
         pollOpenAiBatch(baseUrl, token, opts.batchId, opts.signal),
       ),
     fetchBatchResults: async (opts) =>
-      withOpenAiGateway(opts, 1, async ({ baseUrl, token }) => {
+      withOpenAiGateway(opts, 1, opts.batchId, async ({ baseUrl, token }) => {
         const batch = await getOpenAiBatch(
           baseUrl,
           token,
@@ -166,7 +167,7 @@ export function createOpenAiChatBatchCapability(): MemoryLlmBatchCapability {
         );
       }),
     findBatchByCorrelationId: async (opts) =>
-      withOpenAiGateway(opts, 1, async ({ baseUrl, token }) => {
+      withOpenAiGateway(opts, 1, undefined, async ({ baseUrl, token }) => {
         let after: string | undefined;
         for (let page = 0; page < OPENAI_BATCH_LIST_MAX_PAGES; page += 1) {
           const url = new URL(`${baseUrl}/v1/batches`);
@@ -200,6 +201,7 @@ export function createOpenAiChatBatchCapability(): MemoryLlmBatchCapability {
 async function withOpenAiGateway<T>(
   scope: MemoryLlmBatchScope,
   modelBatchRequestCount: number,
+  modelBatchId: string | undefined,
   fn: (connection: { baseUrl: string; token: string }) => Promise<T>,
 ): Promise<T> {
   scope.signal?.throwIfAborted();
@@ -210,6 +212,7 @@ async function withOpenAiGateway<T>(
     runId: `memory-query:batch:${randomUUID()}` as AgentRunId,
     purpose: 'model_batch',
     modelBatchRequestCount,
+    ...(modelBatchId ? { modelBatchId } : {}),
   });
   try {
     const projection = provider.gateway.sdkProjection;

@@ -94,15 +94,17 @@ function request(input: {
   url: string;
   token: string;
   body: Buffer;
+  method?: 'GET' | 'POST';
 }): Promise<{ status: number; body: Buffer }> {
   return new Promise((resolve, reject) => {
+    const method = input.method ?? 'POST';
     const req = http.request(
       input.url,
       {
-        method: 'POST',
+        method,
         headers: {
           'x-api-key': input.token,
-          'content-type': 'application/json',
+          ...(method === 'POST' ? { 'content-type': 'application/json' } : {}),
         },
       },
       (res) => {
@@ -117,7 +119,7 @@ function request(input: {
       },
     );
     req.on('error', reject);
-    req.end(input.body);
+    req.end(method === 'POST' ? input.body : undefined);
   });
 }
 
@@ -729,12 +731,12 @@ describe('Gantry Model Gateway tracing', () => {
   });
 
   it.each([
-    ['anthropic', '/v1/messages/batches'],
-    ['openai', '/v1/files'],
-    ['openai', '/v1/batches'],
+    ['anthropic', '/v1/messages/batches', 'POST'],
+    ['openai', '/v1/files', 'POST'],
+    ['openai', '/v1/batches', 'GET'],
   ] as const)(
     'does not trace %s%s transport requests as chat generations',
-    async (providerId, path) => {
+    async (providerId, path, method) => {
       const exporter = new InMemorySpanExporter();
       tracing(exporter);
       vi.stubGlobal(
@@ -758,6 +760,7 @@ describe('Gantry Model Gateway tracing', () => {
         ...endpoint,
         url: url.href,
         body: Buffer.from('{}'),
+        method,
       });
 
       expect(result.status).toBe(200);

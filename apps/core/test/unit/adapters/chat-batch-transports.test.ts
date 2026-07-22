@@ -125,14 +125,17 @@ it('rejects serialized provider upload bodies over 14 MiB before fetch', async (
 
 describe('OpenAI chat batch transport', () => {
   it('uploads, submits with correlation metadata, polls, downloads, and reconciles', async () => {
+    const submissionEvents: string[] = [];
     const fetchMock = vi.fn(
       async (urlInput: string | URL | Request, init?: RequestInit) => {
         const url = new URL(String(urlInput));
         const method = init?.method ?? 'GET';
         if (url.pathname.endsWith('/v1/files') && method === 'POST') {
+          submissionEvents.push('upload');
           return Response.json({ id: 'file-input' });
         }
         if (url.pathname.endsWith('/v1/batches') && method === 'POST') {
+          submissionEvents.push('create');
           return Response.json({ id: 'batch-openai' });
         }
         if (url.pathname.endsWith('/v1/batches/batch-openai')) {
@@ -199,7 +202,9 @@ describe('OpenAI chat batch transport', () => {
       batch.submitBatch({
         ...scope,
         correlationId: 'correlation-1',
-        onSubmissionStart: async () => undefined,
+        onSubmissionStart: async () => {
+          submissionEvents.push('submission_start');
+        },
         maxOutputTokens: 500,
         requests: [
           {
@@ -220,6 +225,7 @@ describe('OpenAI chat batch transport', () => {
         ],
       }),
     ).resolves.toEqual({ batchId: 'batch-openai' });
+    expect(submissionEvents).toEqual(['upload', 'submission_start', 'create']);
 
     const uploadCall = fetchMock.mock.calls.find(
       ([url, init]) =>
@@ -290,7 +296,69 @@ describe('OpenAI chat batch transport', () => {
         correlationId: 'correlation-1',
       }),
     ).resolves.toEqual({ batchId: 'batch-openai' });
+    expect(
+      resolveGatewayMemoryInjectionMock.mock.calls.map(
+        ([input]) => input.modelBatchId,
+      ),
+    ).toEqual([undefined, 'batch-openai', 'batch-openai', undefined]);
     expect(revokeMock).toHaveBeenCalledTimes(4);
+  });
+
+  it('does not enter provider submission when the prerequisite upload fails', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValueOnce(
+        new Response('upload unavailable', {
+          status: 503,
+          statusText: 'Unavailable',
+        }),
+      ),
+    );
+    const { createOpenAiChatBatchCapability } =
+      await import('@core/adapters/llm/openai-memory/openai-chat-batch.js');
+    const onSubmissionStart = vi.fn(async () => undefined);
+
+    await expect(
+      createOpenAiChatBatchCapability().submitBatch({
+        appId: 'default' as never,
+        model: 'gpt-5.5',
+        modelProfile: OPENAI_PROFILE,
+        correlationId: 'upload-failure',
+        onSubmissionStart,
+        requests: [{ customId: 'request-1', prompt: 'question' }],
+      }),
+    ).rejects.toThrow('OpenAI batch input upload failed: 503');
+    expect(onSubmissionStart).not.toHaveBeenCalled();
+  });
+
+  it('enters provider submission after upload and before batch creation can fail', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn()
+        .mockResolvedValueOnce(Response.json({ id: 'file-input' }))
+        .mockResolvedValueOnce(
+          new Response('create unavailable', {
+            status: 503,
+            statusText: 'Unavailable',
+          }),
+        ),
+    );
+    const { createOpenAiChatBatchCapability } =
+      await import('@core/adapters/llm/openai-memory/openai-chat-batch.js');
+    const onSubmissionStart = vi.fn(async () => undefined);
+
+    await expect(
+      createOpenAiChatBatchCapability().submitBatch({
+        appId: 'default' as never,
+        model: 'gpt-5.5',
+        modelProfile: OPENAI_PROFILE,
+        correlationId: 'create-failure',
+        onSubmissionStart,
+        requests: [{ customId: 'request-1', prompt: 'question' }],
+      }),
+    ).rejects.toThrow('OpenAI batch submission failed: 503');
+    expect(onSubmissionStart).toHaveBeenCalledOnce();
   });
 
   it('throws on a result download failure and malformed JSONL', async () => {

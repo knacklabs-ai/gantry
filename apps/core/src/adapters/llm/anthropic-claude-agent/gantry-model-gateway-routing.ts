@@ -106,6 +106,18 @@ export function isProviderBatchResultPath(
   );
 }
 
+export function openAiBatchIdFromPath(
+  providerPath: string,
+): string | undefined {
+  return exactDecodedPathId(providerPath, /^\/v1\/batches\/([^/]+)$/);
+}
+
+export function openAiFileContentIdFromPath(
+  providerPath: string,
+): string | undefined {
+  return exactDecodedPathId(providerPath, /^\/v1\/files\/([^/]+)\/content$/);
+}
+
 export async function injectProviderAuth(input: {
   headers: Record<string, string>;
   provider: ModelProviderDefinition;
@@ -269,6 +281,22 @@ function stripUpstreamPathPrefix(pathname: string, prefix: string): string {
     return pathname.slice(normalizedPrefix.length);
   }
   return pathname;
+}
+
+function exactDecodedPathId(
+  providerPath: string,
+  pattern: RegExp,
+): string | undefined {
+  const encoded = pattern.exec(providerPath)?.[1];
+  if (!encoded) return undefined;
+  /* eslint-disable no-catch-all/no-catch-all -- malformed encoded ids are rejected */
+  try {
+    const decoded = decodeURIComponent(encoded);
+    return decoded && !decoded.includes('/') ? decoded : undefined;
+  } catch {
+    return undefined;
+  }
+  /* eslint-enable no-catch-all/no-catch-all */
 }
 
 function requirePayloadField(

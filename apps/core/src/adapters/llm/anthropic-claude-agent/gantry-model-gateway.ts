@@ -52,8 +52,10 @@ import {
   batchRequestCountFor,
   gatewayRateWeight,
   gatewayTokenAllowsPath,
+  gatewayTokenAllowsRequestBody,
   gatewayTokenScope,
   isRevocableGatewayTokenScope,
+  recordGatewayBatchFileAssociations,
   runtimeEventRunIdFor,
   type GatewayTokenRecord,
 } from './gantry-model-gateway-token.js';
@@ -171,6 +173,11 @@ export class GantryModelGatewayBroker implements AgentCredentialBroker {
         purpose,
         input.binding.modelBatchRequestCount,
       ),
+      ...(purpose === 'model_batch' && input.binding.modelBatchId?.trim()
+        ? { modelBatchId: input.binding.modelBatchId.trim() }
+        : {}),
+      modelBatchUploadedFileIds: new Set(),
+      modelBatchFileIds: new Map(),
       ...(input.binding.agentId ? { agentId: input.binding.agentId } : {}),
       ...(input.binding.runId ? { runId: input.binding.runId } : {}),
       ...(input.binding.apiKeyId ? { apiKeyId: input.binding.apiKeyId } : {}),
@@ -371,7 +378,7 @@ export class GantryModelGatewayBroker implements AgentCredentialBroker {
       return;
     }
     const providerPath = `/${pathParts.join('/')}`;
-    if (!gatewayTokenAllowsPath(tokenRecord, provider, providerPath)) {
+    if (!gatewayTokenAllowsPath(tokenRecord, provider, providerPath, method)) {
       sendGatewayJson(res, 403, {
         error: 'Forbidden model gateway token scope',
       });
@@ -438,6 +445,20 @@ export class GantryModelGatewayBroker implements AgentCredentialBroker {
     });
     if (rateLimited) return;
     const body = await readRequestBody(req, this.requestBodyLimitBytes);
+    if (
+      !gatewayTokenAllowsRequestBody(
+        tokenRecord,
+        provider,
+        providerPath,
+        method,
+        body,
+      )
+    ) {
+      sendGatewayJson(res, 403, {
+        error: 'Forbidden model gateway token scope',
+      });
+      return;
+    }
     const { observation, requestBody } = beginGatewayObservation({
       token: tokenRecord,
       providerId,
@@ -493,6 +514,14 @@ export class GantryModelGatewayBroker implements AgentCredentialBroker {
     const parsedResponse = isProviderBatchResultPath(provider, providerPath)
       ? undefined
       : await readGatewayResponsePayload(response, requestBody);
+    recordGatewayBatchFileAssociations({
+      token: tokenRecord,
+      provider,
+      providerPath,
+      method,
+      requestBody,
+      responsePayload: parsedResponse?.payload,
+    });
     const usage = usageFromGatewayPayload(parsedResponse);
     const status = response.status;
     finishGatewayNonStreaming(

@@ -1653,10 +1653,8 @@ describe('GantryModelGatewayBroker', () => {
 
   it.each([
     ['POST', '/v1/files'],
-    ['POST', '/v1/batches'],
     ['GET', '/v1/batches'],
     ['GET', '/v1/batches/batch_123'],
-    ['GET', '/v1/files/file_123/content'],
   ])(
     'proxies OpenAI %s %s through the scoped credential',
     async (method, path) => {
@@ -1679,6 +1677,9 @@ describe('GantryModelGatewayBroker', () => {
             runId: 'run:openai-batch' as never,
             modelCredentialProviderId: 'openai',
             modelBatchRequestCount: 1,
+            ...(path === '/v1/batches/batch_123'
+              ? { modelBatchId: 'batch_123' }
+              : {}),
           },
         });
 
@@ -1709,6 +1710,145 @@ describe('GantryModelGatewayBroker', () => {
       }
     },
   );
+
+  it('allows own-batch file content and rejects a foreign file id before upstream fetch', async () => {
+    const repo = new MutableModelCredentialRepository();
+    repo.set('openai', 'abcdefghijklmnopqrstuvwxyz');
+    const upstreamFetch = vi.fn(
+      async (urlInput: URL, options?: RequestInit) => {
+        const path = urlInput.pathname;
+        if (path === '/v1/files' && options?.method === 'POST') {
+          return Response.json({ id: 'file_input_own' });
+        }
+        if (path === '/v1/batches' && options?.method === 'POST') {
+          return Response.json({ id: 'batch_own' });
+        }
+        if (path === '/v1/files/file_input_own/content') {
+          return new Response('own batch content');
+        }
+        return new Response('foreign content');
+      },
+    );
+    vi.stubGlobal('fetch', upstreamFetch);
+    const broker = new GantryModelGatewayBroker(repo);
+    try {
+      const injection = await broker.getInjection({
+        binding: {
+          profile: 'gantry',
+          purpose: 'model_batch',
+          appId,
+          runId: 'run:openai-owned-file' as never,
+          modelCredentialProviderId: 'openai',
+          modelBatchRequestCount: 1,
+        },
+      });
+      const baseUrl = injection.env.OPENAI_BASE_URL!;
+      const token = injection.env.OPENAI_API_KEY!;
+
+      await expect(
+        gatewayRequest({ url: `${baseUrl}/v1/files`, token }),
+      ).resolves.toMatchObject({ status: 200 });
+      const callsBeforeForeignCreate = upstreamFetch.mock.calls.length;
+      await expect(
+        gatewayRequest({
+          url: `${baseUrl}/v1/batches`,
+          token,
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ input_file_id: 'file_input_foreign' }),
+        }),
+      ).resolves.toMatchObject({ status: 403 });
+      expect(upstreamFetch).toHaveBeenCalledTimes(callsBeforeForeignCreate);
+      await expect(
+        gatewayRequest({
+          url: `${baseUrl}/v1/batches`,
+          token,
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ input_file_id: 'file_input_own' }),
+        }),
+      ).resolves.toMatchObject({ status: 200 });
+
+      const own = await gatewayRequest({
+        url: `${baseUrl}/v1/files/file_input_own/content`,
+        token,
+        method: 'GET',
+      });
+      expect(own).toMatchObject({ status: 200, body: 'own batch content' });
+
+      const callsBeforeForeignRead = upstreamFetch.mock.calls.length;
+      const foreign = await gatewayRequest({
+        url: `${baseUrl}/v1/files/file_foreign/content`,
+        token,
+        method: 'GET',
+      });
+      expect(foreign.status).toBe(403);
+      expect(foreign.body).toContain('Forbidden model gateway token scope');
+      expect(upstreamFetch).toHaveBeenCalledTimes(callsBeforeForeignRead);
+    } finally {
+      await broker.close();
+    }
+  });
+
+  it('learns result-file ownership only from the token-bound batch response', async () => {
+    const repo = new MutableModelCredentialRepository();
+    repo.set('openai', 'abcdefghijklmnopqrstuvwxyz');
+    const upstreamFetch = vi.fn(async (urlInput: URL) => {
+      if (urlInput.pathname === '/v1/batches/batch_own') {
+        return Response.json({
+          id: 'batch_own',
+          status: 'completed',
+          output_file_id: 'file_output_own',
+        });
+      }
+      if (urlInput.pathname === '/v1/files/file_output_own/content') {
+        return new Response('own result content');
+      }
+      return new Response('foreign result content');
+    });
+    vi.stubGlobal('fetch', upstreamFetch);
+    const broker = new GantryModelGatewayBroker(repo);
+    try {
+      const injection = await broker.getInjection({
+        binding: {
+          profile: 'gantry',
+          purpose: 'model_batch',
+          appId,
+          runId: 'run:openai-result-file' as never,
+          modelCredentialProviderId: 'openai',
+          modelBatchRequestCount: 1,
+          modelBatchId: 'batch_own',
+        },
+      });
+      const baseUrl = injection.env.OPENAI_BASE_URL!;
+      const token = injection.env.OPENAI_API_KEY!;
+
+      await expect(
+        gatewayRequest({
+          url: `${baseUrl}/v1/batches/batch_own`,
+          token,
+          method: 'GET',
+        }),
+      ).resolves.toMatchObject({ status: 200 });
+      await expect(
+        gatewayRequest({
+          url: `${baseUrl}/v1/files/file_output_own/content`,
+          token,
+          method: 'GET',
+        }),
+      ).resolves.toMatchObject({ status: 200, body: 'own result content' });
+
+      const callsBeforeForeignRead = upstreamFetch.mock.calls.length;
+      await expect(
+        gatewayRequest({
+          url: `${baseUrl}/v1/files/file_output_foreign/content`,
+          token,
+          method: 'GET',
+        }),
+      ).resolves.toMatchObject({ status: 403 });
+      expect(upstreamFetch).toHaveBeenCalledTimes(callsBeforeForeignRead);
+    } finally {
+      await broker.close();
+    }
+  });
   it('continues to reject disallowed OpenAI paths before the upstream fetch', async () => {
     const repo = new MutableModelCredentialRepository();
     repo.set('openai', 'sk-openai-upstream');
