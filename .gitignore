@@ -66,3 +66,13 @@ agents-sdk-docs
 
 # local skill-plugin clone, not part of this repo
 i-have-adhd/
+
+# Project-local gstack store: projects/ committed, machine noise not
+.gstack/sessions/
+.gstack/analytics/
+.gstack/cdp-profile/
+.gstack/tmp/
+.gstack/.*
+.gstack/**/brain-cache/
+.gstack/**/timeline.jsonl
+.gstack/slug-cache/

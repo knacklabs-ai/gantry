@@ -1,102 +1,83 @@
 # OTel permission-decision spans — goal prompt
 
-Status: GRILL + DOUBLE-CRITIQUE LOCKED 2026-07-22 (Fable + Codex, two rounds).
-The critiques collapsed the original design ~5×: **do NOT** instrument
-`ToolExecutionPolicyService.evaluate` (called 2–3×/decision, not terminal), **do
-NOT** build a Stage-0 correlation "foundation" (mostly already exists), **do
-NOT** build a non-durable telemetry frame (unnecessary for v1). Behind
-`observability.tracing.enabled` (default off). Builds on #220 (turn/chat spans) +
-#262 (execute_tool spans — do not touch).
+Status: GRILL + DOUBLE-CRITIQUE + PLAN-VALIDATION LOCKED 2026-07-22. Design = a
+host-side tap on the existing `permission.*` runtime-event stream → OTel
+`permission` spans. The plan-validation NARROWED the scope (coverage is not
+universal; exactly-one-span + cross-restart duration need care) — this doc is the
+honest v1 it converged to. Behind `observability.tracing.enabled` (default off).
+Builds on #220 (turn/chat) + #262 (execute_tool). Do NOT touch #262 or the sandbox.
 
-## v1 = one host-side tap on the EXISTING permission event stream
-The runtime already publishes host-side permission events with `runId`/`requestId`
-correlation across every engine: `permission.requested / allowed / denied /
-cancelled / persisted / resumed / final_outcome / classifier_decision /
-yolo_denylist_hit` (`domain/events/runtime-event-types.ts:31-39`), attended via
-`ipc-interaction-processing.ts`, classifier via `permission-classifier.ts:566`,
-inline via `ipc-permission-telemetry.ts`.
+## v1 = one host-side subscriber on the permission-event stream (narrowed, honest)
+A lifecycle-managed pull loop on `RuntimeEventExchange.subscribe(filter)`
+(`application/runtime-events/runtime-event-exchange.ts:109/173` — it is a PULL
+subscription: own the `next()`/`close()` loop) converts permission decisions into
+`permission` spans. Zero runner/IPC changes, read-only.
 
-**The whole slice:** a host-side subscriber on `RuntimeEventExchange.subscribe`
-(`application/runtime-events/runtime-event-exchange.ts:109`) filtered to
-`permission.*`, converting each decision into a `permission` span. **Zero runner
-changes, zero IPC changes, zero new frames, engine-neutral.**
+**Filter (exact — no `permission.*` wildcard; `appId` is mandatory & equality-filtered):**
+scope v1 to the `default` app; `eventTypes` = the 9 permission types
+(REQUESTED, ALLOWED, DENIED, CANCELLED, PERSISTED, RESUMED, FINAL_OUTCOME,
+CLASSIFIER_DECISION, YOLO_DENYLIST_HIT). Per-app subscriptions are a follow-up.
 
-## Locked decisions
-1. **Span from the event pair, not a span-over-await.** Emit a point-in-time
-   `permission {tool}` span from `requested` → terminal (`final_outcome`/`allowed`/
-   `denied`/`cancelled`/`resumed`), paired by `requestId`: start = requested ts,
-   end = terminal ts → real duration INCLUDING human wait. This is lifecycle-
-   correct for abandoned/cross-restart asks (`resumed`) where a held span leaks or
-   mis-times (both critiques). `classifier_decision` = attribute or a child
-   `permission.policy` span; `yolo_denylist_hit` = tagged.
-2. **Parent = `getTurnSpan(runId)` when the event carries runId; else root + tags.**
-   Job runs carry runId immediately. The child-span helper FAILS CLOSED — a
-   root span tagged `requestId`/`conversationId`, NEVER a wrong-turn parent
-   (continuation-rotation race, Codex #4). Live-turn parenting is a fast-follow
-   (see below), not a v1 blocker.
-3. **STRICT structural attribute allowlist — this is the security core.** Span
-   attributes are ONLY: `decision_path` (derived from event type),
-   `gen_ai.tool.name`, `requestId`, `runId`, `jobId`, `mode`, `decidedBy`-kind,
-   `duration`. **NEVER** `reason`, `matchedRule`, `closestRule`, command preview,
-   `targetResource`, or paths — those embed the command even when they look like
-   codes (`normalizeBashLeafRuleContent` IS the command; classifier `reason` is
-   model free-text). Use a narrow typed `startPermissionSpan(...)`, NOT a generic
-   `startChildSpan(...attrs)` that lets callers mark arbitrary content structural.
-   `capture_content` does NOT relax this in v1 — free-text permission content
-   would need a separate explicit opt-in, never the default-true setting.
+## Locked decisions (plan-validation-hardened)
+1. **ONE canonical terminal = `final_outcome` (request-correlated).** One approval
+   emits `allowed`→`resumed`→`final_outcome`; emit the span ONLY on the correlated
+   `final_outcome` (pairing `requested`→`final_outcome` by `requestId`). `allowed`/
+   `denied`/`cancelled`/`persisted`/`resumed` ENRICH the pending pair, never emit
+   their own span. Exactly one span per correlated decision (`ipc-interaction-processing.ts:172/197/302/307`).
+2. **`classifier_decision` with no preceding `requested`** (inline classifier
+   auto-allow, `inline-agent-loop-tools.ts:392/422`) → a standalone POINT span.
+3. **Parent = `getTurnSpan(runId)` when the event carries runId, else root+tags.**
+   Fail closed — never guess another turn's parent (`tracing.ts:196/410/440`).
+4. **STRICT structural attribute allowlist** = `decision_path`, tool name,
+   `requestId`, `runId`, `jobId`, **`conversationId`** (id, not content — resolves
+   the decision-2/3 contradiction), `mode`, `decidedBy`-kind, `duration`. EXCLUDE
+   all command-bearing fields: `commandPreview`, `reason`, `matchedRule`,
+   `closestRule`, **`matchedPattern`** (the yolo field name, `permission-classifier.ts:348`),
+   paths, args. The classifier `reason` is model free-text already durably
+   persisted regardless of tracing — pre-existing, out of scope, and NOT copied here.
+5. **Restart: defer exact cross-restart duration.** The pending-pair map is
+   process-local; start the subscription at TAIL (no historical replay → no
+   re-exported old spans). A decision spanning a restart → a root POINT span, no
+   duration. Do NOT build durable checkpointing in v1.
+6. **The tap loop catches its own errors** (per-event AND loop-level) — a rejected
+   background promise must never crash the host; publish already durably-appends
+   before best-effort notify, so the tap can never affect the publish path.
 
-## Explicitly deferred (NOT v1)
-- **Subprocess silent fast-path allows** (SDK `allowedTools`/`alwaysAllowedTools`,
-  subprocess deterministic allows) — they publish NO host event, are sub-ms, and
-  are the ONLY thing that would need a new `observabilityEvents` non-durable frame
-  (Codex #2). Defer; note the coverage gap in the span docs.
-- **Live-turn ask parenting under the turn** — ordinary live-turn permission IPC
-  doesn't carry runId. The minimal fix (Codex "Stage 0 surface") is ONE projected
-  `correlationRunId` key through worker permission IPC (`agent-spawn.ts:526`,
-  `permission-ipc-client.ts:30`, `ipc-parsing.ts:307`, `domain/types.ts:124`) +
-  inline reading `correlationRunId` not `input.runId` (`inline-agent-loop-tools.ts:118`).
-  NOT the MCP-envelope expansion (over-built). Fast-follow after v1 tap ships.
-- Memory spans, tool durations, full causal nesting — separate later slices.
+## EXPLICITLY EXCLUDED from v1 coverage (name the gaps — no silent "all engines")
+- DeepAgents yolo prechecks deny with NO event (`gantry-shell-tool.ts:173`) — invisible.
+- Anthropic-runner yolo events have no request correlation (`tool-permission-events.ts:22`) — root point span only.
+- Uncorrelated prime-mode `requested` (`tool-permission-gate.ts:155`), locked-task
+  `denied`, job-recovery `final_outcome` (`job-permission-recovery.ts:172`) — no
+  runId/requestId → root point spans, not paired.
+v1 covers: request-correlated attended chains (Anthropic + DeepAgents worker +
+inline attended) + classifier-decision point spans. It is NOT "all engines."
 
-## Pre-existing finding to FLAG (out of scope — do not fix here)
-The classifier `reason` (model free-text that can echo the command) is ALREADY
-written durably to `PERMISSION_CLASSIFIER_DECISION` regardless of tracing
-(`permission-classifier.ts:563`); `capture_content=false` is only an OTel gate,
-not a permission-audit persistence gate. Record this against
-[[permission-engine-redesign]]; the v1 tap does NOT propagate it into spans (per
-decision 3), so the tap adds no new leak.
-
-## Plan-validation gate (goal-pipeline Codex twin, before build)
-1. Confirm the `requested`→terminal `requestId` pairing is reliable for every
-   terminal event type, and that the subscriber sees both (ordering, restart).
-2. Confirm which events carry `runId` (parent vs root+tag).
-3. Confirm `RuntimeEventFilter` can scope to `permission.*` without a firehose.
-4. Confirm no decision double-emits a span.
+## Surface Impact Matrix (AGENTS.md:203 — required)
+| Surface | Change |
+|---|---|
+| New host observability subscriber (tap loop) | add (default-app, 9 event types) |
+| `permission` span emission (genai/observability module) | add |
+| Settings / IPC / runner / sandbox | none |
+| Existing runtime-event publish path | none (read-only subscriber) |
 
 ## Verify (real)
-1. `apps/core && npx tsc --noEmit` clean.
-2. Unit (InMemorySpanExporter + a fake event stream): one span per decision with
-   correct `decision_path`; duration = requested→terminal; parent = turn when
-   runId present, root+tagged otherwise; abandoned ask (`resumed` after turn end)
-   produces a correct span, no leak.
-3. **Security test:** assert NO `reason`/`matchedRule`/`closestRule`/command text
-   ever appears on a span attribute, with `capture_content` true AND false.
-4. **Runtime-neutral test:** permission spans produced for SDK-worker, inline, and
-   DeepAgents decisions (drive the event stream for each).
-5. **No live-turn impact:** the tap is a passive subscriber — assert it cannot
-   complete/dequeue a turn and never throws into the publish path (fail-open).
-6. Existing suites green (disabled = no-op). `autoreview --mode local` (xhigh)
-   clean before EACH commit.
+1. tsc clean. 2. Unit (InMemorySpanExporter + fake event stream): exactly ONE span
+per correlated decision on `final_outcome` (allowed/resumed do not double-emit);
+classifier-only → point span; parent=turn when runId present else root+tag;
+`capture_content` false drops nothing structural (allowlist is already structure-
+only). 3. **Security test**: no `reason`/`matchedRule`/`matchedPattern`/`commandPreview`
+ever on a span. 4. **Restart test**: tail-start, no historical re-export; a
+cross-restart decision → root point span, no crash. 5. Tap-loop error isolation:
+a throwing handler never affects publish and never crashes the host. 6. Existing
+suites green; autoreview clean before each commit.
 
-## Non-goals
-- Instrumenting `evaluate` / any per-gate seam (tap the outcome events instead).
-- New runner/IPC frames (v1 rides existing host events).
-- Emitting NEW permission events (read-only tap; the events already exist).
+## Non-goals (v1)
+Per-app subscription (default only) · exact cross-restart duration · DeepAgents-yolo
++ uncorrelated prime/locked/recovery coverage · memory/tool-duration spans ·
+generalized causal nesting.
 
-## Staging (each leaves tree green; autoreview before each commit)
-1. `permission`-event → span tap subscriber + `startPermissionSpan` typed API +
-   strict allowlist → unit + security + runtime-neutral tests.
-2. (fast-follow, optional) worker-permission-IPC `correlationRunId` projection for
-   live-turn parenting → unit.
-3. Langfuse/LangSmith smoke: one attended ask + one auto-allow + one deny appear
-   as `permission` spans (attended one shows real human-wait duration).
+## Staging
+1. Tap loop (default-app, 9 types) + `permission` span builder + strict allowlist +
+   one-canonical-terminal pairing + point-span for classifier-only → unit + security + restart tests.
+2. Langfuse/LangSmith smoke: attended ask + auto-allow + deny appear as `permission`
+   spans under the turn (attended shows real wait duration).
