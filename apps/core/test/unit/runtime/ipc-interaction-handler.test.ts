@@ -1424,7 +1424,8 @@ describe('ipc-interaction-handler', () => {
       ).toEqual([
         'interaction.pending',
         'permission.requested',
-        'permission.denied',
+        'permission.allowed',
+        'permission.resumed',
         'permission.final_outcome',
       ]);
       expect(publishRuntimeEvent).toHaveBeenCalledWith(
@@ -1449,21 +1450,29 @@ describe('ipc-interaction-handler', () => {
       expect(JSON.stringify(publishRuntimeEvent.mock.calls)).not.toContain(
         'sk-ant',
       );
-      for (const eventType of [
-        'permission.requested',
-        'permission.denied',
-        'permission.final_outcome',
-      ]) {
-        expect(publishRuntimeEvent).toHaveBeenCalledWith(
-          expect.objectContaining({
-            eventType,
-            payload: expect.objectContaining({
-              decisionReason: 'No allow rule matched.',
-            }),
+      // The ASK rail routes to the human tail: the request carries the
+      // rail/rule reason; the resolved allow carries the approver's reason.
+      expect(publishRuntimeEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventType: 'permission.requested',
+          payload: expect.objectContaining({
+            decisionReason: 'No allow rule matched.',
           }),
-        );
-      }
-      expect(createTransientGrant).not.toHaveBeenCalled();
+        }),
+      );
+      expect(publishRuntimeEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventType: 'permission.allowed',
+          payload: expect.objectContaining({
+            decisionReason: expect.stringContaining(
+              'environment assignments are not supported',
+            ),
+          }),
+        }),
+      );
+      // allow_once approval creates one run-scoped transient grant (the old
+      // ASK->deny bug created none).
+      expect(createTransientGrant).toHaveBeenCalledTimes(1);
     },
   );
 
