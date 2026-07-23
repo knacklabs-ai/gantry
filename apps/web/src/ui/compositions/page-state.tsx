@@ -28,7 +28,9 @@ export function PageState({
           {description}
         </p>
       </div>
-      {action ? <div className="shrink-0 max-sm:ml-14">{action}</div> : null}
+      {action ? (
+        <div className="shrink-0 max-sm:ml-14 max-sm:basis-full">{action}</div>
+      ) : null}
     </div>
   );
 }
