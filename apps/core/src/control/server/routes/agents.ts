@@ -588,6 +588,7 @@ function agentToResponse(ctx: ControlRouteContext, agent: Agent) {
     id: agent.id,
     appId: agent.appId,
     name: agent.name,
+    description: agent.description,
     status: agent.status,
     agentHarness: ctx.getSelectedAgentHarness(folder),
     currentConfigVersionId: agent.currentConfigVersionId,

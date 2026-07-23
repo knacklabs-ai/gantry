@@ -43,12 +43,14 @@ export class PostgresAgentRepository implements AgentRepository {
       .insert(pgSchema.agentsPostgres)
       .values({
         ...agent,
+        description: agent.description ?? null,
         currentConfigVersionId: agent.currentConfigVersionId ?? null,
       })
       .onConflictDoUpdate({
         target: pgSchema.agentsPostgres.id,
         set: {
           name: agent.name,
+          description: agent.description ?? null,
           status: agent.status,
           currentConfigVersionId: agent.currentConfigVersionId ?? null,
           updatedAt: agent.updatedAt,

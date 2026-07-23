@@ -40,6 +40,8 @@ export interface Agent {
   id: AgentId;
   appId: AppId;
   name: string;
+  /** A concise, human-facing statement of the agent's responsibility. */
+  description?: string;
   status: 'active' | 'disabled';
   currentConfigVersionId?: AgentConfigVersionId;
   createdAt: IsoTimestamp;
