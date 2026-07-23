@@ -120,24 +120,34 @@ jobs:
       # restricts unprivileged user namespaces by default, which bwrap needs.
       - name: Prepare agent sandbox deps (bubblewrap + socat)
         run: |
-          # Self-hosted runners pre-install these and lack passwordless sudo
-          # (a bare `sudo apt-get` hangs to timeout). Only invoke sudo when a
-          # tool is actually missing (GitHub-hosted ubuntu case).
+          # bwrap+socat are only needed for the supplementary real-model turn.
+          # Prefer already-present tools; only apt-install when a tool is missing
+          # AND passwordless sudo is available (GitHub-hosted ubuntu). On a
+          # self-hosted runner without either, warn and let the turn self-skip —
+          # `sudo -n` avoids the interactive-password hang that timed out the job.
           if command -v bwrap >/dev/null && command -v socat >/dev/null; then
-            echo "bubblewrap + socat already present; skipping apt install"
-          else
+            echo "bubblewrap + socat already present"
+          elif command -v sudo >/dev/null && sudo -n true 2>/dev/null; then
             sudo apt-get update -qq
             sudo apt-get install -y -qq bubblewrap socat
+            sudo sysctl -q kernel.apparmor_restrict_unprivileged_userns=0 2>/dev/null || true
+          else
+            echo "::warning::bubblewrap/socat unavailable and no passwordless sudo; the supplementary real-model agent turn will be skipped (hermetic agent-e2e already ran in Tests)."
           fi
-          sudo sysctl -q kernel.apparmor_restrict_unprivileged_userns=0 2>/dev/null || true
 
-      # Real-model turn: the key is a protected secret (empty on fork PRs, so
-      # the scenario self-skips). The key reaches ONLY this step's env.
+      # Real-model turn: supplementary signal — the hermetic agent-e2e already
+      # ran in Tests. Self-skips when bwrap is unavailable (runner can't sandbox
+      # the SDK child) or the key is absent (fork PRs). The key reaches ONLY this
+      # step's env.
       - name: Agent E2E turn (real model)
         env:
           E2E_MODEL_API_KEY: ${{ secrets.E2E_ANTHROPIC_API_KEY }}
         run: |
           set -o pipefail
+          if ! command -v bwrap >/dev/null; then
+            echo "bwrap unavailable on this runner; skipping the real-model turn."
+            exit 0
+          fi
           export GANTRY_TEST_DATABASE_URL=postgres://postgres:postgres@localhost:${{ job.services.postgres.ports[5432] }}/gantry_test
           timeout 900s env LOG_LEVEL=fatal CI=true npm run test:e2e:agent:turn 2>&1 | tee -a /tmp/vitest.log
 
