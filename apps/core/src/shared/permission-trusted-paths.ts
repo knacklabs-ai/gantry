@@ -45,25 +45,23 @@ function leafCwd(leaf: BashCommandLeaf, workspaceRoot: string): string {
   return cwd;
 }
 
+// Check every option value and every positional token, rather than guessing
+// which tokens are paths — a guess is what let `escape/.git` and slashless
+// `--git-dir=escape` slip past containment. Tokens that resolve inside cwd
+// (subcommands, branch names, remote URLs, message text) pass harmlessly; only
+// a token that canonicalizes outside the trusted root asks. Bare flags (`-C`,
+// `-m`) carry no path and are skipped; their values arrive as later tokens.
 function pathCandidates(leaf: BashCommandLeaf): string[] {
   return [
     ...leaf.redirects.map(({ target }) => target),
     ...leaf.argv.slice(1).flatMap((arg) => {
-      const value = arg.includes('=') ? arg.slice(arg.indexOf('=') + 1) : arg;
-      return isPathLike(value) ? [value] : [];
+      if (arg.startsWith('-')) {
+        const eq = arg.indexOf('=');
+        return eq >= 0 ? [arg.slice(eq + 1)] : [];
+      }
+      return [arg];
     }),
   ];
-}
-
-// A value is treated as a path candidate when it is absolute, dot/tilde
-// relative, OR a bare relative path containing a separator (e.g.
-// `--git-dir=escape/.git`) — the last case still resolves against cwd and is
-// symlink-canonicalized, so it cannot escape a trusted root. URLs (scheme://)
-// are excluded so remotes and non-path options are not misread as paths.
-function isPathLike(value: string): boolean {
-  if (path.isAbsolute(value) || /^(?:\.{1,2}|~)(?:\/|$)/.test(value))
-    return true;
-  return value.includes('/') && !/^[a-z][a-z0-9+.-]*:\/\//i.test(value);
 }
 
 function isTrustedPath(
