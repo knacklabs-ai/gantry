@@ -344,7 +344,7 @@ describe('permission deterministic rails', () => {
     });
   });
 
-  it('preserves the existing read-only fast path while keeping git out', () => {
+  it('preserves the read-only fast path for cat and read-only git', () => {
     const workspaceRoot = makeRoot();
     fs.writeFileSync(path.join(workspaceRoot, 'README.md'), 'Gantry');
 
@@ -366,6 +366,48 @@ describe('permission deterministic rails', () => {
         workspaceRoot,
         trustedRoots: [workspaceRoot],
       }),
-    ).toBeUndefined();
+    ).toMatchObject({ railOutcome: 'allow' });
   });
+
+  it.each([
+    'mcp__gantry__send_message',
+    'mcp__gantry__todo_update',
+    'mcp__gantry__render_progress',
+    'mcp__gantry__scheduler_list_jobs',
+    'mcp__gantry__scheduler_list_runs',
+    'mcp__gantry__scheduler_list_events',
+    'mcp__gantry__scheduler_list_models',
+    'mcp__gantry__scheduler_get_job',
+  ])('auto-allows benign first-party gantry MCP tools: %s', (toolName) => {
+    expect(
+      evaluatePermissionDeterministicRails({
+        request: request('unused', {
+          toolName,
+          toolInput: { text: 'hi' },
+        }),
+      }),
+    ).toMatchObject({ railOutcome: 'allow' });
+  });
+
+  it.each([
+    'mcp__gantry__scheduler_run_now',
+    'mcp__gantry__scheduler_update_job',
+    'mcp__gantry__scheduler_resume_job',
+    'mcp__gantry__scheduler_create_job',
+    'mcp__gantry__scheduler_pause_job',
+    'mcp__gantry__scheduler_delete_job',
+    'mcp__other__send_message',
+  ])(
+    'does not auto-allow scheduler mutations or non-gantry MCP: %s',
+    (toolName) => {
+      expect(
+        evaluatePermissionDeterministicRails({
+          request: request('unused', {
+            toolName,
+            toolInput: { job_id: 'x' },
+          }),
+        }),
+      ).not.toMatchObject({ railOutcome: 'allow' });
+    },
+  );
 });

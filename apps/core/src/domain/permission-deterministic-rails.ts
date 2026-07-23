@@ -35,6 +35,20 @@ export type PermissionDeterministicRailDecision =
     });
 
 const SHELL_TOOLS = new Set(['Bash', 'RunCommand']);
+// First-party gantry control-plane tools that are low-risk by construction:
+// the agent's own messaging/progress surface plus scheduler READS. Scheduler
+// mutations (run_now, create/update/pause/resume/delete_job, …) are absent by
+// design and fall through to the normal rails.
+const BENIGN_GANTRY_MCP_TOOLS = new Set([
+  'send_message',
+  'todo_update',
+  'render_progress',
+  'scheduler_list_jobs',
+  'scheduler_list_runs',
+  'scheduler_list_events',
+  'scheduler_list_models',
+  'scheduler_get_job',
+]);
 const DESTRUCTIVE_EXECUTABLE =
   /^(?:dd|mkfs(?:\..+)?|rm|rmdir|shred|truncate|unlink)$/;
 const PRIVILEGED_EXECUTABLE = /^(?:doas|launchctl|pkexec|su|sudo|systemctl)$/;
@@ -49,6 +63,12 @@ export function evaluatePermissionDeterministicRails(
   const { request } = input;
   if (inputIsIncomplete(request)) {
     return ask('Exact tool input is missing or the command was truncated.');
+  }
+  if (isBenignGantryTool(request.toolName)) {
+    return allow(
+      request,
+      `Benign first-party gantry control-plane tool ${request.toolName}.`,
+    );
   }
   // Evaluate the 16K classifier view, not the 500-char display copy, so the
   // command we inspect matches the truncation signal inputIsIncomplete guards.
@@ -122,6 +142,13 @@ function inputIsIncomplete(request: PermissionApprovalRequest): boolean {
   if (!request.toolInput) return true;
   const truncated = ipc.toolInputTruncatedPaths ?? [];
   return truncated.includes('command') || truncated.includes('cmd');
+}
+
+// Accepts both the mcp-prefixed canonical form (`mcp__gantry__send_message`)
+// and the bare tool name. Non-gantry MCP tools never match.
+function isBenignGantryTool(toolName: string): boolean {
+  const match = /^mcp__gantry__(.+)$/.exec(toolName);
+  return BENIGN_GANTRY_MCP_TOOLS.has(match ? match[1]! : toolName);
 }
 
 function isInterpreterString(leaf: BashCommandLeaf): boolean {
