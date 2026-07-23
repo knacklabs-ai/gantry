@@ -66,10 +66,7 @@ export function updateAgent(
   });
 }
 
-export function loadAgentSoul(
-  transport: RuntimeApiTransport,
-  agentId: string,
-) {
+export function loadAgentSoul(transport: RuntimeApiTransport, agentId: string) {
   return transport.request({
     path: `/agents/${encodeURIComponent(agentId)}/profile-files/soul`,
     schema: profileFileSchema,
