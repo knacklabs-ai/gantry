@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { PermissionApprovalRequest } from '@core/domain/types.js';
 import type { ToolPolicyDecision } from '@core/shared/tool-execution-policy-service.js';
+import { buildSdkFilesystemSandbox } from '@core/adapters/llm/anthropic-claude-agent/runner/filesystem-sandbox.js';
 import {
   coordinatePermissionDecision,
   permissionRunRestriction,
@@ -131,6 +132,35 @@ describe('coordinatePermissionDecision', () => {
     expect(tail).not.toHaveBeenCalled();
   });
 
+  it('keeps credential reads at the rails ask floor with the direct SDK escape hatch disabled', async () => {
+    const sdkSandbox = buildSdkFilesystemSandbox(['~/.ssh']);
+    const tail = vi.fn(async () => ({
+      approved: true,
+      mode: 'allow_once' as const,
+      decidedBy: 'tail',
+    }));
+
+    expect(sdkSandbox.allowUnsandboxedCommands).toBe(false);
+    expect(sdkSandbox.filesystem?.denyRead).toEqual(
+      expect.arrayContaining([expect.stringMatching(/\/\.ssh$/)]),
+    );
+    await expect(
+      coordinatePermissionDecision({
+        request: {
+          ...request,
+          toolName: 'RunCommand',
+          toolInput: { command: 'cat ~/.ssh/id_rsa' },
+        },
+        tail,
+      }),
+    ).resolves.toMatchObject({
+      approved: false,
+      decidedBy: 'deterministic_rails',
+      reason: expect.stringContaining('credential'),
+    });
+    expect(tail).not.toHaveBeenCalled();
+  });
+
   it.each([
     [
       'allow',
@@ -148,41 +178,44 @@ describe('coordinatePermissionDecision', () => {
         decidedBy: 'classifier_cache',
       },
     ],
-  ])('re-validates a cached %s against current rails', async (_label, cachedDecision) => {
-    const tail = vi.fn(async () => cachedDecision);
-    const shellRequest = {
-      ...request,
-      toolName: 'RunCommand',
-      toolInput: { command: 'git status' },
-    };
+  ])(
+    're-validates a cached %s against current rails',
+    async (_label, cachedDecision) => {
+      const tail = vi.fn(async () => cachedDecision);
+      const shellRequest = {
+        ...request,
+        toolName: 'RunCommand',
+        toolInput: { command: 'git status' },
+      };
 
-    await expect(
-      coordinatePermissionDecision({
-        request: { ...shellRequest },
-        deterministicRailsInput: {
-          workspaceRoot: '/workspace',
-          trustedRoots: ['/workspace'],
-        },
-        tail,
-      }),
-    ).resolves.toEqual(cachedDecision);
+      await expect(
+        coordinatePermissionDecision({
+          request: { ...shellRequest },
+          deterministicRailsInput: {
+            workspaceRoot: '/workspace',
+            trustedRoots: ['/workspace'],
+          },
+          tail,
+        }),
+      ).resolves.toEqual(cachedDecision);
 
-    await expect(
-      coordinatePermissionDecision({
-        request: { ...shellRequest },
-        deterministicRailsInput: {
-          workspaceRoot: '/workspace',
-          trustedRoots: [],
-        },
-        tail,
-      }),
-    ).resolves.toMatchObject({
-      approved: false,
-      decidedBy: 'deterministic_rails',
-      reason: expect.stringContaining('outside'),
-    });
-    expect(tail).toHaveBeenCalledTimes(1);
-  });
+      await expect(
+        coordinatePermissionDecision({
+          request: { ...shellRequest },
+          deterministicRailsInput: {
+            workspaceRoot: '/workspace',
+            trustedRoots: [],
+          },
+          tail,
+        }),
+      ).resolves.toMatchObject({
+        approved: false,
+        decidedBy: 'deterministic_rails',
+        reason: expect.stringContaining('outside'),
+      });
+      expect(tail).toHaveBeenCalledTimes(1);
+    },
+  );
 
   it('spawn registration stores and removes the host restriction by agent/run key', () => {
     const key = {

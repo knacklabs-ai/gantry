@@ -22,10 +22,12 @@ describe('Claude SDK filesystem sandbox settings', () => {
     delete process.env.GANTRY_SANDBOX_RUNTIME_PROXY;
   });
 
-  it('limits the direct SDK profile to protected-path denies with broad local IPC', () => {
+  it('keeps the SDK sandbox enforcing with protected-path denies and broad local IPC', () => {
     const protectedPath = '/tmp/protected';
 
-    expect(buildSdkFilesystemSandbox([protectedPath])).toEqual({
+    expect(
+      buildSdkFilesystemSandbox([protectedPath], { httpProxyPort: 18790 }),
+    ).toEqual({
       enabled: true,
       failIfUnavailable: true,
       autoAllowBashIfSandboxed: false,
@@ -34,6 +36,7 @@ describe('Claude SDK filesystem sandbox settings', () => {
         allowLocalBinding: true,
         allowUnixSockets: ['/'],
         allowMachLookup: ['*'],
+        httpProxyPort: 18790,
       },
       filesystem: {
         denyRead: [expect.stringMatching(/\/tmp\/protected$/)],
@@ -80,28 +83,33 @@ describe('Claude SDK filesystem sandbox settings', () => {
     });
   });
 
-  it('keeps credential and settings paths in the read denylist', () => {
+  // Real enforcing execution (a credential read actually blocked plus a
+  // Chrome-shaped operation running) is verified by the goal-prompt runtime-smoke
+  // step in a real environment; nested Seatbelt cannot run in CI/managed sandboxes.
+  it('keeps authoritative protected and SSH-shaped paths in both deny lists', () => {
     process.env.HOME = '/Users/tester';
     process.env.GANTRY_PROTECTED_FILESYSTEM_DENY_READ_PATHS_JSON =
-      JSON.stringify([
-        '~/.ssh',
-        '~/.aws',
-        '~/.config/gantry/settings.yaml',
-      ]);
+      JSON.stringify(['/run/gantry/protected/credential.json', '~/.ssh']);
     process.env.GANTRY_PROTECTED_FILESYSTEM_DENY_WRITE_PATHS_JSON =
-      JSON.stringify(['~/.config/gantry/settings.yaml']);
+      JSON.stringify(['/run/gantry/protected/credential.json', '~/.ssh']);
     const paths = readProtectedFilesystemSandboxPaths();
-
     const sandbox = buildSdkFilesystemSandbox(paths.denyWrite, {
       denyReadPaths: paths.denyRead,
       denyWritePaths: paths.denyWrite,
     });
 
-    expect(sandbox.filesystem?.denyRead).toEqual([
-      '/Users/tester/.aws',
-      '/Users/tester/.config/gantry/settings.yaml',
-      '/Users/tester/.ssh',
-    ]);
+    expect(sandbox.filesystem?.denyRead).toEqual(
+      expect.arrayContaining([
+        '/run/gantry/protected/credential.json',
+        '/Users/tester/.ssh',
+      ]),
+    );
+    expect(sandbox.filesystem?.denyWrite).toEqual(
+      expect.arrayContaining([
+        '/run/gantry/protected/credential.json',
+        '/Users/tester/.ssh',
+      ]),
+    );
   });
 
   it('avoids host filesystem probes when the runner is already sandboxed', () => {

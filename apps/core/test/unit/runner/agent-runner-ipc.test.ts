@@ -409,7 +409,13 @@ export async function* query({ prompt, options }) {
     const permissionToolName = process.env.TEST_PERMISSION_TOOL_NAME || 'Bash';
     const permissionInput = process.env.TEST_PERMISSION_SCOPE
       ? { scope: process.env.TEST_PERMISSION_SCOPE }
-      : { cmd: 'npm test', apiToken: 'secret-token' };
+      : {
+          cmd: process.env.TEST_PERMISSION_COMMAND || 'npm test',
+          apiToken: 'secret-token',
+          ...(process.env.TEST_PERMISSION_DANGEROUSLY_DISABLE_SANDBOX === '1'
+            ? { dangerouslyDisableSandbox: true }
+            : {}),
+        };
     const decisionPromise = options.canUseTool(
       permissionToolName,
       permissionInput,
@@ -1290,7 +1296,7 @@ describe('agent-runner IPC lifecycle', () => {
   );
 
   it(
-    'enables SDK filesystem sandboxing with protected deny-write paths',
+    'keeps protected paths denied when the direct SDK escape hatch is enabled',
     async () => {
       const fixture = createRunnerFixture();
       const claudeConfigDir = path.join(fixture.root, 'claude-config');
@@ -1310,17 +1316,15 @@ describe('agent-runner IPC lifecycle', () => {
         enabled: true,
         failIfUnavailable: true,
         autoAllowBashIfSandboxed: false,
-        allowUnsandboxedCommands: false,
+        allowUnsandboxedCommands: true,
         filesystem: {
+          denyRead: expect.arrayContaining([
+            expect.stringMatching(/claude-config$/),
+            expect.stringMatching(/mcp-handoff\.json$/),
+          ]),
           denyWrite: expect.arrayContaining([
-            path.join(
-              fs.realpathSync.native(path.dirname(claudeConfigDir)),
-              path.basename(claudeConfigDir),
-            ),
-            path.join(
-              fs.realpathSync.native(path.dirname(handoffPath)),
-              path.basename(handoffPath),
-            ),
+            expect.stringMatching(/claude-config$/),
+            expect.stringMatching(/mcp-handoff\.json$/),
           ]),
         },
       });
@@ -1329,7 +1333,7 @@ describe('agent-runner IPC lifecycle', () => {
   );
 
   it(
-    'keeps reviewed local CLI credential paths readable but write-protected in the SDK sandbox',
+    'keeps reviewed local CLI credential paths readable but denied for writes',
     async () => {
       const fixture = createRunnerFixture();
       const protectedSettingsPath = path.join(
@@ -1361,40 +1365,16 @@ describe('agent-runner IPC lifecycle', () => {
 
       expect(result.exitCode, result.stderr).toBe(0);
       const call = readRecord(fixture.recordPath).calls[0];
-      const sandboxFilesystem = call?.sandbox?.filesystem as
-        | { denyRead?: string[]; denyWrite?: string[] }
-        | undefined;
 
-      expect(sandboxFilesystem?.denyRead).toEqual(
-        expect.arrayContaining([
-          path.join(
-            fs.realpathSync.native(path.dirname(protectedSettingsPath)),
-            path.basename(protectedSettingsPath),
-          ),
+      expect(call?.sandbox?.filesystem).toEqual({
+        denyRead: [expect.stringMatching(/settings\.json$/)],
+        denyWrite: expect.arrayContaining([
+          expect.stringMatching(/runtime$/),
+          expect.stringMatching(/credentials\/acme$/),
         ]),
-      );
-      expect(sandboxFilesystem?.denyRead).not.toEqual(
-        expect.arrayContaining([
-          path.join(
-            fs.realpathSync.native(path.dirname(localCliCredentialDir)),
-            path.basename(localCliCredentialDir),
-          ),
-        ]),
-      );
+      });
       expect(call?.additionalDirectories).toEqual(
         expect.arrayContaining([
-          path.join(
-            fs.realpathSync.native(path.dirname(localCliCredentialDir)),
-            path.basename(localCliCredentialDir),
-          ),
-        ]),
-      );
-      expect(sandboxFilesystem?.denyWrite).toEqual(
-        expect.arrayContaining([
-          path.join(
-            fs.realpathSync.native(path.dirname(runtimeProjectionDir)),
-            path.basename(runtimeProjectionDir),
-          ),
           path.join(
             fs.realpathSync.native(path.dirname(localCliCredentialDir)),
             path.basename(localCliCredentialDir),
@@ -2416,6 +2396,46 @@ describe('agent-runner IPC lifecycle', () => {
   );
 
   it(
+    'carries an authorized Chrome-shaped escape request to the SDK execution boundary',
+    async () => {
+      const fixture = createRunnerFixture();
+      const command =
+        'open -a "Google Chrome" --args --headless --disable-gpu about:blank';
+
+      const result = await runRunner(fixture, baseInput(), {
+        TEST_PERMISSION_DECISION: 'approve',
+        TEST_PERMISSION_COMMAND: command,
+        TEST_PERMISSION_DANGEROUSLY_DISABLE_SANDBOX: '1',
+        TEST_EXIT_AFTER_QUERY: '1',
+      });
+
+      expect(result.exitCode, result.stderr).toBe(0);
+      const call = readRecord(fixture.recordPath).calls[0];
+      expect(call?.sandbox).toMatchObject({
+        allowUnsandboxedCommands: true,
+      });
+      expect(call?.permissionRequest).toEqual(
+        expect.objectContaining({
+          toolName: 'RunCommand',
+          toolInput: expect.objectContaining({
+            cmd: command,
+            dangerouslyDisableSandbox: true,
+          }),
+        }),
+      );
+      expect(call?.permissionDecision).toEqual({
+        behavior: 'allow',
+        updatedInput: {
+          cmd: `GODEBUG=netdns=go ${command}`,
+          apiToken: 'secret-token',
+          dangerouslyDisableSandbox: true,
+        },
+      });
+    },
+    RUNNER_IPC_TEST_TIMEOUT_MS,
+  );
+
+  it(
     'synthesizes exact persistent permission suggestions for Gantry admin tools',
     async () => {
       const fixture = createRunnerFixture();
@@ -2707,15 +2727,11 @@ describe('agent-runner IPC lifecycle', () => {
     async () => {
       const fixture = createRunnerFixture();
 
-      const result = await runRunner(
-        fixture,
-        baseInput(),
-        {
-          TEST_HOST_PERMISSION_DECISION: 'approve',
-          TEST_SDK_NETWORK_AFTER_TOOL: '1',
-          TEST_TOOL_USE_CMD: 'npm test --runInBand',
-        },
-      );
+      const result = await runRunner(fixture, baseInput(), {
+        TEST_HOST_PERMISSION_DECISION: 'approve',
+        TEST_SDK_NETWORK_AFTER_TOOL: '1',
+        TEST_TOOL_USE_CMD: 'npm test --runInBand',
+      });
 
       expect(result.exitCode, result.stderr).toBe(0);
       expect(result.stdout).not.toContain('sdk_network_gate_');
@@ -2744,16 +2760,12 @@ describe('agent-runner IPC lifecycle', () => {
     async () => {
       const fixture = createRunnerFixture();
 
-      const result = await runRunner(
-        fixture,
-        baseInput(),
-        {
-          TEST_HOST_PERMISSION_DECISION: 'approve',
-          TEST_SDK_NETWORK_AFTER_TOOL: '1',
-          TEST_SECOND_SDK_NETWORK_AFTER_TOOL: '1',
-          TEST_TOOL_USE_CMD: 'npm test --runInBand',
-        },
-      );
+      const result = await runRunner(fixture, baseInput(), {
+        TEST_HOST_PERMISSION_DECISION: 'approve',
+        TEST_SDK_NETWORK_AFTER_TOOL: '1',
+        TEST_SECOND_SDK_NETWORK_AFTER_TOOL: '1',
+        TEST_TOOL_USE_CMD: 'npm test --runInBand',
+      });
 
       expect(result.exitCode, result.stderr).toBe(0);
       const call = readRecord(fixture.recordPath).calls[0];

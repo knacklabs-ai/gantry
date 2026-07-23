@@ -74,6 +74,7 @@ export function buildSdkFilesystemSandbox(
     enabled: true,
     failIfUnavailable: true,
     autoAllowBashIfSandboxed: false,
+    // L2ii: escape hatch (allowUnsandboxedCommands) deferred — D-0005. Do NOT enable until the deterministic rails carry authoritative GANTRY_PROTECTED_FILESYSTEM_* + local_cli protected paths and run before any reviewed-rule allow for escape-eligible commands; otherwise an escaped command bypasses credential protection.
     allowUnsandboxedCommands: false,
     network: {
       allowLocalBinding: true,

