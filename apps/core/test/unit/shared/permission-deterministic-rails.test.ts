@@ -215,6 +215,23 @@ describe('permission deterministic rails', () => {
     });
   });
 
+  it('asks when a bare relative option path symlinks outside a trusted root', () => {
+    const trustedRoot = makeRoot();
+    const outsideRoot = makeRoot();
+    fs.symlinkSync(outsideRoot, path.join(trustedRoot, 'escape'));
+
+    expect(
+      evaluatePermissionDeterministicRails({
+        request: request('git --git-dir=escape/.git status'),
+        workspaceRoot: trustedRoot,
+        trustedRoots: [trustedRoot],
+      }),
+    ).toMatchObject({
+      railOutcome: 'ask',
+      reason: expect.stringContaining('outside'),
+    });
+  });
+
   it('asks for destructive git even inside an owner-declared root', () => {
     const trustedRoot = makeRoot();
 

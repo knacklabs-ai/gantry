@@ -50,11 +50,20 @@ function pathCandidates(leaf: BashCommandLeaf): string[] {
     ...leaf.redirects.map(({ target }) => target),
     ...leaf.argv.slice(1).flatMap((arg) => {
       const value = arg.includes('=') ? arg.slice(arg.indexOf('=') + 1) : arg;
-      return path.isAbsolute(value) || /^(?:\.{1,2}|~)(?:\/|$)/.test(value)
-        ? [value]
-        : [];
+      return isPathLike(value) ? [value] : [];
     }),
   ];
+}
+
+// A value is treated as a path candidate when it is absolute, dot/tilde
+// relative, OR a bare relative path containing a separator (e.g.
+// `--git-dir=escape/.git`) — the last case still resolves against cwd and is
+// symlink-canonicalized, so it cannot escape a trusted root. URLs (scheme://)
+// are excluded so remotes and non-path options are not misread as paths.
+function isPathLike(value: string): boolean {
+  if (path.isAbsolute(value) || /^(?:\.{1,2}|~)(?:\/|$)/.test(value))
+    return true;
+  return value.includes('/') && !/^[a-z][a-z0-9+.-]*:\/\//i.test(value);
 }
 
 function isTrustedPath(
