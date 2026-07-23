@@ -9,6 +9,7 @@ import {
 } from '@core/infrastructure/ipc/response-signing.js';
 import { createIpcAuthEnvelope } from '@core/runtime/ipc-auth.js';
 import { agentIdForFolder } from '@core/domain/agent/agent-folder-id.js';
+import { resolveWorkspaceFolderPath } from '@core/platform/workspace-folder.js';
 import { semanticCapabilityInputSchema } from '@core/shared/semantic-capabilities.js';
 import { makeAgentThreadQueueKey } from '@core/shared/thread-queue-key.js';
 import type {
@@ -47,6 +48,17 @@ function createEmptyJobRepository() {
     listJobs: vi.fn(async () => []),
     getJobById: vi.fn(async () => null),
     updateJob: vi.fn(async () => null),
+  };
+}
+
+function promptPermissionRuntimeSettings() {
+  return {
+    agents: { main_agent: { permissionMode: 'ask' as const } },
+    permissions: {
+      autoMode: {},
+      trustedRoots: [resolveWorkspaceFolderPath('main_agent')],
+    },
+    memory: { llm: { models: { extractor: 'sonnet' } } },
   };
 }
 
@@ -294,6 +306,7 @@ describe('ipc-interaction-handler', () => {
         runHandle: 'agent-run-1',
         targetJid: 'tg:team',
         toolName: 'mcp__gantry__service_restart',
+        toolInput: { service: 'api' },
       },
       sourceAgentFolder: 'main_agent',
       deps: {
@@ -372,6 +385,7 @@ describe('ipc-interaction-handler', () => {
         targetJid: 'tg:team',
         threadId: 'topic-7',
         toolName: 'mcp__gantry__service_restart',
+        toolInput: { service: 'api' },
       },
       sourceAgentFolder: 'main_agent',
       deps: {
@@ -506,6 +520,9 @@ describe('ipc-interaction-handler', () => {
         runHandle: 'agent-run-skill',
         targetJid: 'tg:team',
         toolName: 'RunCommand',
+        toolInput: {
+          command: 'skills/linkedin-posting/publish post-1',
+        },
         suggestions: [
           {
             type: 'addRules',
@@ -536,6 +553,7 @@ describe('ipc-interaction-handler', () => {
         })),
         opsRepository: createEmptyJobRepository() as never,
         getToolRepository: () => toolRepository as never,
+        getPermissionRuntimeSettings: promptPermissionRuntimeSettings,
         mirrorAgentToolRulesToSettings,
       },
       ipcBaseDir: tempDir,
@@ -624,6 +642,7 @@ describe('ipc-interaction-handler', () => {
           markOffered: vi.fn(async () => false),
           markDenied: vi.fn(async () => undefined),
         }),
+        getPermissionRuntimeSettings: promptPermissionRuntimeSettings,
       },
       ipcBaseDir: tempDir,
       file: 'claimed-allow-once.json',
@@ -902,7 +921,7 @@ describe('ipc-interaction-handler', () => {
     });
   });
 
-  it('denies an unattended gray-zone mutation after classifier consultation', async () => {
+  it('asks on an unattended mutation before classifier consultation', async () => {
     const classifierConsult = vi.fn(async () => ({
       decision: 'ask' as const,
       reason: 'Destructive filesystem mutation.',
@@ -945,19 +964,15 @@ describe('ipc-interaction-handler', () => {
       } as never,
     });
 
-    expect(classifierConsult).toHaveBeenCalledOnce();
+    expect(classifierConsult).not.toHaveBeenCalled();
     expect(requestPermissionApproval).not.toHaveBeenCalled();
-    expect(decision).toMatchObject({
+    expect(decision).toEqual({
       approved: false,
-      mode: 'cancel',
-      decidedBy: 'runtime',
-      reason: expect.stringContaining('Classifier requested human approval'),
+      decidedBy: 'deterministic_rails',
+      reason: 'Destructive command requires approval.',
     });
-    expect(publishRuntimeEvent).toHaveBeenCalledWith(
-      expect.objectContaining({
-        eventType: 'permission.classifier_decision',
-        payload: expect.objectContaining({ decision: 'ask' }),
-      }),
+    expect(publishRuntimeEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ eventType: 'permission.classifier_decision' }),
     );
   });
 
@@ -1064,7 +1079,10 @@ describe('ipc-interaction-handler', () => {
         }),
         getPermissionRuntimeSettings: () => ({
           agents: { main_agent: { permissionMode: 'ask' } },
-          permissions: { autoMode: {} },
+          permissions: {
+            autoMode: {},
+            trustedRoots: [resolveWorkspaceFolderPath('main_agent')],
+          },
           memory: { llm: { models: { extractor: 'sonnet' } } },
         }),
       } as never,
@@ -1078,7 +1096,7 @@ describe('ipc-interaction-handler', () => {
     );
   });
 
-  it('classifies a benign IPC RunCommand beyond the display limit with full input', async () => {
+  it('asks on IPC input sanitized beyond the display limit', async () => {
     const envelope = createIpcAuthEnvelope('main_agent', null);
     const claimedPath = path.join(tempDir, 'claimed-auto-ask.json');
     fs.writeFileSync(claimedPath, '{}');
@@ -1148,18 +1166,27 @@ describe('ipc-interaction-handler', () => {
       logger: { warn: vi.fn(), error: vi.fn(), info: vi.fn() },
     });
 
-    expect(classifierConsult).toHaveBeenCalledWith(
-      expect.objectContaining({ toolInput: { command: fullCommand } }),
-    );
+    expect(classifierConsult).not.toHaveBeenCalled();
     expect(requestPermissionApproval).not.toHaveBeenCalled();
-    expect(publishRuntimeEvent).toHaveBeenCalledWith(
-      expect.objectContaining({
-        eventType: 'permission.classifier_decision',
-        payload: expect.objectContaining({
-          decision: 'allow',
-          latencyMs: 1,
-        }),
-      }),
+    const response = JSON.parse(
+      fs.readFileSync(
+        path.join(
+          tempDir,
+          'main_agent',
+          'permission-responses',
+          'perm-auto-ask.json',
+        ),
+        'utf-8',
+      ),
+    );
+    expect(response).toMatchObject({
+      approved: false,
+      decidedBy: 'deterministic_rails',
+      reason: 'Exact tool input is missing, sanitized, or altered.',
+    });
+    expect(response.mode).toBeUndefined();
+    expect(publishRuntimeEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ eventType: 'permission.classifier_decision' }),
     );
   });
 
@@ -1235,16 +1262,24 @@ describe('ipc-interaction-handler', () => {
       ),
     ).toMatchObject({
       approved: false,
-      mode: 'cancel',
-      decidedBy: 'runtime',
-      reason: expect.stringContaining('tool input view was incomplete'),
-      decisionClassification: 'user_reject',
+      decidedBy: 'deterministic_rails',
+      reason: 'Exact tool input is missing, sanitized, or altered.',
     });
-    expect(publishRuntimeEvent).toHaveBeenCalledWith(
-      expect.objectContaining({
-        eventType: 'permission.classifier_decision',
-        payload: expect.objectContaining({ failureCode: 'input_truncated' }),
-      }),
+    const response = JSON.parse(
+      fs.readFileSync(
+        path.join(
+          tempDir,
+          'main_agent',
+          'permission-responses',
+          'perm-unattended-ask.json',
+        ),
+        'utf-8',
+      ),
+    );
+    expect(response.mode).toBeUndefined();
+    expect(response.decisionClassification).toBeUndefined();
+    expect(publishRuntimeEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ eventType: 'permission.classifier_decision' }),
     );
   });
 
@@ -1276,6 +1311,7 @@ describe('ipc-interaction-handler', () => {
           targetJid: 'tg:auto',
           toolName,
           unattended,
+          toolInput: { command: 'npm test' },
         },
         sourceAgentFolder: 'main_agent',
         deps: {
@@ -1290,7 +1326,10 @@ describe('ipc-interaction-handler', () => {
           publishRuntimeEvent: vi.fn(async () => undefined),
           getPermissionRuntimeSettings: () => ({
             agents: {},
-            permissions: { autoMode: {} },
+            permissions: {
+              autoMode: {},
+              trustedRoots: [resolveWorkspaceFolderPath('main_agent')],
+            },
             memory: { llm: { models: { extractor: 'sonnet' } } },
           }),
         } as never,
@@ -1380,8 +1419,7 @@ describe('ipc-interaction-handler', () => {
       ).toEqual([
         'interaction.pending',
         'permission.requested',
-        'permission.allowed',
-        'permission.resumed',
+        'permission.denied',
         'permission.final_outcome',
       ]);
       expect(publishRuntimeEvent).toHaveBeenCalledWith(
@@ -1408,8 +1446,7 @@ describe('ipc-interaction-handler', () => {
       );
       for (const eventType of [
         'permission.requested',
-        'permission.allowed',
-        'permission.resumed',
+        'permission.denied',
         'permission.final_outcome',
       ]) {
         expect(publishRuntimeEvent).toHaveBeenCalledWith(
@@ -1421,7 +1458,7 @@ describe('ipc-interaction-handler', () => {
           }),
         );
       }
-      expect(createTransientGrant).toHaveBeenCalledOnce();
+      expect(createTransientGrant).not.toHaveBeenCalled();
     },
   );
 
@@ -1462,6 +1499,7 @@ describe('ipc-interaction-handler', () => {
         agentId: 'agent:test',
         sourceAgentFolder: 'main_agent',
         toolName: 'Bash',
+        toolInput: { command: 'npm test' },
       },
       sourceAgentFolder: 'main_agent',
       deps: {
@@ -1472,6 +1510,7 @@ describe('ipc-interaction-handler', () => {
           decisionClassification: 'user_permanent',
           permissionCallbackClaim: claim,
         })),
+        getPermissionRuntimeSettings: promptPermissionRuntimeSettings,
       },
       ipcBaseDir: tempDir,
       file: 'claimed-failed-grant.json',
@@ -1752,6 +1791,7 @@ describe('ipc-interaction-handler', () => {
         runLeaseFencingVersion: 7,
         jobId: 'job:test',
         toolName: 'Bash',
+        toolInput: { command: 'npm test' },
       },
       sourceAgentFolder: 'main_agent',
       deps: {
@@ -1761,6 +1801,7 @@ describe('ipc-interaction-handler', () => {
           decidedBy: 'owner',
           permissionCallbackClaim: claim,
         })),
+        getPermissionRuntimeSettings: promptPermissionRuntimeSettings,
       },
       ipcBaseDir: tempDir,
       file: 'claimed-stale-after-decision.json',
@@ -1828,6 +1869,7 @@ describe('ipc-interaction-handler', () => {
         runLeaseFencingVersion: 7,
         jobId: 'job:test',
         toolName: 'Bash',
+        toolInput: { command: 'npm test' },
       },
       sourceAgentFolder: 'main_agent',
       deps: {
@@ -1837,6 +1879,7 @@ describe('ipc-interaction-handler', () => {
           decidedBy: 'owner',
           permissionCallbackClaim: claim,
         })),
+        getPermissionRuntimeSettings: promptPermissionRuntimeSettings,
       },
       ipcBaseDir: tempDir,
       file: 'claimed-stale-after-settle.json',
@@ -2513,6 +2556,7 @@ describe('ipc-interaction-handler', () => {
         jobId: 'job:test',
         targetJid: 'tg:team',
         toolName: 'Bash',
+        toolInput: { command: 'npm test' },
       },
       sourceAgentFolder: 'main_agent',
       deps: {
@@ -2523,6 +2567,7 @@ describe('ipc-interaction-handler', () => {
           decisionClassification: 'user_temporary',
           permissionCallbackClaim: claim,
         })),
+        getPermissionRuntimeSettings: promptPermissionRuntimeSettings,
       },
       ipcBaseDir: tempDir,
       file,
@@ -2832,10 +2877,12 @@ describe('ipc-interaction-handler', () => {
         jobId: 'job:test',
         targetJid: 'tg:team',
         toolName: 'Bash',
+        toolInput: { command: 'npm test' },
       },
       sourceAgentFolder: 'main_agent',
       deps: {
         requestPermissionApproval,
+        getPermissionRuntimeSettings: promptPermissionRuntimeSettings,
       },
       ipcBaseDir: tempDir,
       file: 'claimed-recovered-permission.json',

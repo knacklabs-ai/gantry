@@ -625,59 +625,6 @@ describe('inline core tool bootstrap', () => {
     expect(requestPermissionApproval).toHaveBeenCalledOnce();
   });
 
-  it('shows the promotion hint and counts a human inline allow-once', async () => {
-    const counter = {
-      appId: 'default',
-      agentFolder: 'main_agent',
-      suggestionKey: 'main_agent|RunCommand(git status)',
-      allowCount: 2,
-      lastOfferedAt: null,
-      deniedAt: null,
-      createdAt: '2026-07-12T00:00:00.000Z',
-      updatedAt: '2026-07-12T00:00:00.000Z',
-    };
-    const incrementAndGet = vi.fn(async () => ({
-      ...counter,
-      allowCount: 3,
-    }));
-    wire({
-      getPermissionPromotionRepository: () => ({
-        incrementAndGet,
-        get: vi.fn(async () => counter),
-        markOffered: vi.fn(async () => false),
-        markDenied: vi.fn(async () => undefined),
-      }),
-    });
-    const input = laneInput();
-    const tools = createInlineCoreTools(
-      input,
-      support((() => ({
-        status: 'prompt',
-        reason: 'Approval required.',
-      })) as never),
-    );
-
-    // A real inline allow-once decision carries the approver's identity;
-    // recordHumanPermissionPromotionSignal only counts human decisions.
-    requestPermissionApproval.mockResolvedValueOnce({
-      approved: true,
-      mode: 'allow_once' as const,
-      decidedBy: 'user-1',
-    });
-
-    await tools.authorizeThirdPartyMcpTool('RunCommand', {
-      command: 'git status',
-    });
-
-    expect(requestPermissionApproval).toHaveBeenCalledWith(
-      expect.objectContaining({
-        promotionHintCount: 2,
-        decisionOptions: ['allow_persistent_rule', 'allow_once', 'cancel'],
-      }),
-    );
-    await vi.waitFor(() => expect(incrementAndGet).toHaveBeenCalledOnce());
-  });
-
   it('does not prompt for auto-approved remote MCP tools', async () => {
     wire();
     const input = laneInput();
@@ -805,7 +752,7 @@ describe('inline core tool bootstrap', () => {
     );
   });
 
-  it('marks sanitized inline input before classifier consult and approval', async () => {
+  it('asks on sanitized inline input before classifier consult or approval', async () => {
     const classifierConsult = vi.fn();
     wire({
       classifierConsult,
@@ -839,24 +786,19 @@ describe('inline core tool bootstrap', () => {
         id: 'crm-1',
         password: 'do-not-classify',
       }),
-    ).resolves.toEqual({ allowed: true });
+    ).resolves.toEqual({
+      allowed: false,
+      reason: 'Exact tool input is missing, sanitized, or altered.',
+    });
 
     expect(classifierConsult).not.toHaveBeenCalled();
-    expect(requestPermissionApproval).toHaveBeenCalledWith(
-      expect.objectContaining({
-        toolInputSanitized: true,
-        toolInputSanitizedPaths: ['password'],
-      }),
-    );
-    expect(publishRuntimeEvent).toHaveBeenCalledWith(
-      expect.objectContaining({
-        eventType: 'permission.classifier_decision',
-        payload: expect.objectContaining({ failureCode: 'input_truncated' }),
-      }),
+    expect(requestPermissionApproval).not.toHaveBeenCalled();
+    expect(publishRuntimeEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ eventType: 'permission.classifier_decision' }),
     );
   });
 
-  it('classifies benign inline input beyond the display limit with full input', async () => {
+  it('asks on inline input sanitized beyond the display limit', async () => {
     const classifierConsult = vi.fn(async () => ({
       decision: 'allow' as const,
       reason: 'Benign lookup.',
@@ -886,12 +828,16 @@ describe('inline core tool bootstrap', () => {
 
     await expect(
       tools.authorizeThirdPartyMcpTool('mcp__crm__lookup', { query }),
-    ).resolves.toEqual({ allowed: true });
+    ).resolves.toEqual({
+      allowed: false,
+      reason: 'Exact tool input is missing, sanitized, or altered.',
+    });
 
-    expect(classifierConsult).toHaveBeenCalledWith(
-      expect.objectContaining({ toolInput: { query } }),
-    );
+    expect(classifierConsult).not.toHaveBeenCalled();
     expect(requestPermissionApproval).not.toHaveBeenCalled();
+    expect(publishRuntimeEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ eventType: 'permission.classifier_decision' }),
+    );
   });
 
   it('asks instead of classifying inline input truncated at the classifier limit', async () => {
@@ -925,15 +871,15 @@ describe('inline core tool bootstrap', () => {
       tools.authorizeThirdPartyMcpTool('mcp__crm__lookup', {
         query: 'x'.repeat(16_001),
       }),
-    ).resolves.toEqual({ allowed: true });
+    ).resolves.toEqual({
+      allowed: false,
+      reason: 'Exact tool input is missing, sanitized, or altered.',
+    });
 
     expect(classifierConsult).not.toHaveBeenCalled();
-    expect(requestPermissionApproval).toHaveBeenCalledOnce();
-    expect(publishRuntimeEvent).toHaveBeenCalledWith(
-      expect.objectContaining({
-        eventType: 'permission.classifier_decision',
-        payload: expect.objectContaining({ failureCode: 'input_truncated' }),
-      }),
+    expect(requestPermissionApproval).not.toHaveBeenCalled();
+    expect(publishRuntimeEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({ eventType: 'permission.classifier_decision' }),
     );
   });
 

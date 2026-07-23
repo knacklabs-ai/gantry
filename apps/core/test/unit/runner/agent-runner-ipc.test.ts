@@ -1316,7 +1316,7 @@ describe('agent-runner IPC lifecycle', () => {
         enabled: true,
         failIfUnavailable: true,
         autoAllowBashIfSandboxed: false,
-        allowUnsandboxedCommands: true,
+        allowUnsandboxedCommands: false,
         filesystem: {
           denyRead: expect.arrayContaining([
             expect.stringMatching(/claude-config$/),
@@ -2396,7 +2396,7 @@ describe('agent-runner IPC lifecycle', () => {
   );
 
   it(
-    'carries an authorized Chrome-shaped escape request to the SDK execution boundary',
+    'carries an authorized Chrome-shaped request without opening the SDK sandbox escape',
     async () => {
       const fixture = createRunnerFixture();
       const command =
@@ -2412,7 +2412,7 @@ describe('agent-runner IPC lifecycle', () => {
       expect(result.exitCode, result.stderr).toBe(0);
       const call = readRecord(fixture.recordPath).calls[0];
       expect(call?.sandbox).toMatchObject({
-        allowUnsandboxedCommands: true,
+        allowUnsandboxedCommands: false,
       });
       expect(call?.permissionRequest).toEqual(
         expect.objectContaining({
