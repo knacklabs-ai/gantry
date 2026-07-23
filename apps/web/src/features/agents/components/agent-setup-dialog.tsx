@@ -24,6 +24,7 @@ const persistedDraftSchema = draftSchema.extend({
     'profile',
     'review',
   ]),
+  connection: z.record(z.string(), z.unknown()).nullable(),
 });
 
 export function AgentSetupDialog({
