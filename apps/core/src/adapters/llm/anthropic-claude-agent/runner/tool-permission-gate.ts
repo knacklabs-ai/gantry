@@ -41,7 +41,6 @@ import {
 import { waitOnlyBashMonitoringDenial } from './wait-only-bash-guard.js';
 import { forceBackgroundNativeAgentInput } from './native-agent-tool-input.js';
 import { denyNonPromptableAutonomousRecovery } from './autonomous-permission-recovery.js';
-import { publicCapabilityAllowedToolRules } from '../../../../shared/agent-tool-references.js';
 import { evaluateYoloModeDenylist } from '../../../../shared/yolo-mode-policy.js';
 type ApprovalInput = Parameters<typeof requestPermissionApproval>[0];
 const WORKSPACE_FOLDER_KEY = WORKSPACE_FOLDER_OPTION_KEY as keyof ApprovalInput;
@@ -69,9 +68,15 @@ export function createCanUseToolCallback(
   const toolExecutionPolicy = new ToolExecutionPolicyService();
   const liveApprovedRules = new Set<string>();
   const skillActionCapabilities = readRunnerSkillActionCapabilities();
+  // PERM-2 Task F: the agent's configured allowedTools and the composed
+  // capability-profile allowedTools no longer fold into the worker-side policy
+  // rules. Folding them let a tool merely present on the SDK allowedTools
+  // surface mint a policy `allow` here, parallel to (and skipping) the host
+  // coordinator. The only standing-allow authority is the coordinator's
+  // reviewed selected-rule path and decision-memory (both host-side); the
+  // worker keeps only live host-approved rules and in-session operator
+  // approvals so every tool still crosses the coordinator once.
   const currentAllowedToolRules = (): string[] => [
-    ...(input.agentInput.allowedTools ?? []),
-    ...publicCapabilityAllowedToolRules(input.capabilities.allowedTools),
     ...readLiveToolRules({
       ipcDir: process.env.GANTRY_IPC_DIR,
       runHandle: process.env.GANTRY_AGENT_RUN_HANDLE,
@@ -79,7 +84,6 @@ export function createCanUseToolCallback(
     ...liveApprovedRules,
   ];
   const currentAutonomousAllowedToolRules = (): string[] => [
-    ...(input.agentInput.allowedTools ?? []),
     ...(input.agentInput.isScheduledJob ? ['RunCommand(date *)'] : []),
     ...readExternalMcpAllowedTools(),
     ...readLiveToolRules({

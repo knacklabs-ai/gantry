@@ -426,6 +426,52 @@ describe('createCanUseToolCallback', () => {
     );
   });
 
+  it('does not silently allow a tool listed in allowedTools — the coordinator still decides', async () => {
+    // PERM-2 Task F: a rule on the agent's configured allowedTools must not
+    // mint a worker-side `allow` that skips the host coordinator. Even with a
+    // matching allowedTools rule, the operator's coordinator decision governs:
+    // deny it and the tool is denied.
+    permissionMock.requestPermissionApproval.mockResolvedValueOnce({
+      approved: false,
+      reason: 'operator denied',
+      decidedBy: 'user',
+    });
+    const canUseTool = makeCallback({
+      agentInput: {
+        runMode: 'normal',
+        isScheduledJob: false,
+        appId: 'default',
+        agentId: 'agent:test',
+        runId: 'run-1',
+        jobId: undefined,
+        chatJid: 'tg:test',
+        threadId: undefined,
+        allowedTools: ['RunCommand(npm test *)'],
+        yoloMode: { enabled: false, denylist: [], denylistPaths: [] },
+      } as never,
+      capabilities: {
+        allowedTools: ['RunCommand(npm test *)'],
+        alwaysAllowedTools: ['RunCommand(npm test *)'],
+        permissionMode: 'default',
+      } as never,
+    });
+
+    const result = await canUseTool(
+      'Bash',
+      { command: 'npm test --safe now' },
+      makePermissionOptions() as never,
+    );
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        behavior: 'deny',
+        message: expect.stringContaining('operator denied'),
+      }),
+    );
+    // The coordinator was consulted exactly once for this "pre-allowed" tool.
+    expect(permissionMock.requestPermissionApproval).toHaveBeenCalledTimes(1);
+  });
+
   it('denies wait-only Bash monitoring instead of asking for permission', async () => {
     const canUseTool = makeCallback();
     const result = await canUseTool(
