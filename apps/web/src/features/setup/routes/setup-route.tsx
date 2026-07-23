@@ -151,19 +151,28 @@ export function SetupRoute() {
               showValidation={showValidation}
             />
           ) : stage.id === 'model' ? (
-            <LiveSelect
-              label="Model"
-              value={draft.Model ?? ''}
-              options={(modelQuery.data?.models ?? []).map((model) => ({
-                label: `${model.alias} — ${model.displayName}`,
-                value: model.alias,
-              }))}
-              loading={modelQuery.isPending}
-              emptyMessage="No models are available for this runtime."
-              onChange={(value) =>
-                setDraft((current) => ({ ...current, Model: value }))
-              }
-            />
+            <div className="grid gap-3">
+              <LiveSelect
+                label="Model"
+                value={draft.Model ?? ''}
+                options={(modelQuery.data?.models ?? []).map((model) => ({
+                  label: `${model.alias} — ${model.displayName}`,
+                  value: model.alias,
+                }))}
+                loading={modelQuery.isPending}
+                emptyMessage="No models are available for this runtime."
+                onChange={(value) =>
+                  setDraft((current) => ({ ...current, Model: value }))
+                }
+              />
+              <ModelReadiness
+                readiness={
+                  modelQuery.data?.models.find(
+                    (model) => model.alias === draft.Model,
+                  )?.readiness
+                }
+              />
+            </div>
           ) : stage.id === 'connection' ? (
             <SetupConnectionDetails
               selectedAccountId={draft['Provider connection'] ?? ''}
@@ -295,6 +304,19 @@ function SetupProgress({ activeStage }: { activeStage: number }) {
         );
       })}
     </ol>
+  );
+}
+
+function ModelReadiness({ readiness }: { readiness?: 'ready' | 'attention' }) {
+  if (!readiness) return null;
+  return (
+    <p
+      className={`m-0 text-sm ${readiness === 'ready' ? 'text-status-ready' : 'text-text-secondary'}`}
+    >
+      {readiness === 'ready'
+        ? 'Model access is ready for this runtime.'
+        : 'This model needs attention before the agent can use it.'}
+    </p>
   );
 }
 
