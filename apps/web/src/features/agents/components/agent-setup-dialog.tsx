@@ -15,6 +15,15 @@ const persistedDraftSchema = draftSchema.extend({
   name: z.string(),
   purpose: z.string().nullable(),
   version: z.number(),
+  modelAlias: z.string().nullable(),
+  currentStage: z.enum([
+    'agent',
+    'model',
+    'connection',
+    'conversation',
+    'profile',
+    'review',
+  ]),
 });
 
 export function AgentSetupDialog({
@@ -51,7 +60,8 @@ export function AgentSetupDialog({
         setVersion(draft.version);
         setName(draft.name);
         setPurpose(draft.purpose ?? '');
-        setStage('agent');
+        setModelAlias(draft.modelAlias ?? '');
+        setStage(draft.currentStage === 'agent' ? 'agent' : 'model');
       });
   }, [connection.transport, open, setupId]);
 
