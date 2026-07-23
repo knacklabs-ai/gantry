@@ -117,6 +117,18 @@ describe('local-owner UI request guard', () => {
     ).toBeUndefined();
   });
 
+  it('allows JSON agent creation without exposing agent mutation routes', () => {
+    const mutation = request({
+      method: 'POST',
+      headers: { ...browserHeaders, 'content-type': 'application/json' },
+    });
+
+    expect(validateLocalOwnerUiRequest(mutation, '/v1/agents')).toBeUndefined();
+    expect(
+      validateLocalOwnerUiRequest(mutation, '/v1/agents/agent-1/admin'),
+    ).toContain('not available');
+  });
+
   it('rejects unlisted routes and cross-origin requests', () => {
     expect(
       validateLocalOwnerUiRequest(

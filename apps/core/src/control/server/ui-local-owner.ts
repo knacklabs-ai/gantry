@@ -159,7 +159,7 @@ function isAllowedUiApiRoute(method: string, pathname: string): boolean {
     [/^\/v1\/conversations\/[^/]+$/, ['GET']],
     [/^\/v1\/conversations\/[^/]+\/(?:threads|messages)$/, ['GET']],
     [/^\/v1\/conversations\/[^/]+\/approvers$/, ['GET', 'PUT']],
-    [/^\/v1\/agents$/, ['GET']],
+    [/^\/v1\/agents$/, ['GET', 'POST']],
     [/^\/v1\/agents\/[^/]+\/conversation-installs$/, ['GET']],
     [
       /^\/v1\/agents\/[^/]+\/conversation-installs\/[^/]+$/,
