@@ -231,13 +231,6 @@ export async function replaceConversationInstall(
   },
 ) {
   const conversationId = encodeURIComponent(input.conversation.id);
-  if (input.currentAgentId && input.currentAgentId !== input.nextAgentId) {
-    await transport.request({
-      path: `/agents/${encodeURIComponent(input.currentAgentId)}/conversation-installs/${conversationId}`,
-      method: 'DELETE',
-      schema: z.record(z.string(), z.unknown()),
-    });
-  }
   if (!input.nextAgentId || input.currentAgentId === input.nextAgentId) return;
   await transport.request({
     path: `/agents/${encodeURIComponent(input.nextAgentId)}/conversation-installs/${conversationId}`,
@@ -251,6 +244,13 @@ export async function replaceConversationInstall(
     },
     schema: installSchema,
   });
+  if (input.currentAgentId && input.currentAgentId !== input.nextAgentId) {
+    await transport.request({
+      path: `/agents/${encodeURIComponent(input.currentAgentId)}/conversation-installs/${conversationId}`,
+      method: 'DELETE',
+      schema: z.record(z.string(), z.unknown()),
+    });
+  }
 }
 
 function mapConversation(
