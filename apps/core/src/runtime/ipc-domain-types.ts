@@ -44,6 +44,7 @@ import type { RemoteMcpDnsValidationCache } from '../application/mcp/mcp-server-
 import type { PermissionClassifierPromptConsultInput } from './permission-classifier.js';
 import type { PermissionMode } from '../shared/permission-mode.js';
 import type { PermissionPromotionRepository } from '../domain/ports/permission-promotion.js';
+import type { PermissionDecisionMemoryRepository } from '../domain/ports/permission-decision-memory.js';
 
 export interface IpcDeps {
   sendMessage: (
@@ -114,6 +115,9 @@ export interface IpcDeps {
   getPermissionRepository?: () => PermissionRepository | undefined;
   getPermissionPromotionRepository?: () =>
     | PermissionPromotionRepository
+    | undefined;
+  getPermissionDecisionMemoryRepository?: () =>
+    | PermissionDecisionMemoryRepository
     | undefined;
   getFileArtifactStore?: () => FileArtifactStore | undefined;
   publishRuntimeEvent?: (event: RuntimeEventPublishInput) => Promise<void>;

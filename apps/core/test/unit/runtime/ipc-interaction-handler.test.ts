@@ -979,6 +979,151 @@ describe('ipc-interaction-handler', () => {
     );
   });
 
+  it('writes the classifier verdict back on a cache miss (attended auto allow)', async () => {
+    const classifierConsult = vi.fn(async () => ({
+      decision: 'allow' as const,
+      reason: 'Reversible workspace mutation.',
+      latencyMs: 1,
+    }));
+    const putClassifierVerdict = vi.fn(async () => undefined);
+    const getClassifierVerdict = vi.fn(async () => null);
+
+    const decision = await resolvePermissionIpcDecision({
+      request: {
+        requestId: 'perm-cache-miss-writeback',
+        appId: 'app:test',
+        sourceAgentFolder: 'main_agent',
+        targetJid: 'tg:attended',
+        toolName: 'RunCommand',
+        toolInput: { command: 'rm report.txt' },
+      },
+      sourceAgentFolder: 'main_agent',
+      deps: {
+        conversationRoutes: () => ({
+          'tg:attended': {
+            folder: 'main_agent',
+            agentConfig: { permissionMode: 'auto' },
+            conversationKind: 'dm',
+          },
+        }),
+        requestPermissionApproval: vi.fn(),
+        classifierConsult,
+        publishRuntimeEvent: vi.fn(async () => undefined),
+        getPermissionDecisionMemoryRepository: () => ({
+          getClassifierVerdict,
+          putClassifierVerdict,
+        }),
+        getPermissionRuntimeSettings: () => ({
+          agents: {},
+          permissions: { autoMode: {} },
+          memory: { llm: { models: { extractor: 'sonnet' } } },
+        }),
+      } as never,
+    });
+
+    expect(classifierConsult).toHaveBeenCalledOnce();
+    expect(decision).toMatchObject({
+      approved: true,
+      mode: 'allow_once',
+      decidedBy: 'auto_classifier',
+    });
+    expect(putClassifierVerdict).toHaveBeenCalledOnce();
+    expect(putClassifierVerdict).toHaveBeenCalledWith(
+      expect.objectContaining({
+        appId: 'app:test',
+        agentFolder: 'main_agent',
+        decision: 'allow',
+        reason: 'Reversible workspace mutation.',
+        provenance: 'classifier',
+        effectHash: expect.any(String),
+      }),
+    );
+  });
+
+  it('never writes a human allow_once decision back to the cache', async () => {
+    const requestPermissionApproval = vi.fn(async () => ({
+      approved: true,
+      mode: 'allow_once' as const,
+      decidedBy: 'owner',
+    }));
+    const putClassifierVerdict = vi.fn(async () => undefined);
+
+    await resolvePermissionIpcDecision({
+      request: {
+        requestId: 'perm-human-allow-once',
+        appId: 'app:test',
+        sourceAgentFolder: 'main_agent',
+        toolName: 'RunCommand',
+        toolInput: { command: 'rm report.txt' },
+      },
+      sourceAgentFolder: 'main_agent',
+      deps: {
+        conversationRoutes: () => ({}),
+        requestPermissionApproval,
+        getPermissionDecisionMemoryRepository: () => ({
+          getClassifierVerdict: vi.fn(async () => null),
+          putClassifierVerdict,
+        }),
+        getPermissionRuntimeSettings: () => ({
+          agents: { main_agent: { permissionMode: 'ask' as const } },
+          permissions: { autoMode: {} },
+          memory: { llm: { models: { extractor: 'sonnet' } } },
+        }),
+      } as never,
+    });
+
+    expect(requestPermissionApproval).toHaveBeenCalledOnce();
+    expect(putClassifierVerdict).not.toHaveBeenCalled();
+  });
+
+  it('does not read or write the cache when the input is sanitized (no effect hash)', async () => {
+    const classifierConsult = vi.fn(async () => ({
+      decision: 'allow' as const,
+      reason: 'Reversible workspace mutation.',
+      latencyMs: 1,
+    }));
+    const putClassifierVerdict = vi.fn(async () => undefined);
+    const getClassifierVerdict = vi.fn(async () => null);
+
+    const decision = await resolvePermissionIpcDecision({
+      request: {
+        requestId: 'perm-sanitized-no-hash',
+        appId: 'app:test',
+        sourceAgentFolder: 'main_agent',
+        targetJid: 'tg:attended',
+        toolName: 'RunCommand',
+        toolInput: { command: 'rm report.txt' },
+        toolInputSanitized: true,
+      },
+      sourceAgentFolder: 'main_agent',
+      deps: {
+        conversationRoutes: () => ({
+          'tg:attended': {
+            folder: 'main_agent',
+            agentConfig: { permissionMode: 'auto' },
+            conversationKind: 'dm',
+          },
+        }),
+        requestPermissionApproval: vi.fn(),
+        classifierConsult,
+        publishRuntimeEvent: vi.fn(async () => undefined),
+        getPermissionDecisionMemoryRepository: () => ({
+          getClassifierVerdict,
+          putClassifierVerdict,
+        }),
+        getPermissionRuntimeSettings: () => ({
+          agents: {},
+          permissions: { autoMode: {} },
+          memory: { llm: { models: { extractor: 'sonnet' } } },
+        }),
+      } as never,
+    });
+
+    expect(decision).toMatchObject({ decidedBy: 'auto_classifier' });
+    expect(getClassifierVerdict).not.toHaveBeenCalled();
+    expect(putClassifierVerdict).not.toHaveBeenCalled();
+  });
+
   it('denies an unattended read-only command matched by the YOLO denylist backstop', async () => {
     const classifierConsult = vi.fn(async () => ({
       decision: 'allow' as const,

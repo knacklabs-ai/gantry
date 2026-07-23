@@ -22,6 +22,12 @@ import {
 import { runDurablePermissionInteraction } from '../application/interactions/durable-interaction-handler.js';
 import { resolveAgentToolRuntimePolicy } from '../application/agents/agent-tool-runtime-rules.js';
 import { resolveWorkspaceFolderPath } from '../platform/workspace-folder.js';
+import {
+  computePermissionEffectHash,
+  EFFECT_SCHEMA_VERSION,
+  RAIL_CATALOG_VERSION,
+} from '../domain/permission-effect-key.js';
+import type { PermissionDecisionMemoryRepository } from '../domain/ports/permission-decision-memory.js';
 import type { YoloModeSettings } from '../shared/yolo-mode-policy.js';
 import {
   evaluateYoloModeDenylist,
@@ -72,8 +78,15 @@ export async function resolvePermissionIpcDecision(input: {
     toolName: input.request.toolName,
     toolInput: input.request.toolInput,
   });
+  const effectHash = computePermissionEffectHash({
+    request: input.request,
+    workspaceRoot,
+  });
+  const decisionMemory = input.deps.getPermissionDecisionMemoryRepository?.();
   return coordinatePermissionDecision({
     request: input.request,
+    effectHash,
+    decisionMemory,
     hardDenyReason: protectedCapability
       ? `Denied by Gantry tool execution policy: ${protectedCapability.reason} ${protectedCapability.recoveryAction}`
       : yoloMatch
@@ -115,7 +128,8 @@ export async function resolvePermissionIpcDecision(input: {
           : { allowedToolRules: policy.rules }),
       });
     },
-    tail: () => resolvePermissionIpcDecisionTail(input),
+    tail: () =>
+      resolvePermissionIpcDecisionTail({ ...input, effectHash, decisionMemory }),
   });
 }
 
@@ -123,6 +137,8 @@ async function resolvePermissionIpcDecisionTail(input: {
   request: ParsedPermissionIpcRequest;
   sourceAgentFolder: string;
   deps: IpcDeps;
+  effectHash?: string;
+  decisionMemory?: PermissionDecisionMemoryRepository;
 }): Promise<PermissionApprovalDecision> {
   const route = input.request.targetJid
     ? findConversationRouteForQueue(
@@ -240,6 +256,27 @@ async function resolvePermissionIpcDecisionTail(input: {
         classifierConsult: input.deps.classifierConsult,
       })
     : undefined;
+
+  // Cache-miss writeback: the tail is reached only on a miss, so a verdict the
+  // classifier actually produced is cached here (never a human allow_once —
+  // those flow through requestPermissionApproval below and never reach this).
+  // Skipped when effectHash is undefined (sanitized/truncated input).
+  if (classifierDecision && input.effectHash && input.decisionMemory) {
+    await input.decisionMemory
+      .putClassifierVerdict({
+        appId: input.request.appId ?? 'default',
+        agentFolder: input.request.sourceAgentFolder,
+        effectHash: input.effectHash,
+        decision: classifierDecision.decision,
+        reason: classifierDecision.reason,
+        effectSchemaVersion: EFFECT_SCHEMA_VERSION,
+        railVersion: RAIL_CATALOG_VERSION,
+        provenance: 'classifier',
+        nowIso: new Date().toISOString(),
+      })
+      // ponytail: a cache-write failure must never block the live decision.
+      .catch(() => undefined);
+  }
 
   if (classifierDecision?.decision === 'allow') {
     return decisionForMode(input.request, 'allow_once', 'auto_classifier');

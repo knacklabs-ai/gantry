@@ -257,6 +257,104 @@ describe('coordinatePermissionDecision', () => {
     },
   );
 
+  it('returns a cached classifier allow WITHOUT reaching the tail (cache hit)', async () => {
+    const tail = vi.fn();
+    const getClassifierVerdict = vi.fn(async () => ({
+      decision: 'allow' as const,
+      reason: 'cached allow',
+    }));
+    await expect(
+      coordinatePermissionDecision({
+        request: { ...request },
+        effectHash: 'effect-hash-1',
+        decisionMemory: { getClassifierVerdict } as never,
+        deterministicRails: () => undefined,
+        tail,
+      }),
+    ).resolves.toMatchObject({
+      approved: true,
+      mode: 'allow_once',
+      decidedBy: 'cached_classifier_verdict',
+      reason: 'cached allow',
+    });
+    expect(getClassifierVerdict).toHaveBeenCalledWith({
+      appId: 'default',
+      agentFolder: 'main_agent',
+      effectHash: 'effect-hash-1',
+    });
+    expect(tail).not.toHaveBeenCalled();
+  });
+
+  it('lets an ASK rail override a cached allow WITHOUT reading the cache', async () => {
+    const tailDecision = {
+      approved: false,
+      mode: 'cancel' as const,
+      decidedBy: 'human',
+    };
+    const tail = vi.fn(async () => tailDecision);
+    const getClassifierVerdict = vi.fn(async () => ({
+      decision: 'allow' as const,
+      reason: 'stale cached allow',
+    }));
+    const railRequest = { ...request };
+    await expect(
+      coordinatePermissionDecision({
+        request: railRequest,
+        effectHash: 'effect-hash-1',
+        decisionMemory: { getClassifierVerdict } as never,
+        deterministicRails: () => ({
+          railOutcome: 'ask' as const,
+          reason: 'rail now asks',
+        }),
+        tail,
+      }),
+    ).resolves.toEqual(tailDecision);
+    expect(getClassifierVerdict).not.toHaveBeenCalled();
+    expect(tail).toHaveBeenCalledOnce();
+    expect(railRequest.decisionReason).toBe('rail now asks');
+  });
+
+  it('lets a locked preset outrank a cached allow (lock beats cache)', async () => {
+    const tail = vi.fn();
+    const getClassifierVerdict = vi.fn(async () => ({
+      decision: 'allow' as const,
+      reason: 'cached allow',
+    }));
+    await expect(
+      coordinatePermissionDecision({
+        request: { ...request },
+        accessPreset: 'locked',
+        effectHash: 'effect-hash-1',
+        decisionMemory: { getClassifierVerdict } as never,
+        deterministicRails: () => undefined,
+        tail,
+      }),
+    ).resolves.toMatchObject({ approved: false, decidedBy: 'locked_preset' });
+    expect(getClassifierVerdict).not.toHaveBeenCalled();
+    expect(tail).not.toHaveBeenCalled();
+  });
+
+  it('skips the cache entirely when the effect hash is undefined', async () => {
+    const tailDecision = {
+      approved: false,
+      mode: 'cancel' as const,
+      decidedBy: 'human',
+    };
+    const tail = vi.fn(async () => tailDecision);
+    const getClassifierVerdict = vi.fn();
+    await expect(
+      coordinatePermissionDecision({
+        request: { ...request },
+        effectHash: undefined,
+        decisionMemory: { getClassifierVerdict } as never,
+        deterministicRails: () => undefined,
+        tail,
+      }),
+    ).resolves.toEqual(tailDecision);
+    expect(getClassifierVerdict).not.toHaveBeenCalled();
+    expect(tail).toHaveBeenCalledOnce();
+  });
+
   it('spawn registration stores and removes the host restriction by agent/run key', () => {
     const key = {
       sourceAgentFolder: 'main_agent',

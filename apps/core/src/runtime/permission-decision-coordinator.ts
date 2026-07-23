@@ -9,6 +9,7 @@ import {
   type PermissionDeterministicRailsInput,
 } from '../domain/permission-deterministic-rails.js';
 import type { ToolPolicyDecision } from '../shared/tool-execution-policy-service.js';
+import type { PermissionDecisionMemoryRepository } from '../domain/ports/permission-decision-memory.js';
 
 export type DeterministicPermissionRails = (
   input: PermissionDeterministicRailsInput,
@@ -24,6 +25,10 @@ export interface CoordinatePermissionDecisionInput {
     | (() => Promise<ToolPolicyDecision | undefined>);
   deterministicRails?: DeterministicPermissionRails;
   deterministicRailsInput?: Omit<PermissionDeterministicRailsInput, 'request'>;
+  /** Versioned effect hash (Task B); undefined ⇒ input uncacheable, cache skipped. */
+  effectHash?: string;
+  /** Classifier-verdict cache (Task C); read only on a rail fall-through. */
+  decisionMemory?: PermissionDecisionMemoryRepository;
   tail: () => Promise<PermissionApprovalDecision>;
 }
 
@@ -67,12 +72,36 @@ export async function coordinatePermissionDecision(
     request: input.request,
     ...input.deterministicRailsInput,
   });
-  if (!railDecision) return input.tail();
-  if (railDecision.railOutcome === 'ask') {
-    input.request.decisionReason = railDecision.reason;
-    return input.tail();
+  // Rails re-run on EVERY call, BEFORE any cache read (re-run-every-hit): a
+  // deny/allow floor wins unchanged, and an ask-floor overrides even a cached
+  // allow — so the cache is consulted ONLY when rails fall through entirely.
+  if (railDecision) {
+    if (railDecision.railOutcome === 'ask') {
+      input.request.decisionReason = railDecision.reason;
+      return input.tail();
+    }
+    return railDecision;
   }
-  return railDecision;
+  // CACHE STAGE (cache-hit-only shortcut). Reachable only past hard-deny/
+  // locked/fixed-image (PERM-1 precedence, checked above) and past the rails.
+  if (input.effectHash && input.decisionMemory) {
+    const cached = await input.decisionMemory.getClassifierVerdict({
+      appId: input.request.appId ?? 'default',
+      agentFolder: input.request.sourceAgentFolder,
+      effectHash: input.effectHash,
+    });
+    if (cached?.decision === 'allow') {
+      return {
+        ...decisionForMode(
+          input.request,
+          'allow_once',
+          'cached_classifier_verdict',
+        ),
+        reason: cached.reason,
+      };
+    }
+  }
+  return input.tail();
 }
 
 interface PermissionRunRestriction {
