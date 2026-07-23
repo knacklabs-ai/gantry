@@ -6,6 +6,8 @@ import { IconButton } from '../../../ui/primitives/icon-button';
 
 export type AgentHarness = 'auto' | 'anthropic_sdk' | 'deepagents';
 
+const PANEL_BODY_CLASS = 'grid gap-4 p-5';
+
 export function IdentityPanel(props: {
   editing: boolean;
   name: string;
@@ -19,7 +21,7 @@ export function IdentityPanel(props: {
       description="Name and purpose shown to people using this agent."
     >
       {props.editing ? (
-        <div className="grid gap-4 p-5">
+        <div className={PANEL_BODY_CLASS}>
           <TextField
             id="agent-name"
             label="Agent name"
@@ -60,7 +62,7 @@ export function RuntimePanel(props: {
       description="How this agent runs. Changes take effect after saving."
     >
       {props.editing ? (
-        <div className="grid gap-4 p-5 sm:grid-cols-2">
+        <div className={`${PANEL_BODY_CLASS} sm:grid-cols-2`}>
           <SelectField
             label="Status"
             value={props.status}
@@ -149,6 +151,7 @@ export function ProtectedPanel(props: {
     >
       <div className="grid gap-4 p-5 sm:grid-cols-[1fr_auto] sm:items-end">
         <ReadOnlyGrid
+          className="p-0"
           values={[
             ['Agent ID', value(props.agentId)],
             ['Profile file', value(props.profilePath)],
@@ -174,9 +177,15 @@ export function ProtectedPanel(props: {
   );
 }
 
-function ReadOnlyGrid({ values }: { values: Array<[string, string]> }) {
+function ReadOnlyGrid({
+  className = 'p-5',
+  values,
+}: {
+  className?: string;
+  values: Array<[string, string]>;
+}) {
   return (
-    <dl className="grid gap-x-8 gap-y-4 sm:grid-cols-2">
+    <dl className={`grid gap-x-8 gap-y-4 sm:grid-cols-2 ${className}`}>
       {values.map(([label, value]) => (
         <div key={label} className="grid min-w-0 gap-1.5">
           <dt className="text-xs font-semibold text-text-secondary">{label}</dt>
