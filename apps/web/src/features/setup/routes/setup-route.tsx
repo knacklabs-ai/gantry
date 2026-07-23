@@ -1,0 +1,193 @@
+import {
+  Check,
+  ChevronLeft,
+  ChevronRight,
+  Circle,
+  WifiOff,
+} from 'lucide-react';
+import { useState } from 'react';
+
+import { useRuntimeConnection } from '../../../lib/api/runtime-connection';
+import { useConnectionGate } from '../../../ui/compositions/connection-gate';
+import { PageHeader } from '../../../ui/compositions/page-header';
+import { PageState } from '../../../ui/compositions/page-state';
+import { Panel } from '../../../ui/compositions/panel';
+import { Button } from '../../../ui/primitives/button';
+
+const stages = [
+  {
+    title: 'Agent',
+    description: 'Name the agent and describe the work it should own.',
+    fields: [
+      { label: 'Agent name', placeholder: 'e.g. Operations Assistant' },
+      { label: 'Purpose', placeholder: 'What should this agent help with?' },
+    ],
+  },
+  {
+    title: 'Model access',
+    description: 'Choose a model from the live catalog and confirm access.',
+    fields: [
+      { label: 'Model', placeholder: 'Available models load when connected' },
+    ],
+  },
+  {
+    title: 'Channel connection',
+    description: 'Connect a provider and verify that Gantry can use it.',
+    fields: [
+      {
+        label: 'Provider connection',
+        placeholder: 'Available connections load when connected',
+      },
+    ],
+  },
+  {
+    title: 'Conversation access',
+    description:
+      'Choose where the agent can respond and set its access policy.',
+    fields: [
+      {
+        label: 'Conversation',
+        placeholder: 'Search available conversations when connected',
+      },
+    ],
+  },
+  {
+    title: 'Profile',
+    description: 'Review the agent’s operating instructions and boundaries.',
+    fields: [
+      {
+        label: 'Profile summary',
+        placeholder: 'Profile loading is available when connected',
+      },
+    ],
+  },
+  {
+    title: 'Review',
+    description: 'Check readiness before you make the agent available.',
+    fields: [],
+  },
+] as const;
+
+export function SetupRoute() {
+  const [activeStage, setActiveStage] = useState(0);
+  const connection = useRuntimeConnection();
+  const { requestConnection } = useConnectionGate();
+  const stage = stages[activeStage];
+  const isFinalStage = activeStage === stages.length - 1;
+
+  return (
+    <div className="mx-auto grid w-full max-w-[1120px] gap-6">
+      <PageHeader
+        eyebrow="Administration"
+        title="Set up an agent"
+        description="Create a focused agent with the right model, connection, conversation access, and operating profile."
+      />
+
+      <SetupProgress activeStage={activeStage} />
+
+      {!connection.transport ? (
+        <PageState
+          action={
+            <Button onClick={() => requestConnection('Load setup options')}>
+              Connect Gantry
+            </Button>
+          }
+          description="You can prepare this local draft now. Model, provider, conversation, profile, and readiness details load after Gantry is connected."
+          icon={<WifiOff size={18} aria-hidden="true" />}
+          kind="offline"
+          title="Runtime not connected"
+        />
+      ) : null}
+
+      <Panel title={stage.title} description={stage.description}>
+        <div className="grid gap-5 p-5">
+          {stage.fields.map((field) => (
+            <label
+              className="grid gap-1.5 text-xs font-semibold text-text"
+              key={field.label}
+            >
+              {field.label}
+              <input
+                className="h-9 rounded-md border border-border-strong bg-surface px-3 text-[13px] font-normal text-text placeholder:text-text-muted"
+                placeholder={field.placeholder}
+              />
+            </label>
+          ))}
+          {isFinalStage ? (
+            <ReviewSummary connected={Boolean(connection.transport)} />
+          ) : null}
+          <div className="flex flex-wrap justify-between gap-3 border-t border-border pt-4">
+            <Button
+              disabled={activeStage === 0}
+              variant="secondary"
+              onClick={() => setActiveStage((current) => current - 1)}
+            >
+              <ChevronLeft size={16} aria-hidden="true" /> Back
+            </Button>
+            <Button
+              onClick={() => {
+                if (isFinalStage && !connection.transport) {
+                  requestConnection('Verify agent setup');
+                  return;
+                }
+                setActiveStage((current) =>
+                  Math.min(current + 1, stages.length - 1),
+                );
+              }}
+            >
+              {isFinalStage ? 'Verify setup' : 'Continue'}
+              {!isFinalStage ? (
+                <ChevronRight size={16} aria-hidden="true" />
+              ) : null}
+            </Button>
+          </div>
+        </div>
+      </Panel>
+    </div>
+  );
+}
+
+function SetupProgress({ activeStage }: { activeStage: number }) {
+  return (
+    <ol
+      className="grid gap-2 sm:grid-cols-2 lg:grid-cols-6"
+      aria-label="Setup progress"
+    >
+      {stages.map((stage, index) => {
+        const complete = index < activeStage;
+        const current = index === activeStage;
+
+        return (
+          <li
+            className={`flex min-h-12 items-center gap-2 rounded-md border px-3 text-xs ${current ? 'border-border-strong bg-surface-strong text-text' : 'border-border bg-surface text-text-secondary'}`}
+            key={stage.title}
+          >
+            {complete ? (
+              <Check
+                className="shrink-0 text-status-ready"
+                size={15}
+                aria-hidden="true"
+              />
+            ) : (
+              <Circle className="shrink-0" size={15} aria-hidden="true" />
+            )}
+            <span className="font-medium">{stage.title}</span>
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
+function ReviewSummary({ connected }: { connected: boolean }) {
+  return (
+    <div className="rounded-md border border-border bg-surface-muted p-4 text-sm text-text-secondary">
+      <p className="m-0 font-semibold text-text">Ready to verify</p>
+      <p className="mt-1 mb-0 leading-5">
+        {connected
+          ? 'Verification will check the configured agent, model, connection, conversation policy, and profile.'
+          : 'Connect Gantry to verify configured access and readiness. No changes will be sent from this draft.'}
+      </p>
+    </div>
+  );
+}
