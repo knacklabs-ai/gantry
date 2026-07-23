@@ -228,10 +228,13 @@ export async function replaceConversationInstall(
     conversation: ConversationView;
     currentAgentId?: string;
     nextAgentId?: string;
+    trigger?: string;
+    requiresTrigger?: boolean;
+    approverUserIds?: string[];
   },
 ) {
   const conversationId = encodeURIComponent(input.conversation.id);
-  if (!input.nextAgentId || input.currentAgentId === input.nextAgentId) return;
+  if (!input.nextAgentId) return;
   await transport.request({
     path: `/agents/${encodeURIComponent(input.nextAgentId)}/conversation-installs/${conversationId}`,
     method: 'PUT',
@@ -241,6 +244,18 @@ export async function replaceConversationInstall(
       memoryScope: 'conversation',
       memorySubject: { type: 'conversation', id: input.conversation.id },
       status: 'active',
+      ...(input.trigger !== undefined || input.requiresTrigger !== undefined
+        ? {
+            routeConfig: {
+              ...(input.trigger?.trim()
+                ? { trigger: input.trigger.trim() }
+                : {}),
+              ...(input.requiresTrigger !== undefined
+                ? { requiresTrigger: input.requiresTrigger }
+                : {}),
+            },
+          }
+        : {}),
     },
     schema: installSchema,
   });
@@ -250,6 +265,13 @@ export async function replaceConversationInstall(
       method: 'DELETE',
       schema: z.record(z.string(), z.unknown()),
     });
+  }
+  if (input.approverUserIds !== undefined) {
+    await replaceConversationApprovers(
+      transport,
+      input.conversation.id,
+      input.approverUserIds,
+    );
   }
 }
 

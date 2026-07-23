@@ -85,6 +85,9 @@ export function useReplaceConversationInstall() {
       conversation: ConversationView;
       currentAgentId?: string;
       nextAgentId?: string;
+      trigger?: string;
+      requiresTrigger?: boolean;
+      approverUserIds?: string[];
     }) =>
       replaceConversationInstall(requireRuntimeTransport(connection), input),
     onSuccess: async () => {
