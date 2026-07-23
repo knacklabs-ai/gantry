@@ -921,7 +921,7 @@ describe('ipc-interaction-handler', () => {
     });
   });
 
-  it('asks on an unattended mutation before classifier consultation', async () => {
+  it('routes an unattended mutation ASK rail through the classifier tail', async () => {
     const classifierConsult = vi.fn(async () => ({
       decision: 'ask' as const,
       reason: 'Destructive filesystem mutation.',
@@ -964,14 +964,17 @@ describe('ipc-interaction-handler', () => {
       } as never,
     });
 
-    expect(classifierConsult).not.toHaveBeenCalled();
+    expect(classifierConsult).toHaveBeenCalledOnce();
     expect(requestPermissionApproval).not.toHaveBeenCalled();
     expect(decision).toEqual({
       approved: false,
-      decidedBy: 'deterministic_rails',
-      reason: 'Destructive command requires approval.',
+      mode: 'cancel',
+      decidedBy: 'runtime',
+      reason:
+        'Classifier requested human approval: Destructive filesystem mutation.',
+      decisionClassification: 'user_reject',
     });
-    expect(publishRuntimeEvent).not.toHaveBeenCalledWith(
+    expect(publishRuntimeEvent).toHaveBeenCalledWith(
       expect.objectContaining({ eventType: 'permission.classifier_decision' }),
     );
   });
@@ -1096,7 +1099,7 @@ describe('ipc-interaction-handler', () => {
     );
   });
 
-  it('asks on IPC input sanitized beyond the display limit', async () => {
+  it('routes display-sanitized IPC input through the classifier tail', async () => {
     const envelope = createIpcAuthEnvelope('main_agent', null);
     const claimedPath = path.join(tempDir, 'claimed-auto-ask.json');
     fs.writeFileSync(claimedPath, '{}');
@@ -1166,7 +1169,7 @@ describe('ipc-interaction-handler', () => {
       logger: { warn: vi.fn(), error: vi.fn(), info: vi.fn() },
     });
 
-    expect(classifierConsult).not.toHaveBeenCalled();
+    expect(classifierConsult).toHaveBeenCalledOnce();
     expect(requestPermissionApproval).not.toHaveBeenCalled();
     const response = JSON.parse(
       fs.readFileSync(
@@ -1180,17 +1183,16 @@ describe('ipc-interaction-handler', () => {
       ),
     );
     expect(response).toMatchObject({
-      approved: false,
-      decidedBy: 'deterministic_rails',
-      reason: 'Exact tool input is missing, sanitized, or altered.',
+      approved: true,
+      mode: 'allow_once',
+      decidedBy: 'auto_classifier',
     });
-    expect(response.mode).toBeUndefined();
-    expect(publishRuntimeEvent).not.toHaveBeenCalledWith(
+    expect(publishRuntimeEvent).toHaveBeenCalledWith(
       expect.objectContaining({ eventType: 'permission.classifier_decision' }),
     );
   });
 
-  it('turns unattended secret-redacted auto input into an immediate IPC denial', async () => {
+  it('fails closed in the unattended tail for secret-redacted auto input', async () => {
     const envelope = createIpcAuthEnvelope('main_agent', null);
     const claimedPath = path.join(tempDir, 'claimed-unattended-ask.json');
     fs.writeFileSync(claimedPath, '{}');
@@ -1262,8 +1264,11 @@ describe('ipc-interaction-handler', () => {
       ),
     ).toMatchObject({
       approved: false,
-      decidedBy: 'deterministic_rails',
-      reason: 'Exact tool input is missing, sanitized, or altered.',
+      mode: 'cancel',
+      decidedBy: 'runtime',
+      reason:
+        'Classifier requested human approval: Classifier skipped because its tool input view was incomplete; ask the user.',
+      decisionClassification: 'user_reject',
     });
     const response = JSON.parse(
       fs.readFileSync(
@@ -1276,9 +1281,9 @@ describe('ipc-interaction-handler', () => {
         'utf-8',
       ),
     );
-    expect(response.mode).toBeUndefined();
-    expect(response.decisionClassification).toBeUndefined();
-    expect(publishRuntimeEvent).not.toHaveBeenCalledWith(
+    expect(response.mode).toBe('cancel');
+    expect(response.decisionClassification).toBe('user_reject');
+    expect(publishRuntimeEvent).toHaveBeenCalledWith(
       expect.objectContaining({ eventType: 'permission.classifier_decision' }),
     );
   });

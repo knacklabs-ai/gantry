@@ -26,6 +26,10 @@ const requestPermissionApproval = vi.fn(async () => ({
   approved: true,
   mode: 'allow_once' as const,
 }));
+const requestUserAnswer = vi.fn(async (request) => ({
+  requestId: request.requestId,
+  answers: {},
+}));
 
 function wire(overrides: Record<string, unknown> = {}) {
   const repository = {
@@ -67,10 +71,7 @@ function wire(overrides: Record<string, unknown> = {}) {
     channelWiring: {
       sendMessage,
       requestPermissionApproval,
-      requestUserAnswer: vi.fn(async (request) => ({
-        requestId: request.requestId,
-        answers: {},
-      })),
+      requestUserAnswer,
     },
     interactionsEnabled: true,
     getAgentAccessPreset: () => 'full',
@@ -167,6 +168,35 @@ beforeEach(() => {
 });
 
 describe('inline core tool bootstrap', () => {
+  it('uses the active correlation run for permission and question requests', async () => {
+    wire();
+    const input = laneInput();
+    input.correlationRunId = 'run-active';
+    input.input.runId = undefined;
+    const tools = createInlineCoreTools(input, support());
+
+    await tools.execute('delegate_task', { objective: 'Investigate' });
+    await tools.execute('ask_user_question', {
+      questions: [
+        {
+          question: 'Continue?',
+          header: 'Continue',
+          options: [
+            { label: 'Yes', description: 'Continue.' },
+            { label: 'No', description: 'Stop.' },
+          ],
+        },
+      ],
+    });
+
+    expect(requestPermissionApproval).toHaveBeenCalledWith(
+      expect.objectContaining({ runId: 'run-active' }),
+    );
+    expect(requestUserAnswer).toHaveBeenCalledWith(
+      expect.objectContaining({ runId: 'run-active' }),
+    );
+  });
+
   it('returns the structured rule denial envelope on the inline lane', async () => {
     wire();
     const input = laneInput();
@@ -752,7 +782,7 @@ describe('inline core tool bootstrap', () => {
     );
   });
 
-  it('asks on sanitized inline input before classifier consult or approval', async () => {
+  it('routes sanitized inline input to human approval without classifier consultation', async () => {
     const classifierConsult = vi.fn();
     wire({
       classifierConsult,
@@ -786,19 +816,16 @@ describe('inline core tool bootstrap', () => {
         id: 'crm-1',
         password: 'do-not-classify',
       }),
-    ).resolves.toEqual({
-      allowed: false,
-      reason: 'Exact tool input is missing, sanitized, or altered.',
-    });
+    ).resolves.toEqual({ allowed: true });
 
     expect(classifierConsult).not.toHaveBeenCalled();
-    expect(requestPermissionApproval).not.toHaveBeenCalled();
-    expect(publishRuntimeEvent).not.toHaveBeenCalledWith(
+    expect(requestPermissionApproval).toHaveBeenCalledOnce();
+    expect(publishRuntimeEvent).toHaveBeenCalledWith(
       expect.objectContaining({ eventType: 'permission.classifier_decision' }),
     );
   });
 
-  it('asks on inline input sanitized beyond the display limit', async () => {
+  it('routes display-sanitized inline input through the classifier tail', async () => {
     const classifierConsult = vi.fn(async () => ({
       decision: 'allow' as const,
       reason: 'Benign lookup.',
@@ -828,19 +855,16 @@ describe('inline core tool bootstrap', () => {
 
     await expect(
       tools.authorizeThirdPartyMcpTool('mcp__crm__lookup', { query }),
-    ).resolves.toEqual({
-      allowed: false,
-      reason: 'Exact tool input is missing, sanitized, or altered.',
-    });
+    ).resolves.toEqual({ allowed: true });
 
-    expect(classifierConsult).not.toHaveBeenCalled();
+    expect(classifierConsult).toHaveBeenCalledOnce();
     expect(requestPermissionApproval).not.toHaveBeenCalled();
-    expect(publishRuntimeEvent).not.toHaveBeenCalledWith(
+    expect(publishRuntimeEvent).toHaveBeenCalledWith(
       expect.objectContaining({ eventType: 'permission.classifier_decision' }),
     );
   });
 
-  it('asks instead of classifying inline input truncated at the classifier limit', async () => {
+  it('routes classifier-truncated inline input to human approval', async () => {
     const classifierConsult = vi.fn(async () => ({
       decision: 'allow' as const,
       reason: 'Only the prefix was visible.',
@@ -871,14 +895,11 @@ describe('inline core tool bootstrap', () => {
       tools.authorizeThirdPartyMcpTool('mcp__crm__lookup', {
         query: 'x'.repeat(16_001),
       }),
-    ).resolves.toEqual({
-      allowed: false,
-      reason: 'Exact tool input is missing, sanitized, or altered.',
-    });
+    ).resolves.toEqual({ allowed: true });
 
     expect(classifierConsult).not.toHaveBeenCalled();
-    expect(requestPermissionApproval).not.toHaveBeenCalled();
-    expect(publishRuntimeEvent).not.toHaveBeenCalledWith(
+    expect(requestPermissionApproval).toHaveBeenCalledOnce();
+    expect(publishRuntimeEvent).toHaveBeenCalledWith(
       expect.objectContaining({ eventType: 'permission.classifier_decision' }),
     );
   });

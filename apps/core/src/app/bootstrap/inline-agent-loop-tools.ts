@@ -118,6 +118,7 @@ export function createInlineCoreTools(
   const deps = inlineCoreToolHostDeps;
   if (!deps) throw new Error('Inline core tool host is not configured.');
   const run = laneInput.input;
+  const activeRunId = laneInput.correlationRunId ?? run.runId;
   const permissionSettings = deps.getPermissionRuntimeSettings();
   const autoModeModel = permissionSettings.permissions.autoMode.model;
   const permissionRuntimeConfig: PermissionClassifierRuntimeConfig = {
@@ -156,7 +157,7 @@ export function createInlineCoreTools(
       agentId: run.agentId,
       providerAccountId: laneInput.group.providerAccountId,
       threadId: run.threadId,
-      runId: run.runId,
+      runId: activeRunId,
       jobId: run.jobId,
       runLeaseToken: run.runLeaseToken,
       runLeaseFencingVersion: run.runLeaseFencingVersion,
@@ -284,7 +285,7 @@ export function createInlineCoreTools(
       .publishRuntimeEvent({
         appId: appId as never,
         agentId: run.agentId as never,
-        runId: run.runId as never,
+        runId: activeRunId as never,
         eventType: RUNTIME_EVENT_TYPES.MCP_TOOL_ACTIVITY,
         actor: 'inline-agent',
         responseMode: 'none',
@@ -364,7 +365,7 @@ export function createInlineCoreTools(
         agentId: run.agentId,
         providerAccountId: laneInput.group.providerAccountId,
         jobId: run.jobId,
-        runId: run.runId,
+        runId: activeRunId,
         runLeaseToken: run.runLeaseToken,
         runLeaseFencingVersion: run.runLeaseFencingVersion,
         targetJid: run.chatJid,
@@ -427,7 +428,7 @@ export function createInlineCoreTools(
               appId: run.appId,
               agentId: run.agentId,
               agentFolder: laneInput.group.folder,
-              runId: run.runId,
+              runId: activeRunId,
               jobId: run.jobId,
               conversationId: run.chatJid,
               threadId: run.threadId,

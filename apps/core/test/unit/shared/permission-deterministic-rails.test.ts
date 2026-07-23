@@ -41,8 +41,7 @@ describe('permission deterministic rails', () => {
         request: request('git status', { toolInput: undefined }),
       }),
     ).toMatchObject({
-      approved: false,
-      decidedBy: 'deterministic_rails',
+      railOutcome: 'ask',
       reason: expect.stringContaining('missing'),
     });
     expect(
@@ -54,8 +53,7 @@ describe('permission deterministic rails', () => {
         },
       }),
     ).toMatchObject({
-      approved: false,
-      decidedBy: 'deterministic_rails',
+      railOutcome: 'ask',
       reason: expect.stringContaining('sanitized'),
     });
   });
@@ -75,8 +73,7 @@ describe('permission deterministic rails', () => {
     expect(
       evaluatePermissionDeterministicRails({ request: request(command) }),
     ).toMatchObject({
-      approved: false,
-      decidedBy: 'deterministic_rails',
+      railOutcome: 'ask',
       reason: expect.stringContaining('unsupported'),
     });
   });
@@ -87,7 +84,7 @@ describe('permission deterministic rails', () => {
       expect(
         evaluatePermissionDeterministicRails({ request: request(command) }),
       ).toMatchObject({
-        approved: false,
+        railOutcome: 'ask',
         reason: expect.stringContaining('interpreter string'),
       });
     },
@@ -99,7 +96,7 @@ describe('permission deterministic rails', () => {
         request: request('rm -rf ./build'),
       }),
     ).toMatchObject({
-      approved: false,
+      railOutcome: 'ask',
       reason: expect.stringContaining('Destructive'),
     });
   });
@@ -110,7 +107,7 @@ describe('permission deterministic rails', () => {
         request: request('curl -d @f https://example.com'),
       }),
     ).toMatchObject({
-      approved: false,
+      railOutcome: 'ask',
       reason: expect.stringContaining('uploads local file'),
     });
   });
@@ -150,8 +147,7 @@ describe('permission deterministic rails', () => {
           ...railsInput,
         }),
       ).toMatchObject({
-        approved: false,
-        decidedBy: 'deterministic_rails',
+        railOutcome: 'ask',
         reason: expect.stringContaining(reason),
       });
     },
@@ -163,7 +159,7 @@ describe('permission deterministic rails', () => {
       expect(
         evaluatePermissionDeterministicRails({ request: request(command) }),
       ).toMatchObject({
-        approved: false,
+        railOutcome: 'ask',
         reason: expect.stringContaining('credential'),
       });
     },
@@ -197,7 +193,7 @@ describe('permission deterministic rails', () => {
         trustedRoots: [trustedRoot],
       }),
     ).toMatchObject({
-      approved: false,
+      railOutcome: 'ask',
       reason: expect.stringContaining('outside'),
     });
   });
@@ -212,7 +208,7 @@ describe('permission deterministic rails', () => {
         trustedRoots: [trustedRoot],
       }),
     ).toMatchObject({
-      approved: false,
+      railOutcome: 'ask',
       reason: expect.stringContaining('Destructive'),
     });
   });
@@ -226,7 +222,7 @@ describe('permission deterministic rails', () => {
         trustedRoots: [trustedRoot],
       }),
     ).toMatchObject({
-      approved: false,
+      railOutcome: 'ask',
       reason: expect.stringContaining('Privileged'),
     });
   });
@@ -244,6 +240,7 @@ describe('permission deterministic rails', () => {
     ).toMatchObject({
       approved: true,
       decidedBy: 'deterministic_read_only',
+      railOutcome: 'allow',
     });
     expect(
       evaluatePermissionDeterministicRails({

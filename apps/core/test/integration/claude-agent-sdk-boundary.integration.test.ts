@@ -733,12 +733,7 @@ describe('Claude Agent SDK boundary integration', () => {
     expect(call?.options.env.CLAUDE_CODE_DISABLE_AUTO_MEMORY).toBe('1');
     expect(call?.options.env.ENABLE_CLAUDEAI_MCP_SERVERS).toBe('false');
     expect(call?.options.tools).toEqual(
-      expect.arrayContaining([
-        'Read',
-        'Glob',
-        'Grep',
-        'Skill',
-      ]),
+      expect.arrayContaining(['Read', 'Glob', 'Grep', 'Skill']),
     );
     const projectedGantryToolNames = JSON.parse(
       call?.options.mcpServers.gantry?.env?.GANTRY_MCP_TOOL_NAMES_JSON ?? '[]',

@@ -5,13 +5,14 @@ import type {
 } from '../domain/types.js';
 import {
   evaluatePermissionDeterministicRails,
+  type PermissionDeterministicRailDecision,
   type PermissionDeterministicRailsInput,
 } from '../domain/permission-deterministic-rails.js';
 import type { ToolPolicyDecision } from '../shared/tool-execution-policy-service.js';
 
 export type DeterministicPermissionRails = (
   input: PermissionDeterministicRailsInput,
-) => PermissionApprovalDecision | undefined;
+) => PermissionDeterministicRailDecision | undefined;
 
 export interface CoordinatePermissionDecisionInput {
   request: PermissionApprovalRequest;
@@ -66,7 +67,12 @@ export async function coordinatePermissionDecision(
     request: input.request,
     ...input.deterministicRailsInput,
   });
-  return railDecision ?? input.tail();
+  if (!railDecision) return input.tail();
+  if (railDecision.railOutcome === 'ask') {
+    input.request.decisionReason = railDecision.reason;
+    return input.tail();
+  }
+  return railDecision;
 }
 
 interface PermissionRunRestriction {

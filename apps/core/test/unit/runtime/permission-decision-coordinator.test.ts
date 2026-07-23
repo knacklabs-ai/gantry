@@ -96,49 +96,98 @@ describe('coordinatePermissionDecision', () => {
     expect(tail).not.toHaveBeenCalled();
   });
 
-  it('uses the injected deterministic rails before the classifier/human tail', async () => {
-    const tail = vi.fn();
+  it('routes an injected ASK rail to the classifier/human tail', async () => {
+    const railRequest = { ...request };
+    const tailDecision = {
+      approved: true,
+      mode: 'allow_once' as const,
+      decidedBy: 'human',
+    };
+    const tail = vi.fn(async () => tailDecision);
     const deterministicRails = vi.fn(() => ({
-      approved: false,
-      mode: 'cancel' as const,
+      railOutcome: 'ask' as const,
       reason: 'rail asks',
     }));
     await expect(
       coordinatePermissionDecision({
-        request,
+        request: railRequest,
         deterministicRails,
         tail,
       }),
-    ).resolves.toMatchObject({ approved: false, reason: 'rail asks' });
+    ).resolves.toEqual(tailDecision);
     expect(deterministicRails).toHaveBeenCalledOnce();
-    expect(tail).not.toHaveBeenCalled();
+    expect(tail).toHaveBeenCalledOnce();
+    expect(railRequest.decisionReason).toBe('rail asks');
   });
 
-  it('registers the default rails before the classifier/human tail', async () => {
+  it('routes a default ASK rail to the classifier/human tail', async () => {
+    const tailDecision = {
+      approved: false,
+      mode: 'cancel' as const,
+      decidedBy: 'human',
+    };
+    const tail = vi.fn(async () => tailDecision);
+    const railRequest = {
+      ...request,
+      toolName: 'RunCommand',
+      toolInput: { command: 'rm -rf ./build' },
+    };
+    await expect(
+      coordinatePermissionDecision({
+        request: railRequest,
+        tail,
+      }),
+    ).resolves.toEqual(tailDecision);
+    expect(tail).toHaveBeenCalledOnce();
+    expect(railRequest.decisionReason).toContain('Destructive');
+  });
+
+  it.each([
+    {
+      label: 'DENY',
+      railDecision: {
+        railOutcome: 'deny' as const,
+        approved: false,
+        mode: 'cancel' as const,
+        decidedBy: 'deterministic_rails',
+        reason: 'rail denies',
+      },
+    },
+    {
+      label: 'ALLOW',
+      railDecision: {
+        railOutcome: 'allow' as const,
+        approved: true,
+        mode: 'allow_once' as const,
+        decidedBy: 'deterministic_read_only',
+        reason: 'rail allows',
+      },
+    },
+  ])('terminates on an injected $label rail', async ({ railDecision }) => {
     const tail = vi.fn();
     await expect(
       coordinatePermissionDecision({
-        request: {
-          ...request,
-          toolName: 'RunCommand',
-          toolInput: { command: 'rm -rf ./build' },
-        },
+        request: { ...request },
+        deterministicRails: () => railDecision,
         tail,
       }),
-    ).resolves.toMatchObject({
-      approved: false,
-      decidedBy: 'deterministic_rails',
-    });
+    ).resolves.toEqual(railDecision);
     expect(tail).not.toHaveBeenCalled();
   });
 
-  it('keeps credential reads at the rails ask floor with the direct SDK escape hatch disabled', async () => {
+  it('routes credential-read ASK rails to the tail with the direct SDK escape hatch disabled', async () => {
     const sdkSandbox = buildSdkFilesystemSandbox(['~/.ssh']);
-    const tail = vi.fn(async () => ({
-      approved: true,
-      mode: 'allow_once' as const,
-      decidedBy: 'tail',
-    }));
+    const tailDecision = {
+      approved: false,
+      mode: 'cancel' as const,
+      decidedBy: 'human',
+    };
+    const tail = vi.fn(async () => tailDecision);
+    const railRequest = {
+      ...request,
+      toolName: 'RunCommand',
+      toolInput: { command: 'cat ~/.ssh/id_rsa' },
+    };
 
     expect(sdkSandbox.allowUnsandboxedCommands).toBe(false);
     expect(sdkSandbox.filesystem?.denyRead).toEqual(
@@ -146,19 +195,12 @@ describe('coordinatePermissionDecision', () => {
     );
     await expect(
       coordinatePermissionDecision({
-        request: {
-          ...request,
-          toolName: 'RunCommand',
-          toolInput: { command: 'cat ~/.ssh/id_rsa' },
-        },
+        request: railRequest,
         tail,
       }),
-    ).resolves.toMatchObject({
-      approved: false,
-      decidedBy: 'deterministic_rails',
-      reason: expect.stringContaining('credential'),
-    });
-    expect(tail).not.toHaveBeenCalled();
+    ).resolves.toEqual(tailDecision);
+    expect(tail).toHaveBeenCalledOnce();
+    expect(railRequest.decisionReason).toContain('credential');
   });
 
   it.each([
@@ -199,21 +241,19 @@ describe('coordinatePermissionDecision', () => {
         }),
       ).resolves.toEqual(cachedDecision);
 
+      const outsideRequest = { ...shellRequest };
       await expect(
         coordinatePermissionDecision({
-          request: { ...shellRequest },
+          request: outsideRequest,
           deterministicRailsInput: {
             workspaceRoot: '/workspace',
             trustedRoots: [],
           },
           tail,
         }),
-      ).resolves.toMatchObject({
-        approved: false,
-        decidedBy: 'deterministic_rails',
-        reason: expect.stringContaining('outside'),
-      });
-      expect(tail).toHaveBeenCalledTimes(1);
+      ).resolves.toEqual(cachedDecision);
+      expect(outsideRequest.decisionReason).toContain('outside');
+      expect(tail).toHaveBeenCalledTimes(2);
     },
   );
 

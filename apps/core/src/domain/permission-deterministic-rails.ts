@@ -25,6 +25,15 @@ export interface PermissionDeterministicRailsInput {
   reviewedMcpReadBindings?: readonly McpReadBinding[];
 }
 
+export type PermissionDeterministicRailDecision =
+  | {
+      railOutcome: 'ask';
+      reason: string;
+    }
+  | (PermissionApprovalDecision & {
+      railOutcome: 'allow' | 'deny';
+    });
+
 const SHELL_TOOLS = new Set(['Bash', 'RunCommand']);
 const DESTRUCTIVE_EXECUTABLE =
   /^(?:dd|mkfs(?:\..+)?|rm|rmdir|shred|truncate|unlink)$/;
@@ -36,7 +45,7 @@ const CREDENTIAL_PATH = new RegExp(
 
 export function evaluatePermissionDeterministicRails(
   input: PermissionDeterministicRailsInput,
-): PermissionApprovalDecision | undefined {
+): PermissionDeterministicRailDecision | undefined {
   const { request } = input;
   if (inputIsIncomplete(request)) {
     return ask('Exact tool input is missing, sanitized, or altered.');
@@ -171,16 +180,17 @@ function stringValues(value: unknown): string[] {
   return Object.values(value).flatMap(stringValues);
 }
 
-function ask(reason: string): PermissionApprovalDecision {
-  return { approved: false, decidedBy: 'deterministic_rails', reason };
+function ask(reason: string): PermissionDeterministicRailDecision {
+  return { railOutcome: 'ask', reason };
 }
 
 function allow(
   request: PermissionApprovalRequest,
   reason: string,
-): PermissionApprovalDecision {
+): PermissionDeterministicRailDecision {
   return {
     ...decisionForMode(request, 'allow_once', 'deterministic_read_only'),
+    railOutcome: 'allow',
     reason,
   };
 }
