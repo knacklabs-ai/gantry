@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import path from 'node:path';
 
 import {
@@ -60,8 +61,9 @@ function isTrustedPath(
   candidate: string,
   trustedRoots: readonly string[],
 ): boolean {
+  const realCandidate = realResolve(candidate);
   return trustedRoots.some((root) => {
-    const relative = path.relative(path.resolve(root), path.resolve(candidate));
+    const relative = path.relative(realResolve(root), realCandidate);
     return (
       relative === '' ||
       (!path.isAbsolute(relative) &&
@@ -69,4 +71,24 @@ function isTrustedPath(
         !relative.startsWith(`..${path.sep}`))
     );
   });
+}
+
+// Canonicalize symlinks so a path lexically inside a trusted root cannot target
+// outside it via a symlink. realpathSync throws on paths that do not exist yet
+// (e.g. a clone target dir), so resolve the longest existing ancestor and
+// re-append the not-yet-created tail.
+function realResolve(target: string): string {
+  let current = path.resolve(target);
+  const tail: string[] = [];
+  for (;;) {
+    try {
+      const real = fs.realpathSync(current);
+      return tail.length ? path.join(real, ...tail.reverse()) : real;
+    } catch {
+      const parent = path.dirname(current);
+      if (parent === current) return path.resolve(target);
+      tail.push(path.basename(current));
+      current = parent;
+    }
+  }
 }

@@ -79,7 +79,9 @@ export function buildSdkFilesystemSandbox(
     network: {
       allowLocalBinding: true,
       allowUnixSockets: ['/'],
-      allowMachLookup: ['*'],
+      // configd (network/DNS config) is the proven media-render mach service; a
+      // '*' wildcard would grant lookup to every macOS XPC/Mach service.
+      allowMachLookup: ['com.apple.SystemConfiguration.configd'],
       ...(options.httpProxyPort
         ? { httpProxyPort: options.httpProxyPort }
         : {}),

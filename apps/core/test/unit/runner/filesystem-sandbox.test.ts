@@ -35,7 +35,7 @@ describe('Claude SDK filesystem sandbox settings', () => {
       network: {
         allowLocalBinding: true,
         allowUnixSockets: ['/'],
-        allowMachLookup: ['*'],
+        allowMachLookup: ['com.apple.SystemConfiguration.configd'],
         httpProxyPort: 18790,
       },
       filesystem: {
