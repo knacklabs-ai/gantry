@@ -51,6 +51,7 @@ import type {
 import { sendError } from './http.js';
 import { createRateLimiter } from './rate-limit.js';
 import { handleAgentRoutes } from './routes/agents.js';
+import { handleAgentSetupRoutes } from './routes/agent-setup-routes.js';
 import { handleBrainRoutes } from './routes/brain.js';
 import { handleCapabilityCatalogRoutes } from './routes/capability-catalog.js';
 import { handleCredentialRoutes } from './routes/credentials.js';
@@ -188,6 +189,7 @@ function createControlRequestHandler(
       if (await handleOpenApiRoutes(req, res, pathname)) return;
       if (await handleSystemRoutes(req, res, ctx, routePathname)) return;
       if (await handleGuidedActionRoutes(req, res, ctx, routePathname)) return;
+      if (await handleAgentSetupRoutes(req, res, ctx, routePathname)) return;
       if (await handleAgentRoutes(req, res, ctx, routePathname)) return;
       if (await handleCapabilityCatalogRoutes(req, res, ctx, routePathname))
         return;

@@ -1,9 +1,6 @@
 import { z } from 'zod';
 
-import {
-  AgentHarnessSchema,
-  IsoDateTimeSchema,
-} from '../contract-primitives.js';
+import { IsoDateTimeSchema } from '../contract-primitives.js';
 
 export const AgentSetupStageSchema = z.enum([
   'agent',
@@ -23,7 +20,6 @@ export const AgentSetupDraftSchema = z
     appId: z.string(),
     name: z.string().min(1),
     purpose: z.string().nullable(),
-    agentHarness: AgentHarnessSchema,
     modelAlias: z.string().nullable(),
     connection: SetupMetadataSchema.nullable(),
     conversation: SetupMetadataSchema.nullable(),
@@ -40,7 +36,6 @@ export const CreateAgentSetupRequestSchema = z
     appId: z.string(),
     name: z.string().trim().min(1).max(160),
     purpose: z.string().trim().max(2_000).optional(),
-    agentHarness: AgentHarnessSchema.optional(),
   })
   .strict();
 export type CreateAgentSetupRequest = z.infer<
@@ -60,7 +55,6 @@ export const UpdateAgentSetupRequestSchema = z.discriminatedUnion('step', [
   AgentSetupExpectedVersionSchema.extend({
     step: z.literal('model'),
     modelAlias: z.string().trim().min(1),
-    agentHarness: AgentHarnessSchema.optional(),
   }),
   AgentSetupExpectedVersionSchema.extend({
     step: z.literal('connection'),

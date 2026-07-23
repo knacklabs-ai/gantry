@@ -94,6 +94,9 @@ export class AgentSetupDraftService {
     if (current.draft.version !== input.expectedVersion) {
       throw new AgentSetupDraftConflictError();
     }
+    if (input.patch.connection !== undefined) {
+      assertNoRawSecrets(input.patch.connection, 'connection');
+    }
     const now = this.deps.clock.now();
     const draft: AgentSetupDraft = {
       ...current.draft,
@@ -136,6 +139,29 @@ export class AgentSetupDraftService {
     await this.get(input);
     const deleted = await this.deps.agents.deleteDisabledAgent(input);
     if (!deleted) throw new AgentSetupDraftConflictError();
+  }
+}
+
+const SECRET_KEY_PATTERN =
+  /(token|secret|password|credential|api[_-]?key|app[_-]?token|bot[_-]?token)/i;
+
+function assertNoRawSecrets(value: unknown, path: string): void {
+  if (value === undefined || value === null || typeof value !== 'object')
+    return;
+  if (Array.isArray(value)) {
+    value.forEach((entry, index) =>
+      assertNoRawSecrets(entry, `${path}[${index}]`),
+    );
+    return;
+  }
+  for (const [key, nested] of Object.entries(value)) {
+    if (SECRET_KEY_PATTERN.test(key)) {
+      throw new ApplicationError(
+        'INVALID_REQUEST',
+        `${path}.${key} looks like a raw secret. Use a stored runtime secret reference instead.`,
+      );
+    }
+    assertNoRawSecrets(nested, `${path}.${key}`);
   }
 }
 
