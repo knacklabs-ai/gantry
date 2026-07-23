@@ -8,6 +8,8 @@ import {
   RuntimeLimitSchema,
 } from '../contract-primitives.js';
 
+export * from './setup.js';
+
 export const AgentStatusSchema = z.enum(['active', 'disabled']);
 export type AgentStatus = z.infer<typeof AgentStatusSchema>;
 
