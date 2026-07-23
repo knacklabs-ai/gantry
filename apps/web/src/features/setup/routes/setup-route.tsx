@@ -196,9 +196,7 @@ export function SetupRoute() {
             />
           ) : stage.id === 'profile' ? (
             <SetupProfileDetails agentId={createdAgentId} />
-          ) : (
-            null
-          )}
+          ) : null}
           {isFinalStage ? (
             <ReviewSummary connected={Boolean(connection.transport)} />
           ) : null}
