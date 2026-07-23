@@ -1,4 +1,5 @@
 import * as Dialog from '@radix-ui/react-dialog';
+import { useQueryClient } from '@tanstack/react-query';
 import { X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { z } from 'zod';
@@ -7,6 +8,7 @@ import { useRuntimeConnection } from '../../../lib/api/runtime-connection';
 import { Button } from '../../../ui/primitives/button';
 import { IconButton } from '../../../ui/primitives/icon-button';
 import { TextField } from '../../../ui/compositions/text-field';
+import { agentQueryKeys } from '../agents-queries';
 
 const draftSchema = z.object({ agentId: z.string() });
 const persistedDraftSchema = draftSchema.extend({
@@ -25,6 +27,7 @@ export function AgentSetupDialog({
   onOpenChange: (open: boolean) => void;
 }) {
   const connection = useRuntimeConnection();
+  const queryClient = useQueryClient();
   const [name, setName] = useState('');
   const [purpose, setPurpose] = useState('');
   const [draftId, setDraftId] = useState<string>();
@@ -79,6 +82,7 @@ export function AgentSetupDialog({
       if ('version' in result && typeof result.version === 'number') {
         setVersion(result.version);
       }
+      await queryClient.invalidateQueries({ queryKey: agentQueryKeys.list() });
       if (confirmClose) {
         reset();
         onOpenChange(false);
@@ -86,6 +90,7 @@ export function AgentSetupDialog({
     } finally {
       setSaving(false);
     }
+    await queryClient.invalidateQueries({ queryKey: agentQueryKeys.list() });
   }
 
   async function discardDraft() {
