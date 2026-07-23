@@ -3,18 +3,18 @@
 Branch: `feature/gantry-web-ui-initiate`
 Current rollout: AWS-safe local UI linkage
 
-| Packet | Deliverable                                   | Status      | Evidence                                                      | Commit     |
-| ------ | --------------------------------------------- | ----------- | ------------------------------------------------------------- | ---------- |
-| P1     | Guarded runtime config and local-owner bridge | Complete    | Focused Control tests, production/remote fail-closed checks   | `932add14` |
-| P2     | Browser transport and Query foundation        | Complete    | Zod discovery, REST/SSE transport, no persisted server cache  | `bcaaf3ff` |
-| P3     | Models, defaults, credentials, and usage      | Complete    | Live API composition, secret-field reset, web typecheck       | `ad8c5813` |
-| P4     | Jobs and run activity                         | Complete    | Live CRUD/actions, active-run polling, safe event projection  | `b07be133` |
-| P5     | Memory engine, list, search, and dreaming     | Complete    | Live status/counts/search/actions, unsupported values removed | `f7dcade7` |
-| P6     | Conversations and administration              | Complete    | Discovery, messages, approvers, installs, canonical statuses  | `ab9a0614` |
-| P7     | Session chat and fetch-based SSE              | Complete    | Ensure/send/reconnect/refetch flow, preview data removed      | `57747fa2` |
-| P8     | Workflow rollout boundary                     | Complete    | Mock editor/run routes removed; definitions unavailable       | `f22b4589` |
-| P9     | Local setup docs and AWS deployment guardrail | Complete    | `.env.example`, README, deployment absence test               | `e2d2ca53` |
-| P10    | Full verification and browser acceptance      | Complete*   | Builds, focused tests, integration, disabled-mode browser QA  | Final patch |
+| Packet | Deliverable                                   | Status     | Evidence                                                      | Commit      |
+| ------ | --------------------------------------------- | ---------- | ------------------------------------------------------------- | ----------- |
+| P1     | Guarded runtime config and local-owner bridge | Complete   | Focused Control tests, production/remote fail-closed checks   | `932add14`  |
+| P2     | Browser transport and Query foundation        | Complete   | Zod discovery, REST/SSE transport, no persisted server cache  | `bcaaf3ff`  |
+| P3     | Models, defaults, credentials, and usage      | Complete   | Live API composition, secret-field reset, web typecheck       | `ad8c5813`  |
+| P4     | Jobs and run activity                         | Complete   | Live CRUD/actions, active-run polling, safe event projection  | `b07be133`  |
+| P5     | Memory engine, list, search, and dreaming     | Complete   | Live status/counts/search/actions, unsupported values removed | `f7dcade7`  |
+| P6     | Conversations and administration              | Complete   | Discovery, messages, approvers, installs, canonical statuses  | `ab9a0614`  |
+| P7     | Session chat and fetch-based SSE              | Complete   | Ensure/send/reconnect/refetch flow, preview data removed      | `57747fa2`  |
+| P8     | Workflow rollout boundary                     | Complete   | Mock editor/run routes removed; definitions unavailable       | `f22b4589`  |
+| P9     | Local setup docs and AWS deployment guardrail | Complete   | `.env.example`, README, deployment absence test               | `e2d2ca53`  |
+| P10    | Full verification and browser acceptance      | Complete\* | Builds, focused tests, integration, disabled-mode browser QA  | Final patch |
 
 ## Connected Surfaces
 
@@ -51,14 +51,14 @@ Current rollout: AWS-safe local UI linkage
 
 ## Browser Acceptance
 
-| Check                                         | Status                                                        |
-| --------------------------------------------- | ------------------------------------------------------------- |
-| Disabled mode makes no `/ui-api` request      | Passed                                                        |
-| Connected Models, Jobs, Memory, Conversations | Awaiting a configured local-owner key and representative data |
+| Check                                         | Status                                                         |
+| --------------------------------------------- | -------------------------------------------------------------- |
+| Disabled mode makes no `/ui-api` request      | Passed                                                         |
+| Connected Models, Jobs, Memory, Conversations | Awaiting a configured local-owner key and representative data  |
 | Session send and SSE reconnect                | Covered by transport/bridge checks; live-data exercise pending |
-| 1440px, 1024px, and 390px in both themes      | Passed                                                        |
-| Keyboard/focus/overflow/reduced motion        | Passed                                                        |
-| Direct refresh and unknown `/ui/*` fallback   | Passed                                                        |
+| 1440px, 1024px, and 390px in both themes      | Passed                                                         |
+| Keyboard/focus/overflow/reduced motion        | Passed                                                         |
+| Direct refresh and unknown `/ui/*` fallback   | Passed                                                         |
 
 `P10` is complete for implementation and disabled-mode acceptance. The two
 connected-mode rows remain explicit local-environment acceptance debt; they do
@@ -95,7 +95,7 @@ Root gates retain pre-existing findings outside the Web UI scope:
   memory, group runner, settings, and permission-gate files. Web lint has no
   errors.
 - Architecture checks report `permission-classifier.ts` at 747 lines against
-  a 700-line budget and three existing Telegram references in
-  `messaging/text-styles.ts` beyond the approved exception count.
+  a 700-line budget and three existing Telegram references in the historical
+  messaging style module beyond the approved exception count.
 
 Do not weaken these gates or change unrelated core files to hide them.

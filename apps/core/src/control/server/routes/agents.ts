@@ -5,7 +5,6 @@ import {
   CreateAgentRequestSchema,
   PutAgentProfileFileRequestSchema,
   ReplaceAgentDelegatesRequestSchema,
-  SetAgentModelRequestSchema,
   UpdateAgentRequestSchema,
 } from '@gantry/contracts';
 
@@ -35,13 +34,13 @@ import { RUNTIME_EVENT_TYPES } from '../../../domain/events/runtime-event-types.
 import type { Agent, AgentId } from '../../../domain/agent/agent.js';
 import type { AppId } from '../../../domain/app/app.js';
 import type { ConversationInstall } from '../../../domain/provider/provider.js';
+import { handleAgentModelRoute } from './agent-model-route.js';
 import {
   authorizeControlRequest,
   type ControlRouteContext,
 } from '../handler-context.js';
 import { readJson, sendError, sendJson } from '../http.js';
 import { nowIso } from '../../../shared/time/datetime.js';
-import { resolveModelSelectionForWorkload } from '../../../shared/model-catalog.js';
 import { writeControlDesiredState } from './settings.js';
 import {
   agentIdentityMap,
@@ -181,48 +180,16 @@ export async function handleAgentRoutes(
     return true;
   }
 
-  const agentModelMatch = pathname.match(/^\/v1\/agents\/([^/]+)\/model$/);
-  if (agentModelMatch && req.method === 'PATCH') {
-    const auth = authorizeControlRequest(req, res, ctx.keys, ['agents:admin']);
-    if (!auth) return true;
-    const parsed = SetAgentModelRequestSchema.safeParse(await readJson(req));
-    if (!parsed.success) {
-      sendError(res, 400, 'INVALID_REQUEST', 'Invalid agent model');
-      return true;
-    }
-    const resolved = resolveModelSelectionForWorkload(
-      parsed.data.modelAlias,
-      'chat',
-    );
-    if (!resolved.ok) {
-      sendError(res, 400, 'INVALID_REQUEST', resolved.message);
-      return true;
-    }
-    const agentId = decodeURIComponent(agentModelMatch[1]) as AgentId;
-    const agent =
-      await getRuntimeStorage().repositories.agents.getAgent(agentId);
-    if (!agent || agent.appId !== auth.appId) {
-      sendError(res, 404, 'NOT_FOUND', 'Agent not found');
-      return true;
-    }
-    const folder = folderForAgentId(agent.id);
-    if (!folder) {
-      sendError(res, 400, 'INVALID_REQUEST', 'Agent has no settings folder');
-      return true;
-    }
-    await ctx.agentSettings.writeAgentModelSetting({
-      runtimeHome: ctx.runtimeHome,
-      appId: auth.appId as AppId,
-      folder,
-      name: agent.name,
-      modelAlias: resolved.alias,
-    });
-    sendJson(res, 200, {
-      ...agentToResponse(ctx, agent),
-      modelAlias: resolved.alias,
-    });
+  if (
+    await handleAgentModelRoute({
+      req,
+      res,
+      ctx,
+      pathname,
+      agentResponse: (agent) => agentToResponse(ctx, agent),
+    })
+  )
     return true;
-  }
 
   const agentAdminMatch = pathname.match(/^\/v1\/agents\/([^/]+)\/admin$/);
   if (agentAdminMatch && req.method === 'GET') {
