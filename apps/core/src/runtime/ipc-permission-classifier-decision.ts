@@ -45,9 +45,15 @@ export async function resolvePermissionIpcDecision(input: {
 }): Promise<PermissionApprovalDecision> {
   const settings = input.deps.getPermissionRuntimeSettings?.();
   const agentSettings = settings?.agents[input.sourceAgentFolder] as
-    | { accessPreset?: 'full' | 'locked' }
+    | {
+        accessPreset?: 'full' | 'locked';
+        capabilities?: Array<{ id: string }>;
+      }
     | null
     | undefined;
+  const approvedCapabilityIds =
+    agentSettings?.capabilities?.map(({ id }) => id) ?? [];
+  const workspaceRoot = resolveWorkspaceFolderPath(input.sourceAgentFolder);
   const fixedImageRestricted = input.request.responseKeyId
     ? (permissionRunRestriction({
         sourceAgentFolder: input.sourceAgentFolder,
@@ -75,6 +81,11 @@ export async function resolvePermissionIpcDecision(input: {
         : undefined,
     accessPreset: agentSettings?.accessPreset,
     fixedImageRestricted,
+    deterministicRailsInput: {
+      approvedCapabilityIds,
+      workspaceRoot,
+      trustedRoots: settings?.permissions.trustedRoots ?? [],
+    },
     reviewedRuleDecision: async () => {
       const repository = input.deps.getToolRepository?.();
       if (!repository) return undefined;

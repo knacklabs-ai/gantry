@@ -4,10 +4,14 @@ import type {
   PermissionApprovalRequest,
 } from '../domain/types.js';
 import type { ToolPolicyDecision } from '../shared/tool-execution-policy-service.js';
+import {
+  evaluatePermissionDeterministicRails,
+  type PermissionDeterministicRailsInput,
+} from '../shared/permission-deterministic-rails.js';
 
-export type DeterministicPermissionRails = (input: {
-  request: PermissionApprovalRequest;
-}) => PermissionApprovalDecision | undefined;
+export type DeterministicPermissionRails = (
+  input: PermissionDeterministicRailsInput,
+) => PermissionApprovalDecision | undefined;
 
 export interface CoordinatePermissionDecisionInput {
   request: PermissionApprovalRequest;
@@ -18,10 +22,9 @@ export interface CoordinatePermissionDecisionInput {
     | ToolPolicyDecision
     | (() => Promise<ToolPolicyDecision | undefined>);
   deterministicRails?: DeterministicPermissionRails;
+  deterministicRailsInput?: Omit<PermissionDeterministicRailsInput, 'request'>;
   tail: () => Promise<PermissionApprovalDecision>;
 }
-
-const noDeterministicRails: DeterministicPermissionRails = () => undefined;
 
 export async function coordinatePermissionDecision(
   input: CoordinatePermissionDecisionInput,
@@ -57,8 +60,11 @@ export async function coordinatePermissionDecision(
     input.request.decisionReason = reviewedRuleDecision.reason;
     input.request.closestRule = reviewedRuleDecision.closestRule;
   }
-  const railDecision = (input.deterministicRails ?? noDeterministicRails)({
+  const railDecision = (
+    input.deterministicRails ?? evaluatePermissionDeterministicRails
+  )({
     request: input.request,
+    ...input.deterministicRailsInput,
   });
   return railDecision ?? input.tail();
 }

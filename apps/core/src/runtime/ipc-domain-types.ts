@@ -125,11 +125,16 @@ export interface IpcDeps {
           permissionMode?: PermissionMode;
           delegates?: string[];
           persona?: string;
+          accessPreset?: 'full' | 'locked';
+          capabilities?: Array<{ id: string }>;
         }
       | null
       | undefined
     >;
-    permissions: { autoMode: { model?: string } };
+    permissions: {
+      autoMode: { model?: string };
+      trustedRoots?: string[];
+    };
     memory: { llm: { models: { extractor: string } } };
   };
   getPermissionMessageRepository?: () => Pick<

@@ -113,6 +113,77 @@ describe('coordinatePermissionDecision', () => {
     expect(tail).not.toHaveBeenCalled();
   });
 
+  it('registers the default rails before the classifier/human tail', async () => {
+    const tail = vi.fn();
+    await expect(
+      coordinatePermissionDecision({
+        request: {
+          ...request,
+          toolName: 'RunCommand',
+          toolInput: { command: 'rm -rf ./build' },
+        },
+        tail,
+      }),
+    ).resolves.toMatchObject({
+      approved: false,
+      decidedBy: 'deterministic_rails',
+    });
+    expect(tail).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      'allow',
+      {
+        approved: true,
+        mode: 'allow_once' as const,
+        decidedBy: 'classifier_cache',
+      },
+    ],
+    [
+      'deny',
+      {
+        approved: false,
+        mode: 'cancel' as const,
+        decidedBy: 'classifier_cache',
+      },
+    ],
+  ])('re-validates a cached %s against current rails', async (_label, cachedDecision) => {
+    const tail = vi.fn(async () => cachedDecision);
+    const shellRequest = {
+      ...request,
+      toolName: 'RunCommand',
+      toolInput: { command: 'git status' },
+    };
+
+    await expect(
+      coordinatePermissionDecision({
+        request: { ...shellRequest },
+        deterministicRailsInput: {
+          workspaceRoot: '/workspace',
+          trustedRoots: ['/workspace'],
+        },
+        tail,
+      }),
+    ).resolves.toEqual(cachedDecision);
+
+    await expect(
+      coordinatePermissionDecision({
+        request: { ...shellRequest },
+        deterministicRailsInput: {
+          workspaceRoot: '/workspace',
+          trustedRoots: [],
+        },
+        tail,
+      }),
+    ).resolves.toMatchObject({
+      approved: false,
+      decidedBy: 'deterministic_rails',
+      reason: expect.stringContaining('outside'),
+    });
+    expect(tail).toHaveBeenCalledTimes(1);
+  });
+
   it('spawn registration stores and removes the host restriction by agent/run key', () => {
     const key = {
       sourceAgentFolder: 'main_agent',

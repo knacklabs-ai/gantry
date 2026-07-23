@@ -305,6 +305,7 @@ export interface RuntimeBrowserSettings {
 export interface RuntimePermissionSettings {
   yoloMode: YoloModeSettings;
   egress: EgressSettings;
+  trustedRoots: string[];
   autoMode: {
     model?: string;
   };
