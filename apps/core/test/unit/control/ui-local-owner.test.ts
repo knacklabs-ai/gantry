@@ -102,6 +102,21 @@ describe('local-owner UI request guard', () => {
     ).toBeUndefined();
   });
 
+  it('allows the scoped provider discovery action', () => {
+    const mutation = request({
+      method: 'POST',
+      headers: { ...browserHeaders },
+    });
+    mutation.headers['content-type'] = 'application/json';
+
+    expect(
+      validateLocalOwnerUiRequest(
+        mutation,
+        '/v1/provider-accounts/account-1/discover-conversations',
+      ),
+    ).toBeUndefined();
+  });
+
   it('rejects unlisted routes and cross-origin requests', () => {
     expect(
       validateLocalOwnerUiRequest(

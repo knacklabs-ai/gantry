@@ -17,6 +17,7 @@ export const LOCAL_OWNER_UI_SCOPES = [
   'conversations:admin',
   'messages:read',
   'providers:read',
+  'providers:admin',
   'agents:admin',
   'credentials:read',
   'credentials:admin',
