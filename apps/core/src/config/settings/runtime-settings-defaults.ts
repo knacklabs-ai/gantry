@@ -199,6 +199,7 @@ export function createDefaultRuntimeSettings(): RuntimeSettings {
     egress: {
       denylist: [],
     },
+    trustedRoots: [],
     autoMode: {},
   };
   return {

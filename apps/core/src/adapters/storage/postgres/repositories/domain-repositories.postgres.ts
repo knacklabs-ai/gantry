@@ -115,8 +115,10 @@ import type { PatternCandidateRepository } from '../../../../domain/ports/patter
 import type { ObserverInsightRepository } from '../../../../domain/ports/observer-insights.js';
 import type { ChatBatchRepository } from '../../../../domain/ports/chat-batches.js';
 import type { PermissionPromotionRepository } from '../../../../domain/ports/permission-promotion.js';
+import type { PermissionDecisionMemoryRepository } from '../../../../domain/ports/permission-decision-memory.js';
 import type { GroupJoinOnboardingRepository } from '../../../../domain/ports/group-join-onboarding.js';
 import { PostgresPermissionPromotionRepository } from './permission-promotion-repository.postgres.js';
+import { PostgresPermissionDecisionMemoryRepository } from './permission-decision-memory-repository.postgres.js';
 import { PostgresGroupJoinOnboardingRepository } from './group-join-onboarding-repository.postgres.js';
 export interface PostgresDomainRepositoryBundle {
   apps: AppRepository;
@@ -151,6 +153,7 @@ export interface PostgresDomainRepositoryBundle {
   observerInsights: ObserverInsightRepository;
   chatBatches: ChatBatchRepository;
   permissionPromotions: PermissionPromotionRepository;
+  permissionDecisionMemory: PermissionDecisionMemoryRepository;
   groupJoinOnboarding: GroupJoinOnboardingRepository;
 }
 type JsonRecord = Record<string, unknown>;
@@ -1779,6 +1782,9 @@ export function createPostgresDomainRepositories(
     observerInsights: new PostgresObserverInsightRepository(db),
     chatBatches: new PostgresChatBatchRepository(db),
     permissionPromotions: new PostgresPermissionPromotionRepository(db),
+    permissionDecisionMemory: new PostgresPermissionDecisionMemoryRepository(
+      db,
+    ),
     groupJoinOnboarding: new PostgresGroupJoinOnboardingRepository(db),
   };
 }
