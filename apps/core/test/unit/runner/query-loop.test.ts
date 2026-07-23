@@ -32,31 +32,6 @@ describe('Claude query loop usage event IDs', () => {
 });
 
 describe('Claude query loop declarative tool names', () => {
-  it('retains credential and protected-path denies in direct SDK sandbox config', () => {
-    const source = fs.readFileSync(
-      new URL(
-        '../../../src/adapters/llm/anthropic-claude-agent/runner/query-loop.ts',
-        import.meta.url,
-      ),
-      'utf8',
-    );
-    const sandboxConstruction = source.slice(
-      source.indexOf('const protectedFilesystemPaths ='),
-      source.indexOf('const workspaceFolder ='),
-    );
-
-    expect(sandboxConstruction).toContain(
-      "process.env.GANTRY_SANDBOX_RUNTIME_PROXY === '1'",
-    );
-    expect(sandboxConstruction).toContain(
-      'readProtectedFilesystemSandboxPaths()',
-    );
-    expect(sandboxConstruction).toContain('...localCliCredentialDirectories');
-    expect(sandboxConstruction).toContain('denyReadPaths:');
-    expect(sandboxConstruction).toContain('denyWritePaths:');
-    expect(source).toContain('readProtectedFilesystemSandboxPaths');
-  });
-
   it('does not pass allowedTools while retaining canUseTool in SDK query options', () => {
     const source = fs.readFileSync(
       new URL(

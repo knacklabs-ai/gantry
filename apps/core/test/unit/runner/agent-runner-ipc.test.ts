@@ -989,14 +989,6 @@ describe('agent-runner IPC lifecycle', () => {
       expect(sdkEnv.GANTRY_MCP_SERVERS_JSON).toBeUndefined();
       expect(sdkEnv.GANTRY_MCP_ALLOWED_TOOLS_JSON).toBeUndefined();
       expect(sdkEnv.ENABLE_TOOL_SEARCH).toBe('false');
-      expect(call?.sandbox).toEqual(
-        expect.objectContaining({
-          network: expect.objectContaining({
-            allowLocalBinding: true,
-            httpProxyPort: 18080,
-          }),
-        }),
-      );
       const startupDiagnostics = readRunnerOutputs(result.stdout).flatMap(
         (output) =>
           Array.isArray(output.runtimeEvents) ? output.runtimeEvents : [],
@@ -1053,25 +1045,6 @@ describe('agent-runner IPC lifecycle', () => {
       );
     },
     SLOW_RUNNER_IPC_TEST_TIMEOUT_MS,
-  );
-
-  it(
-    'fails closed when direct mode receives a non-loopback SDK sandbox proxy',
-    async () => {
-      const fixture = createRunnerFixture();
-
-      const result = await runRunner(fixture, baseInput(), {
-        GANTRY_EGRESS_PROXY_URL: 'http://gateway.example:18080/',
-        TEST_EXIT_AFTER_QUERY: '1',
-      });
-
-      expect(result.exitCode).toBe(1);
-      expect(result.stderr).toContain(
-        'GANTRY_EGRESS_PROXY_URL must identify the run-scoped loopback HTTP egress gateway.',
-      );
-      expect(fs.existsSync(fixture.recordPath)).toBe(false);
-    },
-    RUNNER_IPC_TEST_TIMEOUT_MS,
   );
 
   it(
@@ -1296,44 +1269,7 @@ describe('agent-runner IPC lifecycle', () => {
   );
 
   it(
-    'keeps protected paths denied when the direct SDK escape hatch is enabled',
-    async () => {
-      const fixture = createRunnerFixture();
-      const claudeConfigDir = path.join(fixture.root, 'claude-config');
-      const handoffPath = path.join(fixture.root, 'ipc', 'mcp-handoff.json');
-
-      const result = await runRunner(fixture, baseInput(), {
-        TEST_EXIT_AFTER_QUERY: '1',
-        GANTRY_PROTECTED_FILESYSTEM_PATHS_JSON: JSON.stringify([
-          claudeConfigDir,
-          handoffPath,
-        ]),
-      });
-
-      expect(result.exitCode, result.stderr).toBe(0);
-      const call = readRecord(fixture.recordPath).calls[0];
-      expect(call?.sandbox).toMatchObject({
-        enabled: true,
-        failIfUnavailable: true,
-        autoAllowBashIfSandboxed: false,
-        allowUnsandboxedCommands: false,
-        filesystem: {
-          denyRead: expect.arrayContaining([
-            expect.stringMatching(/claude-config$/),
-            expect.stringMatching(/mcp-handoff\.json$/),
-          ]),
-          denyWrite: expect.arrayContaining([
-            expect.stringMatching(/claude-config$/),
-            expect.stringMatching(/mcp-handoff\.json$/),
-          ]),
-        },
-      });
-    },
-    RUNNER_IPC_TEST_TIMEOUT_MS,
-  );
-
-  it(
-    'keeps reviewed local CLI credential paths readable but denied for writes',
+    'exposes reviewed local CLI credential paths via additionalDirectories',
     async () => {
       const fixture = createRunnerFixture();
       const protectedSettingsPath = path.join(
@@ -1366,13 +1302,9 @@ describe('agent-runner IPC lifecycle', () => {
       expect(result.exitCode, result.stderr).toBe(0);
       const call = readRecord(fixture.recordPath).calls[0];
 
-      expect(call?.sandbox?.filesystem).toEqual({
-        denyRead: [expect.stringMatching(/settings\.json$/)],
-        denyWrite: expect.arrayContaining([
-          expect.stringMatching(/runtime$/),
-          expect.stringMatching(/credentials\/acme$/),
-        ]),
-      });
+      // Two-axis model (decision 0040): no SDK Seatbelt in direct mode, so the
+      // reviewed local CLI credential dir is exposed via additionalDirectories
+      // (readable); write protection is enforced by host-side authorization.
       expect(call?.additionalDirectories).toEqual(
         expect.arrayContaining([
           path.join(
@@ -2411,9 +2343,6 @@ describe('agent-runner IPC lifecycle', () => {
 
       expect(result.exitCode, result.stderr).toBe(0);
       const call = readRecord(fixture.recordPath).calls[0];
-      expect(call?.sandbox).toMatchObject({
-        allowUnsandboxedCommands: false,
-      });
       expect(call?.permissionRequest).toEqual(
         expect.objectContaining({
           toolName: 'RunCommand',

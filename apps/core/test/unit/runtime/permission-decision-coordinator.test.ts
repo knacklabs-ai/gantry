@@ -3,7 +3,6 @@ import { describe, expect, it, vi } from 'vitest';
 import type { PermissionApprovalRequest } from '@core/domain/types.js';
 import type { ToolPolicyDecision } from '@core/shared/tool-execution-policy-service.js';
 import { decisionForMode } from '@core/domain/permission-decision.js';
-import { buildSdkFilesystemSandbox } from '@core/adapters/llm/anthropic-claude-agent/runner/filesystem-sandbox.js';
 import {
   coordinatePermissionDecision,
   permissionRunRestriction,
@@ -176,8 +175,7 @@ describe('coordinatePermissionDecision', () => {
     expect(tail).not.toHaveBeenCalled();
   });
 
-  it('routes credential-read ASK rails to the tail with the direct SDK escape hatch disabled', async () => {
-    const sdkSandbox = buildSdkFilesystemSandbox(['~/.ssh']);
+  it('routes credential-read ASK rails to the tail', async () => {
     const tailDecision = {
       approved: false,
       mode: 'cancel' as const,
@@ -190,10 +188,6 @@ describe('coordinatePermissionDecision', () => {
       toolInput: { command: 'cat ~/.ssh/id_rsa' },
     };
 
-    expect(sdkSandbox.allowUnsandboxedCommands).toBe(false);
-    expect(sdkSandbox.filesystem?.denyRead).toEqual(
-      expect.arrayContaining([expect.stringMatching(/\/\.ssh$/)]),
-    );
     await expect(
       coordinatePermissionDecision({
         request: railRequest,

@@ -1,52 +1,12 @@
-import type { SandboxSettings } from '@anthropic-ai/claude-agent-sdk';
 import fs from 'node:fs';
 import path from 'node:path';
 
 import { log } from './logging.js';
 
-const PROTECTED_FILESYSTEM_PATHS_ENV = 'GANTRY_PROTECTED_FILESYSTEM_PATHS_JSON';
-const PROTECTED_FILESYSTEM_DENY_READ_PATHS_ENV =
-  'GANTRY_PROTECTED_FILESYSTEM_DENY_READ_PATHS_JSON';
-const PROTECTED_FILESYSTEM_DENY_WRITE_PATHS_ENV =
-  'GANTRY_PROTECTED_FILESYSTEM_DENY_WRITE_PATHS_JSON';
 const LOCAL_CLI_CREDENTIAL_DIRS_ENV = 'GANTRY_LOCAL_CLI_CREDENTIAL_DIRS_JSON';
-
-interface BuildSdkFilesystemSandboxOptions {
-  denyReadPaths?: readonly string[];
-  denyWritePaths?: readonly string[];
-  httpProxyPort?: number;
-}
-
-export interface ProtectedFilesystemSandboxPaths {
-  denyRead: string[];
-  denyWrite: string[];
-}
-
-export function readProtectedFilesystemPaths(): string[] {
-  return readPathListEnv(PROTECTED_FILESYSTEM_PATHS_ENV);
-}
-
-export function readProtectedFilesystemSandboxPaths(): ProtectedFilesystemSandboxPaths {
-  const fallback =
-    readOptionalPathListEnv(PROTECTED_FILESYSTEM_PATHS_ENV) ?? [];
-  return {
-    denyRead:
-      readOptionalPathListEnv(PROTECTED_FILESYSTEM_DENY_READ_PATHS_ENV) ??
-      fallback,
-    denyWrite:
-      readOptionalPathListEnv(PROTECTED_FILESYSTEM_DENY_WRITE_PATHS_ENV) ??
-      fallback,
-  };
-}
 
 export function readLocalCliCredentialDirectories(): string[] {
   return readPathListEnv(LOCAL_CLI_CREDENTIAL_DIRS_ENV);
-}
-
-function readOptionalPathListEnv(name: string): string[] | undefined {
-  const raw = process.env[name]?.trim();
-  if (!raw) return undefined;
-  return readPathListEnv(name);
 }
 
 function readPathListEnv(name: string): string[] {
@@ -62,66 +22,6 @@ function readPathListEnv(name: string): string[] {
   }
   if (!Array.isArray(parsed)) throw new Error(`${name} must be a JSON array.`);
   return normalizeFilesystemSandboxPaths(parsed);
-}
-
-export function buildSdkFilesystemSandbox(
-  paths: readonly string[],
-  options: BuildSdkFilesystemSandboxOptions = {},
-): SandboxSettings {
-  const denyReadPaths = options.denyReadPaths ?? paths;
-  const denyWritePaths = options.denyWritePaths ?? paths;
-  return {
-    enabled: true,
-    failIfUnavailable: true,
-    autoAllowBashIfSandboxed: false,
-    // L2ii: escape hatch (allowUnsandboxedCommands) deferred — D-0005. Do NOT enable until the deterministic rails carry authoritative GANTRY_PROTECTED_FILESYSTEM_* + local_cli protected paths and run before any reviewed-rule allow for escape-eligible commands; otherwise an escaped command bypasses credential protection.
-    allowUnsandboxedCommands: false,
-    network: {
-      allowLocalBinding: true,
-      allowUnixSockets: ['/'],
-      // configd (network/DNS config) is the proven media-render mach service; a
-      // '*' wildcard would grant lookup to every macOS XPC/Mach service.
-      allowMachLookup: ['com.apple.SystemConfiguration.configd'],
-      ...(options.httpProxyPort
-        ? { httpProxyPort: options.httpProxyPort }
-        : {}),
-    },
-    filesystem: {
-      denyRead: normalizeFilesystemSandboxPaths(denyReadPaths),
-      denyWrite: normalizeFilesystemSandboxPaths(denyWritePaths),
-    },
-  };
-}
-
-export function requireSdkSandboxEgressProxyPort(
-  proxyUrl: string | undefined,
-): number {
-  let parsed: URL;
-  try {
-    parsed = new URL(proxyUrl?.trim() ?? '');
-  } catch {
-    throw new Error(
-      'GANTRY_EGRESS_PROXY_URL must identify the run-scoped loopback HTTP egress gateway.',
-    );
-  }
-  const port = Number(parsed.port);
-  if (
-    parsed.protocol !== 'http:' ||
-    parsed.hostname !== '127.0.0.1' ||
-    parsed.username ||
-    parsed.password ||
-    parsed.pathname !== '/' ||
-    parsed.search ||
-    parsed.hash ||
-    !Number.isInteger(port) ||
-    port <= 0 ||
-    port > 65_535
-  ) {
-    throw new Error(
-      'GANTRY_EGRESS_PROXY_URL must identify the run-scoped loopback HTTP egress gateway.',
-    );
-  }
-  return port;
 }
 
 export function normalizeFilesystemSandboxPaths(
