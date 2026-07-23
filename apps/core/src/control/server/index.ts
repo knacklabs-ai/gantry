@@ -39,6 +39,7 @@ import { preflightModelProvider } from '../../adapters/llm/model-provider-prefli
 import type { AppId } from '../../domain/app/app.js';
 import { canAccessApp, makeAppGroup } from './app-identity.js';
 import {
+  attachTrustedControlPrincipal,
   isValidControlId,
   parseControlApiKeys,
   parseControlApiKeysStrict,
@@ -50,6 +51,7 @@ import type {
 import { sendError } from './http.js';
 import { createRateLimiter } from './rate-limit.js';
 import { handleAgentRoutes } from './routes/agents.js';
+import { handleAgentSetupRoutes } from './routes/agent-setup-routes.js';
 import { handleBrainRoutes } from './routes/brain.js';
 import { handleCapabilityCatalogRoutes } from './routes/capability-catalog.js';
 import { handleCredentialRoutes } from './routes/credentials.js';
@@ -70,6 +72,13 @@ import { handleSkillRoutes } from './routes/skills.js';
 import { handleSystemRoutes } from './routes/system.js';
 import { handleUsageRoutes } from './routes/usage.js';
 import { handleWebhookRoutes } from './routes/webhooks.js';
+import { handleUiStaticRequest } from './ui-static.js';
+import {
+  handleUiRuntimeConfig,
+  type LocalOwnerUiState,
+  resolveLocalOwnerUiState,
+  validateLocalOwnerUiRequest,
+} from './ui-local-owner.js';
 import {
   deliverWebhookDelivery,
   flushWebhookDeliveries,
@@ -138,6 +147,7 @@ function sendControlError(
 function createControlRequestHandler(
   ctx: ControlRouteContext,
   routeProfile: 'full' | 'ops',
+  localOwnerUi: LocalOwnerUiState,
 ) {
   return async (req: http.IncomingMessage, res: http.ServerResponse) => {
     const url = new URL(req.url || '/', 'http://localhost');
@@ -158,28 +168,58 @@ function createControlRequestHandler(
         sendControlError(res, 404, 'NOT_FOUND', 'Route not found');
         return;
       }
+      if (handleUiRuntimeConfig(req, res, pathname, localOwnerUi)) return;
+
+      let routePathname = pathname;
+      if (pathname.startsWith('/ui-api/')) {
+        if (localOwnerUi.connectionMode !== 'local-owner') {
+          sendControlError(res, 404, 'NOT_FOUND', 'Route not found');
+          return;
+        }
+        routePathname = pathname.slice('/ui-api'.length);
+        const rejection = validateLocalOwnerUiRequest(req, routePathname);
+        if (rejection) {
+          sendControlError(res, 403, 'FORBIDDEN', rejection);
+          return;
+        }
+        attachTrustedControlPrincipal(req, localOwnerUi.key);
+        url.pathname = routePathname;
+      }
+      if (await handleUiStaticRequest(req, res, pathname)) return;
       if (await handleOpenApiRoutes(req, res, pathname)) return;
-      if (await handleSystemRoutes(req, res, ctx, pathname)) return;
-      if (await handleGuidedActionRoutes(req, res, ctx, pathname)) return;
-      if (await handleAgentRoutes(req, res, ctx, pathname)) return;
-      if (await handleCapabilityCatalogRoutes(req, res, ctx, pathname)) return;
-      if (await handleSessionRoutes(req, res, ctx, url, pathname)) return;
-      if (await handleProviderConversationRoutes(req, res, ctx, url, pathname))
+      if (await handleSystemRoutes(req, res, ctx, routePathname)) return;
+      if (await handleGuidedActionRoutes(req, res, ctx, routePathname)) return;
+      if (await handleAgentSetupRoutes(req, res, ctx, routePathname)) return;
+      if (await handleAgentRoutes(req, res, ctx, routePathname)) return;
+      if (await handleCapabilityCatalogRoutes(req, res, ctx, routePathname))
         return;
-      if (await handleMemoryRoutes(req, res, ctx, url, pathname)) return;
-      if (await handleObserverRoutes(req, res, ctx, url, pathname)) return;
-      if (await handleBrainRoutes(req, res, ctx, url, pathname)) return;
-      if (await handleCredentialRoutes(req, res, ctx, pathname)) return;
-      if (await handleModelRoutes(req, res, ctx, pathname)) return;
-      if (await handleLlmRoutes(req, res, ctx, pathname)) return;
-      if (await handleJobRoutes(req, res, ctx, url, pathname)) return;
-      if (await handleExternalIngressRoutes(req, res, ctx, pathname)) return;
-      if (await handleRunRoutes(req, res, ctx, url, pathname)) return;
-      if (await handleUsageRoutes(req, res, ctx, url, pathname)) return;
-      if (await handleSettingsRoutes(req, res, ctx, pathname)) return;
-      if (await handleSkillRoutes(req, res, ctx, url, pathname)) return;
-      if (await handleMcpServerRoutes(req, res, ctx, url, pathname)) return;
-      if (await handleWebhookRoutes(req, res, ctx, pathname)) return;
+      if (await handleSessionRoutes(req, res, ctx, url, routePathname)) return;
+      if (
+        await handleProviderConversationRoutes(
+          req,
+          res,
+          ctx,
+          url,
+          routePathname,
+        )
+      )
+        return;
+      if (await handleMemoryRoutes(req, res, ctx, url, routePathname)) return;
+      if (await handleObserverRoutes(req, res, ctx, url, routePathname)) return;
+      if (await handleBrainRoutes(req, res, ctx, url, routePathname)) return;
+      if (await handleCredentialRoutes(req, res, ctx, routePathname)) return;
+      if (await handleModelRoutes(req, res, ctx, routePathname)) return;
+      if (await handleLlmRoutes(req, res, ctx, routePathname)) return;
+      if (await handleJobRoutes(req, res, ctx, url, routePathname)) return;
+      if (await handleExternalIngressRoutes(req, res, ctx, routePathname))
+        return;
+      if (await handleRunRoutes(req, res, ctx, url, routePathname)) return;
+      if (await handleUsageRoutes(req, res, ctx, url, routePathname)) return;
+      if (await handleSettingsRoutes(req, res, ctx, routePathname)) return;
+      if (await handleSkillRoutes(req, res, ctx, url, routePathname)) return;
+      if (await handleMcpServerRoutes(req, res, ctx, url, routePathname))
+        return;
+      if (await handleWebhookRoutes(req, res, ctx, routePathname)) return;
 
       sendControlError(res, 404, 'NOT_FOUND', 'Route not found');
     } catch (error) {
@@ -229,6 +269,7 @@ function unavailableControlAgentSettingsPort(): ControlRouteContext['agentSettin
     defaultSettings: () => missingControlPort('agentSettings'),
     serializeRevisionDocument: () => missingControlPort('agentSettings'),
     writeAgentHarnessSetting: async () => missingControlPort('agentSettings'),
+    writeAgentModelSetting: async () => missingControlPort('agentSettings'),
   };
 }
 
@@ -331,6 +372,17 @@ export function startControlServer(input: {
       ),
     );
   }
+  const processRole = input.processRole ?? 'all';
+  const routeProfile = input.routeProfile ?? 'full';
+  const localOwnerUi = resolveLocalOwnerUiState({
+    enabled: getControlEnvValue('GANTRY_UI_LOCAL_OWNER_ENABLED'),
+    keyId: getControlEnvValue('GANTRY_UI_LOCAL_OWNER_KEY_ID'),
+    host,
+    posture,
+    processRole,
+    routeProfile,
+    keys,
+  });
   const state: ControlServerState = {
     activeStreams: 0,
     activeWaits: 0,
@@ -347,7 +399,7 @@ export function startControlServer(input: {
     app: input.app,
     runtimeHome: GANTRY_HOME,
     keys,
-    processRole: input.processRole ?? 'all',
+    processRole,
     liveExecution: input.liveExecution ?? true,
     liveTurnsEnabled: input.liveTurnsEnabled ?? true,
     roleReadinessRequirements: input.roleReadinessRequirements ?? {
@@ -450,7 +502,7 @@ export function startControlServer(input: {
   };
 
   const server = http.createServer(
-    createControlRequestHandler(ctx, input.routeProfile ?? 'full'),
+    createControlRequestHandler(ctx, routeProfile, localOwnerUi),
   );
   server.on('clientError', (error, socket) => {
     if (isControlClientDisconnectError(error)) {

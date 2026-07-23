@@ -240,26 +240,27 @@ function providerForAlias(
   return resolved.entry.modelRoute.id;
 }
 
+function patchedModelAlias(value: unknown, inheritedAlias: unknown): unknown {
+  if (value === null || value === 'inherit') return inheritedAlias;
+  return typeof value === 'string' ? value : undefined;
+}
+
 export function providersSelectedByPatch(
   body: Record<string, unknown>,
   defaults: ReturnType<ControlRouteContext['getModelDefaults']>,
   options: FamilyProviderOptions = {},
 ): string[] {
-  let chatAlias =
+  let chatAlias: unknown =
     defaults.defaults.chat.effectiveAlias ?? DEFAULT_SETUP_MODEL_ALIAS;
 
   if ('chat' in body) {
-    chatAlias =
-      body.chat === null || body.chat === 'inherit'
-        ? DEFAULT_SETUP_MODEL_ALIAS
-        : typeof body.chat === 'string'
-          ? body.chat
-          : chatAlias;
+    chatAlias = patchedModelAlias(body.chat, DEFAULT_SETUP_MODEL_ALIAS);
   }
 
-  // Inherited job defaults follow the patched chat alias.
-  let oneTimeAlias = defaults.defaults.oneTime.configuredAlias ?? chatAlias;
-  let recurringAlias = defaults.defaults.recurring.configuredAlias ?? chatAlias;
+  let oneTimeAlias: unknown =
+    defaults.defaults.oneTime.configuredAlias ?? chatAlias;
+  let recurringAlias: unknown =
+    defaults.defaults.recurring.configuredAlias ?? chatAlias;
 
   if ('jobs' in body) {
     if (body.jobs === null || body.jobs === 'inherit') {
@@ -268,53 +269,50 @@ export function providersSelectedByPatch(
     } else if (typeof body.jobs === 'string') {
       oneTimeAlias = body.jobs;
       recurringAlias = body.jobs;
+    } else {
+      oneTimeAlias = undefined;
+      recurringAlias = undefined;
     }
   }
   if ('oneTime' in body) {
-    oneTimeAlias =
-      body.oneTime === null || body.oneTime === 'inherit'
-        ? chatAlias
-        : typeof body.oneTime === 'string'
-          ? body.oneTime
-          : oneTimeAlias;
+    oneTimeAlias = patchedModelAlias(body.oneTime, chatAlias);
   }
   if ('recurring' in body) {
-    recurringAlias =
-      body.recurring === null || body.recurring === 'inherit'
-        ? chatAlias
-        : typeof body.recurring === 'string'
-          ? body.recurring
-          : recurringAlias;
+    recurringAlias = patchedModelAlias(body.recurring, chatAlias);
   }
 
-  const chatProvider = providerForAlias(chatAlias, 'chat', options);
-  const memoryDefaults = memoryModelDefaultsForProvider(
-    chatProvider ??
-      providerForAlias(DEFAULT_SETUP_MODEL_ALIAS, 'chat', options) ??
-      '',
-  );
-  const memoryAliases =
-    'memory' in body
-      ? memoryDefaults
-      : {
-          extractor: defaults.defaults.memoryExtractor.effectiveAlias,
-          dreaming: defaults.defaults.memoryDreaming.effectiveAlias,
-          consolidation: defaults.defaults.memoryConsolidation.effectiveAlias,
-        };
-
-  return [
-    [chatAlias, 'chat'],
-    [oneTimeAlias, 'one_time_job'],
-    [recurringAlias, 'recurring_job'],
-    [memoryAliases.extractor, 'memory_extractor'],
-    [memoryAliases.dreaming, 'memory_dreaming'],
-    [memoryAliases.consolidation, 'memory_consolidation'],
-  ].reduce<string[]>((providers, [alias, workload]) => {
-    const provider = providerForAlias(
-      alias,
-      workload as ModelWorkload,
-      options,
+  const affectedAliases: Array<[unknown, ModelWorkload]> = [];
+  if ('chat' in body) affectedAliases.push([chatAlias, 'chat']);
+  if (
+    'jobs' in body ||
+    'oneTime' in body ||
+    ('chat' in body && defaults.defaults.oneTime.configuredAlias === null)
+  ) {
+    affectedAliases.push([oneTimeAlias, 'one_time_job']);
+  }
+  if (
+    'jobs' in body ||
+    'recurring' in body ||
+    ('chat' in body && defaults.defaults.recurring.configuredAlias === null)
+  ) {
+    affectedAliases.push([recurringAlias, 'recurring_job']);
+  }
+  if ('memory' in body) {
+    const chatProvider = providerForAlias(chatAlias, 'chat', options);
+    const memoryDefaults = memoryModelDefaultsForProvider(
+      chatProvider ??
+        providerForAlias(DEFAULT_SETUP_MODEL_ALIAS, 'chat', options) ??
+        '',
     );
+    affectedAliases.push(
+      [memoryDefaults.extractor, 'memory_extractor'],
+      [memoryDefaults.dreaming, 'memory_dreaming'],
+      [memoryDefaults.consolidation, 'memory_consolidation'],
+    );
+  }
+
+  return affectedAliases.reduce<string[]>((providers, [alias, workload]) => {
+    const provider = providerForAlias(alias, workload, options);
     if (provider && !providers.includes(provider)) providers.push(provider);
     return providers;
   }, []);

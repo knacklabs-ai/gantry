@@ -4,6 +4,7 @@ node_modules/
 .npm-cache/
 # Build output
 dist/
+apps/web/dist/
 
 # Local data & auth
 store/

@@ -11,6 +11,8 @@ export type AuthenticationResult =
   | { status: 'missing' | 'invalid' }
   | { status: 'forbidden'; key: ApiKeyRecord; missingScopes: Scope[] };
 
+const trustedRequestPrincipals = new WeakMap<IncomingMessage, ApiKeyRecord>();
+
 export {
   CONTROL_API_SCOPES,
   parseControlApiKeys,
@@ -18,11 +20,28 @@ export {
 } from '../../shared/control-api-keys.js';
 export { isValidControlId } from '../../shared/control-id.js';
 
+export function attachTrustedControlPrincipal(
+  req: IncomingMessage,
+  key: ApiKeyRecord,
+): void {
+  trustedRequestPrincipals.set(req, key);
+}
+
 export function authenticate(
   req: IncomingMessage,
   requiredScopes: Scope[],
   keys: ApiKeyRecord[],
 ): AuthenticationResult {
+  const trustedKey = trustedRequestPrincipals.get(req);
+  if (trustedKey) {
+    const missingScopes = requiredScopes.filter(
+      (scope) => !trustedKey.scopes.has(scope),
+    );
+    return missingScopes.length === 0
+      ? { status: 'authenticated', key: trustedKey }
+      : { status: 'forbidden', key: trustedKey, missingScopes };
+  }
+
   const header = req.headers.authorization;
   if (!header?.startsWith('Bearer ')) return { status: 'missing' };
   const token = header.slice('Bearer '.length).trim();

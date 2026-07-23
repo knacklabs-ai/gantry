@@ -23,6 +23,7 @@ vi.mock('@core/runtime/settings-load-state.js', () => ({
 }));
 
 import { startTestControlServer } from '../../harness/control-http-server.js';
+import { LOCAL_OWNER_UI_SCOPES } from '@core/control/server/ui-local-owner.js';
 
 const TOKEN = 'route-profile-test-token-0123456789';
 const APP_ID = 'default';
@@ -53,6 +54,60 @@ async function send(server: Server, method: string, path: string) {
 }
 
 describe('control server route profile', () => {
+  it('reports disabled UI connectivity and leaves the bridge unmounted', async () => {
+    server = await startTestControlServer({
+      token: TOKEN,
+      appId: APP_ID,
+      scopes: [...LOCAL_OWNER_UI_SCOPES],
+    });
+
+    expect(await (await get(server, '/ui/runtime-config.json')).json()).toEqual(
+      {
+        connectionMode: 'disabled',
+        apiBase: '/ui-api/v1',
+        appId: APP_ID,
+      },
+    );
+    expect((await get(server, '/ui-api/v1/models')).status).toBe(404);
+  });
+
+  it('mounts the scoped local-owner bridge without weakening direct API auth', async () => {
+    server = await startTestControlServer({
+      token: TOKEN,
+      appId: APP_ID,
+      scopes: [...LOCAL_OWNER_UI_SCOPES],
+      localOwnerUi: true,
+    });
+
+    expect(await (await get(server, '/ui/runtime-config.json')).json()).toEqual(
+      {
+        connectionMode: 'local-owner',
+        apiBase: '/ui-api/v1',
+        appId: APP_ID,
+      },
+    );
+    const bridgeHeaders = {
+      origin: server.baseUrl,
+      'x-gantry-ui-request': '1',
+    };
+    expect(
+      (
+        await fetch(`${server.baseUrl}/ui-api/v1/models`, {
+          headers: bridgeHeaders,
+        })
+      ).status,
+    ).toBe(200);
+    expect((await get(server, '/v1/models')).status).toBe(401);
+    expect(
+      (
+        await fetch(`${server.baseUrl}/ui-api/v1/settings/desired-state`, {
+          headers: bridgeHeaders,
+        })
+      ).status,
+    ).toBe(403);
+    expect((await get(server, '/ui-api/v1/models')).status).toBe(403);
+  });
+
   it('ops profile serves operational + read-only routes and 404s admin routes', async () => {
     server = await startTestControlServer({
       token: TOKEN,

@@ -22,4 +22,30 @@ Rules:
 - if a document changes product intent, mirror the decision in `docs/decisions/`
 - if docs conflict, the newer explicit decision in `docs/decisions/` wins
 
-Planning and decomposition should read this directory before coding starts.
+- [Canonical domain model](./canonical-domain-model.md)
+- [Personal and enterprise modes](./personal-and-enterprise-modes.md)
+- [Agent runtime and SDK control plane](./agent-runtime.md)
+- [Multi-agent provider configuration](./multi-agent-provider-configuration.md)
+- [Conversation interactions](./channel-interactions.md)
+- [Autonomous jobs](./autonomous-jobs.md)
+- [Live horizontal execution](./live-horizontal-execution.md)
+- [Multi-worker job execution](./multi-worker-execution.md)
+
+## State, Access, And Safety
+
+- [Durable state boundary](./durable-state-boundary.md)
+- [Compact human settings.yaml](./compact-human-settings-yaml.md)
+- [Credential management](./credential-management.md)
+- [Capability management](./capability-management.md)
+- [Browser capability](./browser-capability.md)
+- [Session resume](./session-resume.md)
+- [Local files policy](./local-files-policy.md)
+- [Local state inventory](./local-state-inventory.md)
+- [Postgres query policy](./postgres-query-policy.md)
+
+## Operations
+
+- [Deployment profiles](./deployment-profiles.md)
+- [Current verification commands](./current-verification-commands.md)
+- [Operator trust and runtime honesty](./operator-trust-runtime-honesty.md)
+- [Web UI delivery phases](./web-ui/README.md)

@@ -25,6 +25,7 @@ export default [
     files: [
       'apps/core/src/**/*.{js,ts}',
       'apps/core/test/**/*.{js,ts}',
+      'apps/web/src/**/*.{ts,tsx}',
       'packages/contracts/src/**/*.{js,ts}',
       'packages/contracts/test/**/*.{js,ts}',
     ],
@@ -32,6 +33,10 @@ export default [
   { languageOptions: { globals: globals.node } },
   pluginJs.configs.recommended,
   ...tseslint.configs.recommended,
+  {
+    files: ['apps/web/src/**/*.{ts,tsx}'],
+    languageOptions: { globals: globals.browser },
+  },
   {
     files: ['apps/core/src/**/*.{js,ts}'],
     rules: {

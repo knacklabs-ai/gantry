@@ -43,17 +43,36 @@ export class PostgresAgentRepository implements AgentRepository {
       .insert(pgSchema.agentsPostgres)
       .values({
         ...agent,
+        description: agent.description ?? null,
         currentConfigVersionId: agent.currentConfigVersionId ?? null,
       })
       .onConflictDoUpdate({
         target: pgSchema.agentsPostgres.id,
         set: {
           name: agent.name,
+          description: agent.description ?? null,
           status: agent.status,
           currentConfigVersionId: agent.currentConfigVersionId ?? null,
           updatedAt: agent.updatedAt,
         },
       });
+  }
+
+  async deleteDisabledAgent(input: {
+    appId: Agent['appId'];
+    agentId: Agent['id'];
+  }): Promise<boolean> {
+    const rows = await this.db
+      .delete(pgSchema.agentsPostgres)
+      .where(
+        and(
+          eq(pgSchema.agentsPostgres.appId, input.appId),
+          eq(pgSchema.agentsPostgres.id, input.agentId),
+          eq(pgSchema.agentsPostgres.status, 'disabled'),
+        ),
+      )
+      .returning({ id: pgSchema.agentsPostgres.id });
+    return rows.length > 0;
   }
 
   async replaceAgentCapabilityBindings(input: {

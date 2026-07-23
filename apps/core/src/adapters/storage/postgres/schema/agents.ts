@@ -31,6 +31,7 @@ export const agentsPostgres = pgTable('agents', {
     .notNull()
     .references(() => appsPostgres.id, { onDelete: 'cascade' }),
   name: text('name').notNull(),
+  description: text('description'),
   status: text('status').notNull().default('active'),
   currentConfigVersionId: text('current_config_version_id'),
   createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' })

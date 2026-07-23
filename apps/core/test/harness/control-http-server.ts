@@ -36,6 +36,7 @@ export async function startTestControlServer(input: {
   processRole?: 'all' | 'control' | 'live-worker' | 'job-worker';
   liveExecution?: boolean;
   liveTurnsEnabled?: boolean;
+  localOwnerUi?: boolean;
   resolveObserverStatus?: ControlRouteContext['resolveObserverStatus'];
 }) {
   const port = await reserveControlPort();
@@ -49,6 +50,10 @@ export async function startTestControlServer(input: {
     },
     ...(input.extraKeys ?? []),
   ]);
+  if (input.localOwnerUi) {
+    process.env.GANTRY_UI_LOCAL_OWNER_ENABLED = 'true';
+    process.env.GANTRY_UI_LOCAL_OWNER_KEY_ID = 'test';
+  }
   const handle = startControlServer({
     app:
       input.runtimeApp ??
@@ -74,6 +79,8 @@ export async function startTestControlServer(input: {
       await handle.close();
       delete process.env.GANTRY_CONTROL_PORT;
       delete process.env.GANTRY_CONTROL_API_KEYS_JSON;
+      delete process.env.GANTRY_UI_LOCAL_OWNER_ENABLED;
+      delete process.env.GANTRY_UI_LOCAL_OWNER_KEY_ID;
     },
   };
 }

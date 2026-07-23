@@ -120,6 +120,38 @@ Bundled runtime surfaces:
 - `/commands` is host-managed command help, not an SDK skill folder.
 - `gantry-admin` is the maintainer skill for local runtime administration.
 
+### Local Web UI linkage
+
+The built React application is served by the Gantry process at `/ui/`.
+Production and remote deployments remain disconnected by default. For a local
+workstation runtime only, add a dedicated Control key to
+`GANTRY_CONTROL_API_KEYS_JSON` and set:
+
+```dotenv
+NODE_ENV=development
+GANTRY_PROCESS_ROLE=all
+GANTRY_CONTROL_HOST=127.0.0.1
+GANTRY_CONTROL_PORT=3939
+GANTRY_UI_LOCAL_OWNER_ENABLED=true
+GANTRY_UI_LOCAL_OWNER_KEY_ID=ui-local-owner
+```
+
+The `ui-local-owner` key needs these scopes:
+
+```text
+sessions:read, sessions:write, jobs:read, jobs:write,
+memory:read, memory:admin, conversations:read, conversations:admin,
+messages:read, providers:read, agents:admin,
+credentials:read, credentials:admin, usage:read
+```
+
+After `npm run build` and `gantry restart`, open
+`http://127.0.0.1:3939/ui/`. Gantry attaches the dedicated key internally to
+allowlisted `/ui-api/v1/*` requests; its bearer token is never returned to or
+stored by the browser. Startup fails if this mode is enabled under a
+production/remote posture, non-loopback host, worker role, or reduced Control
+route profile.
+
 ## Execution Surfaces
 
 Gantry exposes three ways to run model work, all under the same permission,

@@ -34,6 +34,7 @@ import { RUNTIME_EVENT_TYPES } from '../../../domain/events/runtime-event-types.
 import type { Agent, AgentId } from '../../../domain/agent/agent.js';
 import type { AppId } from '../../../domain/app/app.js';
 import type { ConversationInstall } from '../../../domain/provider/provider.js';
+import { handleAgentModelRoute } from './agent-model-route.js';
 import {
   authorizeControlRequest,
   type ControlRouteContext,
@@ -133,8 +134,18 @@ export async function handleAgentRoutes(
     const agents = await getRuntimeStorage().repositories.agents.listAgents(
       auth.appId as AppId,
     );
+    const drafts =
+      await getRuntimeStorage().repositories.agentSetupDrafts.listDrafts(
+        auth.appId as AppId,
+      );
+    const draftAgentIds = new Set(drafts.map((draft) => draft.agentId));
     sendJson(res, 200, {
-      agents: agents.map((agent) => agentToResponse(ctx, agent)),
+      agents: agents.map((agent) => ({
+        ...agentToResponse(ctx, agent),
+        ...(draftAgentIds.has(agent.id)
+          ? { metadata: { setupState: 'draft' } }
+          : {}),
+      })),
     });
     return true;
   }
@@ -178,6 +189,17 @@ export async function handleAgentRoutes(
     sendJson(res, 201, agentToResponse(ctx, agent));
     return true;
   }
+
+  if (
+    await handleAgentModelRoute({
+      req,
+      res,
+      ctx,
+      pathname,
+      agentResponse: (agent) => agentToResponse(ctx, agent),
+    })
+  )
+    return true;
 
   const agentAdminMatch = pathname.match(/^\/v1\/agents\/([^/]+)\/admin$/);
   if (agentAdminMatch && req.method === 'GET') {
@@ -511,6 +533,9 @@ export async function handleAgentRoutes(
     const updated: Agent = {
       ...agent,
       name: parsed.data.name?.trim() ?? agent.name,
+      ...(parsed.data.description !== undefined
+        ? { description: parsed.data.description ?? undefined }
+        : {}),
       status: parsed.data.status ?? agent.status,
       updatedAt: nowIso(),
     };
@@ -576,6 +601,7 @@ function agentToResponse(ctx: ControlRouteContext, agent: Agent) {
     id: agent.id,
     appId: agent.appId,
     name: agent.name,
+    description: agent.description,
     status: agent.status,
     agentHarness: ctx.getSelectedAgentHarness(folder),
     currentConfigVersionId: agent.currentConfigVersionId,

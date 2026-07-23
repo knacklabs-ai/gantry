@@ -8,6 +8,8 @@ import {
   RuntimeLimitSchema,
 } from '../contract-primitives.js';
 
+export * from './setup.js';
+
 export const AgentStatusSchema = z.enum(['active', 'disabled']);
 export type AgentStatus = z.infer<typeof AgentStatusSchema>;
 
@@ -92,11 +94,19 @@ export type CreateAgentRequest = z.infer<typeof CreateAgentRequestSchema>;
 export const UpdateAgentRequestSchema = z
   .object({
     name: z.string().min(1).optional(),
+    description: z.string().trim().max(2_000).nullable().optional(),
     status: AgentStatusSchema.optional(),
     agentHarness: AgentHarnessSchema.optional(),
   })
   .strict();
 export type UpdateAgentRequest = z.infer<typeof UpdateAgentRequestSchema>;
+
+export const SetAgentModelRequestSchema = z
+  .object({
+    modelAlias: z.string().trim().min(1),
+  })
+  .strict();
+export type SetAgentModelRequest = z.infer<typeof SetAgentModelRequestSchema>;
 
 export const ReplaceAgentDelegatesRequestSchema = z
   .object({
