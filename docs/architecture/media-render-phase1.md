@@ -74,9 +74,9 @@ render/still commands:
 ## Chrome binary
 
 Present — no download needed. `chrome-headless-shell` for Chrome-for-Testing
-`147.0.7727.57` (mac_arm) is already cached at
-`~/.cache/puppeteer/chrome-headless-shell/mac_arm-147.0.7727.57/chrome-headless-shell-mac-arm64/chrome-headless-shell`
-and Remotion resolves it via its own revision lookup.
+`147.0.7727.57` (mac_arm) is already cached under the Chrome-for-Testing cache
+directory (revision `mac_arm-147.0.7727.57`) and Remotion resolves it via its own
+revision lookup.
 
 ## Exact command a render now runs
 
