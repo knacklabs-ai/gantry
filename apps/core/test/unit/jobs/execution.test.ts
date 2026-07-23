@@ -565,9 +565,11 @@ describe('jobs/execution', () => {
         }),
       }),
     );
+    // Autonomous not-on-allowlist denial: the RUN is a dead-end (failed); the
+    // JOB still pauses for setup (asserted above) and notifies the admin.
     expect(opsRepository.completeJobRun).toHaveBeenCalledWith(
       expect.any(String),
-      'paused',
+      'failed',
       null,
       expect.stringContaining('Tool not on autonomous run allowlist'),
     );
@@ -641,9 +643,10 @@ describe('jobs/execution', () => {
         lease_run_id: null,
       }),
     );
+    // Autonomous dead-end: run failed, job paused for setup (asserted above).
     expect(opsRepository.completeJobRun).toHaveBeenCalledWith(
       expect.any(String),
-      'paused',
+      'failed',
       null,
       expect.stringContaining('Tool not on autonomous run allowlist'),
     );
@@ -1828,9 +1831,12 @@ describe('jobs/execution', () => {
         next_run: null,
       }),
     );
+    // Readiness preflight surfaces the missing requirement as an autonomous
+    // not-on-allowlist denial: no approver, so the run is a dead-end (failed);
+    // the job still pauses for setup (asserted above).
     expect(opsRepository.completeJobRun).toHaveBeenCalledWith(
       expect.any(String),
-      'paused',
+      'failed',
       null,
       expect.stringContaining('Missing tool access requirement before run'),
     );
@@ -2113,12 +2119,15 @@ describe('jobs/execution', () => {
           {
             eventType: 'job.tool_activity',
             payload: {
+              // Attended (resumable) denial: no autonomous-allowlist phrase, so
+              // the run pauses for an approver rather than failing as a
+              // dead-end.
               phase: 'permission_wait',
               tool: 'Bash',
               ok: false,
-              reason: 'Tool not on autonomous run allowlist: RunCommand.',
+              reason: 'Awaiting approval to run Bash.',
               recovery_action:
-                'request_access {"target":{"kind":"run_command","argvPattern":"npm test *"},"temporaryOnly":false,"reason":"This autonomous run requires RunCommand(npm test *) access."}',
+                'request_access {"target":{"kind":"run_command","argvPattern":"npm test *"},"temporaryOnly":false,"reason":"This run requires RunCommand(npm test *) access."}',
             },
           },
           {
@@ -2127,7 +2136,7 @@ describe('jobs/execution', () => {
               phase: 'permission_denied',
               tool: 'Bash',
               ok: false,
-              reason: 'Autonomous permission approval is disabled.',
+              reason: 'Denied by approver.',
             },
           },
         ],

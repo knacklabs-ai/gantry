@@ -47,7 +47,7 @@ function makeDeps(): {
 }
 
 describe('finalizeSchedulerJobRun — permission ASK on a fenced job', () => {
-  it('marks the run paused (not failed) when a tool is denied', async () => {
+  it('keeps the run failed on an autonomous ungranted-tool dead-end (job still pauses for setup)', async () => {
     const { deps, updateJob } = makeDeps();
     const state = await finalizeSchedulerJobRun({
       currentJob: makeJob(),
@@ -63,6 +63,39 @@ describe('finalizeSchedulerJobRun — permission ASK on a fenced job', () => {
       publishRuntimeEvent: vi.fn(async () => undefined),
     });
 
+    // Autonomous not-on-allowlist denial: no approver in the loop, so the RUN
+    // is a dead-end (failed). The JOB still pauses for setup so an admin can
+    // grant access and the job re-runs.
+    expect(state.runStatus).toBe('failed');
+    expect(updateJob).toHaveBeenCalledWith(
+      'job-1',
+      expect.objectContaining({ status: 'paused' }),
+    );
+  });
+
+  it('pauses the run on an attended, resumable tool denial', async () => {
+    const { deps, updateJob } = makeDeps();
+    const diagnostics = createJobRunDiagnostics();
+    diagnostics.terminalToolDenial = {
+      toolName: 'Bash',
+      recoveryAction: 'request_access(capability=shell)',
+    };
+    const state = await finalizeSchedulerJobRun({
+      currentJob: makeJob(),
+      deps,
+      scheduledFor: '2024-01-01T00:00:00.000Z',
+      now: '2024-01-01T00:00:01.000Z',
+      // Attended path: a terminal tool denial WITHOUT the autonomous-allowlist
+      // message. An approver can resume the same run, so the run pauses.
+      error: 'Permission denied for Bash.',
+      diagnostics,
+      pausedForSetupDuringRun: false,
+      deletedDuringRun: false,
+      runtimeAppId: 'default',
+      runId: 'run-attended',
+      publishRuntimeEvent: vi.fn(async () => undefined),
+    });
+
     expect(state.runStatus).toBe('paused');
     expect(state.runStatus).not.toBe('failed');
     expect(updateJob).toHaveBeenCalledWith(
@@ -71,7 +104,7 @@ describe('finalizeSchedulerJobRun — permission ASK on a fenced job', () => {
     );
   });
 
-  it('pauses a job with no delivery route (the ask still surfaces)', async () => {
+  it('pauses the job for setup even with no delivery route (autonomous dead-end)', async () => {
     const { deps, updateJob } = makeDeps();
     const state = await finalizeSchedulerJobRun({
       currentJob: makeJob({ notification_routes: [] }),
@@ -87,7 +120,7 @@ describe('finalizeSchedulerJobRun — permission ASK on a fenced job', () => {
       publishRuntimeEvent: vi.fn(async () => undefined),
     });
 
-    expect(state.runStatus).toBe('paused');
+    expect(state.runStatus).toBe('failed');
     expect(updateJob).toHaveBeenCalledWith(
       'job-1',
       expect.objectContaining({ status: 'paused' }),
