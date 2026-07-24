@@ -3,7 +3,6 @@ import { randomUUID } from 'node:crypto';
 import { Readable } from 'node:stream';
 
 import { getAgentCredentialInjection } from '../../../application/credentials/agent-credential-service.js';
-import type { RuntimeSettings } from '../../../config/settings/runtime-settings-types.js';
 import type { AppId } from '../../../domain/app/app.js';
 import type { AgentCredentialBroker } from '../../../domain/ports/agent-credential-broker.js';
 import {
@@ -48,7 +47,12 @@ const BLOCKED_LOOPBACK_RESPONSE_HEADERS = new Set([
   'transfer-encoding',
 ]);
 
-type LlmAdmissionLimits = RuntimeSettings['runtime']['llmAdmission'];
+// Local structural shape mirrors RuntimeLlmAdmissionSettings; declared here so
+// the control layer does not import the config-settings module (layer rule).
+type LlmAdmissionLimits = {
+  globalMaxInFlight: number;
+  perAppKeyMaxInFlight: number;
+};
 
 const llmAdmissionState = {
   globalInFlight: 0,
@@ -89,10 +93,9 @@ export async function handleLlmRoutes(
   }
 
   const limits = (
-    ctx.getEffectiveRuntimeSettings() as unknown as Pick<
-      RuntimeSettings,
-      'runtime'
-    >
+    ctx.getEffectiveRuntimeSettings() as unknown as {
+      runtime: { llmAdmission: LlmAdmissionLimits };
+    }
   ).runtime.llmAdmission;
   const admissionKey = `${auth.appId}:${auth.kid}`;
   // Deliberately process-local per decision 0042. SPS-4 owns any future

@@ -86,7 +86,10 @@ export function readRawBody(
           statusCode: 413,
         });
         rejectOnce(error);
-        req.destroy(error);
+        // destroy() with no arg: rejectOnce already ran cleanup(), removing the
+        // 'error' listener, so passing the error here would re-emit it on a
+        // listenerless stream as an uncaught exception.
+        req.destroy();
         return;
       }
       chunks.push(buffer);

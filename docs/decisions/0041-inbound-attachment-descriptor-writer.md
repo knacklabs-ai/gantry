@@ -14,7 +14,7 @@ writes reach `<workspace>/attachments/<filename>` via `writeFile` / `open(...,
 attachment-download.ts` → `shared/private-fs.ts`), which follow a pre-planted
 symlink or lose a check/open race — letting a malicious workspace overwrite
 service-account-writable files outside the workspace. The hardened
-`platform/workspace-message-attachment.ts` is a read-only resolver: it proves
+`apps/core/src/platform/workspace-message-attachment.ts` is a read-only resolver: it proves
 the descriptor-containment pattern but offers no write path.
 
 ## Decision
