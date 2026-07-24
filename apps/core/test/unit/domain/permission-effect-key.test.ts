@@ -200,37 +200,65 @@ describe('computePermissionEffectHash', () => {
     expect(computePermissionEffectHash({ request: req })).toBeUndefined();
   });
 
-  it('returns undefined when only the display input is available and was sanitized', () => {
+  it.each(['command', 'cmd'])(
+    'returns undefined when display sanitization implicates the shell %s field',
+    (commandField) => {
+      expect(
+        computePermissionEffectHash({
+          request: shellRequest('git status', {
+            toolInput:
+              commandField === 'command'
+                ? { command: 'git status' }
+                : { cmd: 'git status' },
+            toolInputSanitized: true,
+            toolInputSanitizedPaths: [commandField],
+          }),
+        }),
+      ).toBeUndefined();
+    },
+  );
+
+  it('hashes shell input when display sanitization does not implicate the command', () => {
     for (const metadata of [
       { toolInputSanitized: true },
-      { toolInputSanitizedPaths: ['command'] },
+      {
+        toolInputSanitized: true,
+        toolInputSanitizedPaths: ['description'],
+      },
     ]) {
       expect(
         computePermissionEffectHash({
           request: shellRequest('git status', metadata),
         }),
-      ).toBeUndefined();
+      ).toBeDefined();
     }
   });
 
-  it('still hashes unsanitized display-only input', () => {
+  it('returns undefined when any non-shell display field is sanitized without a classifier view', () => {
     expect(
       computePermissionEffectHash({
-        request: shellRequest('git status'),
+        request: shellRequest('unused', {
+          toolName: 'mcp__example__update',
+          toolInput: { value: '[truncated]' },
+          toolInputSanitized: true,
+          toolInputSanitizedPaths: ['value'],
+        }),
       }),
-    ).toBeDefined();
+    ).toBeUndefined();
   });
 
   it('returns undefined for every classifier-redacted input', () => {
     const requests = [
       {
         ...shellRequest('ls'),
+        classifierToolInput: { command: 'ls' },
         toolInputRedactedPaths: ['command'],
       } as PermissionApprovalRequest,
       {
         ...shellRequest('unused', {
           toolName: 'mcp__example__update',
           toolInput: { value: '[REDACTED]' },
+          classifierToolInput: { value: '[REDACTED]' },
         }),
         toolInputRedactedPaths: ['value'],
       } as PermissionApprovalRequest,
@@ -245,6 +273,7 @@ describe('computePermissionEffectHash', () => {
     const truncated = shellRequest('ls') as PermissionApprovalRequest & {
       toolInputTruncatedPaths?: string[];
     };
+    truncated.classifierToolInput = { command: 'ls' };
     truncated.toolInputTruncatedPaths = ['command'];
     expect(computePermissionEffectHash({ request: truncated })).toBeUndefined();
 
@@ -252,6 +281,7 @@ describe('computePermissionEffectHash', () => {
       ...shellRequest('unused', {
         toolName: 'mcp__example__update',
         toolInput: { value: 'x'.repeat(16_384) },
+        classifierToolInput: { value: 'x'.repeat(16_384) },
       }),
       toolInputTruncatedPaths: ['value'],
     } as PermissionApprovalRequest;
@@ -267,6 +297,7 @@ describe('computePermissionEffectHash', () => {
     const truncatedLongRequest = {
       ...shortRequest,
       requestId: 'req-long',
+      toolInputSanitizedPaths: ['value'],
       toolInputTruncatedPaths: ['value'],
     } as PermissionApprovalRequest;
 

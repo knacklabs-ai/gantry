@@ -124,10 +124,10 @@ export function evaluatePermissionDeterministicRails(
 
 /**
  * Incomplete ⇒ the risk-relevant input is genuinely unavailable, so we must
- * ask. Classifier-view truncation can hide an effect-bearing value for every
- * tool family. For non-shell tools, any classifier redaction can hide an
- * effect-bearing field. Shell commands are executable strings, so only
- * redaction of command/cmd can hide syntax inside the value.
+ * ask. Without a classifier view, display sanitization is relevant only when
+ * its altered paths implicate the effect-bearing input: command/cmd for shell
+ * tools, or any field for non-shell tools. With a classifier view, its existing
+ * redaction/truncation metadata remains authoritative.
  *
  * SECURITY COUPLING: benign first-party MCP tools are a separate auto-allow
  * shortcut. That shortcut is gated on zero redaction/sanitization metadata, so
@@ -139,12 +139,10 @@ function inputIsIncomplete(request: PermissionApprovalRequest): boolean {
     toolInputTruncatedPaths?: string[];
   };
   if (!request.toolInput) return true;
-  if (
-    !request.classifierToolInput &&
-    (request.toolInputSanitized === true ||
-      (request.toolInputSanitizedPaths?.length ?? 0) > 0)
-  ) {
-    return true;
+  if (!request.classifierToolInput) {
+    return SHELL_TOOLS.has(request.toolName)
+      ? hasCommandPath(request.toolInputSanitizedPaths)
+      : (request.toolInputSanitizedPaths?.length ?? 0) > 0;
   }
   if ((ipc.toolInputTruncatedPaths?.length ?? 0) > 0) return true;
   if (!SHELL_TOOLS.has(request.toolName)) {

@@ -112,21 +112,29 @@ function commandText(input: Record<string, unknown>): string | undefined {
 }
 
 /**
- * Cache reuse requires a complete, byte-representative classifier input. Any
- * classifier redaction or truncation makes the effect uncacheable, regardless
- * of tool family or altered field, because hidden content could change it.
+ * Cache reuse requires a complete, byte-representative decision input. Without
+ * a classifier view, display sanitization is relevant only when its altered
+ * paths implicate command/cmd for shell tools, or any field for non-shell
+ * tools. With a classifier view, any classifier redaction or truncation keeps
+ * the effect uncacheable.
  */
 function inputIsIncomplete(request: PermissionApprovalRequest): boolean {
   const ipc = request as PermissionApprovalRequest & {
     toolInputRedactedPaths?: string[];
     toolInputTruncatedPaths?: string[];
   };
+  if (!request.toolInput) return true;
+  if (!request.classifierToolInput) {
+    return SHELL_TOOLS.has(request.toolName)
+      ? hasCommandPath(request.toolInputSanitizedPaths)
+      : (request.toolInputSanitizedPaths?.length ?? 0) > 0;
+  }
   return (
-    !request.toolInput ||
-    (!request.classifierToolInput &&
-      (request.toolInputSanitized === true ||
-        (request.toolInputSanitizedPaths?.length ?? 0) > 0)) ||
     (ipc.toolInputRedactedPaths?.length ?? 0) > 0 ||
     (ipc.toolInputTruncatedPaths?.length ?? 0) > 0
   );
+}
+
+function hasCommandPath(paths: readonly string[] | undefined): boolean {
+  return paths?.some((path) => path === 'command' || path === 'cmd') ?? false;
 }

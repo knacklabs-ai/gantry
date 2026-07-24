@@ -426,7 +426,7 @@ describe('createCanUseToolCallback', () => {
     );
   });
 
-  it('sends the exact runner-injected prefix with the command for host decisioning', async () => {
+  it('keeps the runner prefix out of the permission request and adds it for execution', async () => {
     const canUseTool = makeCallback({
       agentInput: {
         runMode: 'normal',
@@ -455,14 +455,12 @@ describe('createCanUseToolCallback', () => {
     const hostInjectedCommandPrefix =
       "GODEBUG=netdns=go HTTP_PROXY='http://127.0.0.1:18790/'";
 
-    expect(permissionMock.requestPermissionApproval).toHaveBeenCalledWith(
-      expect.objectContaining({
-        hostInjectedCommandPrefix,
-        toolInput: {
-          command: `${hostInjectedCommandPrefix} curl https://example.test`,
-        },
-      }),
-    );
+    const approvalRequest =
+      permissionMock.requestPermissionApproval.mock.calls[0]?.[0];
+    expect(approvalRequest).toMatchObject({
+      toolInput: { command: 'curl https://example.test' },
+    });
+    expect(approvalRequest).not.toHaveProperty('hostInjectedCommandPrefix');
     expect(result).toEqual(
       expect.objectContaining({
         behavior: 'allow',

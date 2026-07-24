@@ -48,6 +48,7 @@ describe('permission deterministic rails', () => {
       evaluatePermissionDeterministicRails({
         request: {
           ...request('git status'),
+          classifierToolInput: { command: 'git status' },
           toolInputTruncatedPaths: ['command'],
         } as PermissionApprovalRequest,
       }),
@@ -65,11 +66,13 @@ describe('permission deterministic rails', () => {
     const requests = [
       {
         ...request(redactedCommand),
+        classifierToolInput: { command: redactedCommand },
         toolInputRedactedPaths: ['command'],
       },
       {
         ...request(redactedCommand),
         toolInput: { cmd: redactedCommand },
+        classifierToolInput: { cmd: redactedCommand },
         toolInputRedactedPaths: ['cmd'],
       },
     ] as PermissionApprovalRequest[];
@@ -87,30 +90,59 @@ describe('permission deterministic rails', () => {
     }
   });
 
-  it('asks when only the display input is available and was sanitized', () => {
-    for (const metadata of [
-      { toolInputSanitized: true },
-      { toolInputSanitizedPaths: ['command'] },
-    ]) {
+  it.each(['command', 'cmd'])(
+    'asks when display sanitization implicates the shell %s field',
+    (commandField) => {
       expect(
         evaluatePermissionDeterministicRails({
-          request: request('git status', metadata),
+          request: request('git status', {
+            toolInput:
+              commandField === 'command'
+                ? { command: 'git status' }
+                : { cmd: 'git status' },
+            toolInputSanitized: true,
+            toolInputSanitizedPaths: [commandField],
+          }),
         }),
       ).toMatchObject({
         railOutcome: 'ask',
         reason: expect.stringContaining('truncated'),
       });
+    },
+  );
+
+  it('keeps evaluating shell input when display sanitization does not implicate the command', () => {
+    for (const metadata of [
+      { toolInputSanitized: true },
+      {
+        toolInputSanitized: true,
+        toolInputSanitizedPaths: ['description'],
+      },
+    ]) {
+      expect(
+        evaluatePermissionDeterministicRails({
+          request: request('git reset --hard', metadata),
+        }),
+      ).toMatchObject({
+        railOutcome: 'ask',
+        reason: expect.stringContaining('Destructive'),
+      });
     }
   });
 
-  it('keeps evaluating unsanitized display-only input normally', () => {
+  it('asks when any non-shell display field is sanitized without a classifier view', () => {
     expect(
       evaluatePermissionDeterministicRails({
-        request: request('git reset --hard'),
+        request: request('unused', {
+          toolName: 'mcp__example__update',
+          toolInput: { value: '[truncated]' },
+          toolInputSanitized: true,
+          toolInputSanitizedPaths: ['value'],
+        }),
       }),
     ).toMatchObject({
       railOutcome: 'ask',
-      reason: expect.stringContaining('Destructive'),
+      reason: expect.stringContaining('truncated'),
     });
   });
 
@@ -191,6 +223,7 @@ describe('permission deterministic rails', () => {
           ...request('unused'),
           toolName: 'mcp__google_drive__files_list',
           toolInput: { folder_id: '[REDACTED]' },
+          classifierToolInput: { folder_id: '[REDACTED]' },
           toolInputRedactedPaths: ['folder_id'],
         } as PermissionApprovalRequest,
         ...mcpRead,

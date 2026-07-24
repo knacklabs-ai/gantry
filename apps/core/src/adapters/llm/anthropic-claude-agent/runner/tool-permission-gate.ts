@@ -414,12 +414,7 @@ export function createCanUseToolCallback(
           toolDecision.reason,
         closestRule: yoloDenylistReason ? undefined : toolDecision.closestRule,
         blockedPath: permissionOpts.blockedPath,
-        toolInput: trustedInput.toolInput,
-        ...(trustedInput.hostInjectedCommandPrefix
-          ? {
-              hostInjectedCommandPrefix: trustedInput.hostInjectedCommandPrefix,
-            }
-          : {}),
+        toolInput,
         toolUseID: permissionOpts.toolUseID,
         agentID: permissionOpts.agentID,
         suggestions,
@@ -545,12 +540,7 @@ export function createCanUseToolCallback(
         ? undefined
         : currentToolDecision.closestRule,
       blockedPath: permissionOpts.blockedPath,
-      toolInput: trustedInput.toolInput,
-      ...(trustedInput.hostInjectedCommandPrefix
-        ? {
-            hostInjectedCommandPrefix: trustedInput.hostInjectedCommandPrefix,
-          }
-        : {}),
+      toolInput,
       toolUseID: permissionOpts.toolUseID,
       agentID: permissionOpts.agentID,
       suggestions,
