@@ -278,12 +278,14 @@ through the loop:
 4. that stage's assumption rows are validated (`forge assumptions list --open`)
 5. smallest relevant checks run
 6. **commit** the stage
-7. **autoreview the COMMIT until clean** — invoke the autoreview SKILL HELPER
-   DIRECTLY (`"$AUTOREVIEW" --mode commit --commit HEAD`, or `--mode branch
-   --base origin/main`); the helper spawns the Codex engine in an isolated
-   sandbox and returns a definitive exit code. NEVER a `/codex:rescue`/companion
-   `review` job — it hangs at finalization. A finding means fix, re-commit, and
-   autoreview the NEW commit again — the review binds to a commit SHA.
+7. **autoreview the CUMULATIVE stage until clean** — invoke the autoreview SKILL
+   HELPER DIRECTLY on the whole stage range, `"$AUTOREVIEW" --mode branch --base
+   origin/main` (NOT `--mode commit`, which reviews only the latest commit's diff
+   and would miss earlier commits in a multi-commit stage). The helper spawns the
+   Codex engine in an isolated sandbox and returns a definitive exit code. NEVER a
+   `/codex:rescue`/companion `review` job — it hangs at finalization. A finding
+   means fix, commit, and autoreview the range AGAIN; the recorded review binds to
+   the resulting HEAD, so the whole stage must be clean at that HEAD.
 8. **record the clean review** — `record_stage_review_from_json.py --stage <id>`
    with the reviewed HEAD SHA (verdict `clean`), then `forge stage done <id>`.
 

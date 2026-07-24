@@ -36,20 +36,30 @@ def _worktree_dirty(base: Path) -> list[str]:
     review can be stale even when reviewed_sha == HEAD. `stage done` must reject
     those. Fail CLOSED: a `git status` error returns a sentinel so the gate
     refuses rather than attesting a stage it cannot verify."""
+    # -z is NUL-separated and unquoted; a rename/copy (status R/C) is emitted as
+    # `XY <new>\0<old>\0`, so BOTH sides are inspected — a move of a source file
+    # INTO an excluded build dir (e.g. `git mv src/x dist/x`) still counts.
     proc = subprocess.run(
-        ["git", "status", "--porcelain", "--untracked-files=normal"],
+        ["git", "status", "--porcelain", "-z", "--untracked-files=normal"],
         cwd=base, capture_output=True, text=True,
     )
     if proc.returncode != 0:
         return ["<git status failed — cannot verify worktree cleanliness>"]
+    tokens = [t for t in proc.stdout.split("\0") if t]
     dirty = []
-    for line in proc.stdout.splitlines():
-        if not line.strip():
-            continue
-        path = line[3:].split(" -> ")[-1].strip().strip('"')
-        if path.startswith(_WORKTREE_NOISE_PREFIXES):
-            continue
-        dirty.append(path)
+    i = 0
+    while i < len(tokens):
+        entry = tokens[i]
+        status, new_path = entry[:2], entry[3:]
+        paths = [new_path]
+        if "R" in status or "C" in status:  # rename/copy: old path is next token
+            i += 1
+            if i < len(tokens):
+                paths.append(tokens[i])
+        for p in (p.strip() for p in paths):
+            if p and not p.startswith(_WORKTREE_NOISE_PREFIXES):
+                dirty.append(p)
+        i += 1
     return dirty
 
 
