@@ -326,10 +326,12 @@ export function resolveGroupSelector(
     ? { jid: selector, group: groups[selector] }
     : null;
   if (directJid) {
-    // A token that is BOTH an exact route JID and another agent's folder is
-    // ambiguous — do not silently prefer the JID.
+    // A token that is BOTH an exact route JID and a DIFFERENT agent's folder is
+    // ambiguous — do not silently prefer the JID. Compare agent identity (the
+    // folder), not route keys: one agent may legitimately own several routes.
     const folderCollision = Object.entries(groups).find(
-      ([jid, group]) => group.folder === selector && jid !== selector,
+      ([, group]) =>
+        group.folder === selector && group.folder !== directJid.group.folder,
     );
     if (folderCollision) {
       return {

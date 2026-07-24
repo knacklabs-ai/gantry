@@ -1070,4 +1070,32 @@ describe('cli telegram helpers', () => {
     expect(result.found).toBeNull();
     expect(result.error).toContain('ambiguous');
   });
+
+  it('does not flag a collision when the colliding folder is the same agent', () => {
+    // One agent owning several routes, where its folder equals one route key,
+    // is an alias — not a cross-agent collision — and must still resolve.
+    const selfJid = 'tg:999';
+    const secondRoute = makeAgentThreadQueueKey('tg:123', 'agent:tg:999');
+    const result = resolveGroupSelector(
+      {
+        [selfJid]: {
+          name: 'Same agent',
+          folder: selfJid,
+          trigger: '',
+          added_at: '2026-04-24T00:00:00.000Z',
+        },
+        [secondRoute]: {
+          name: 'Same agent',
+          folder: selfJid,
+          trigger: '',
+          added_at: '2026-04-24T00:00:00.000Z',
+        },
+      },
+      selfJid,
+    );
+
+    expect(result.error).toBeUndefined();
+    expect(result.found?.jid).toBe(selfJid);
+    expect(result.found?.group.folder).toBe(selfJid);
+  });
 });
