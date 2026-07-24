@@ -1021,29 +1021,34 @@ describe('cli telegram helpers', () => {
     expect(unknown.error).toBeUndefined();
   });
 
-  it('resolves an agent id that owns multiple routes to that single agent', () => {
+  it('refuses a multi-route agent id rather than silently picking one route', () => {
     const routeA = makeAgentThreadQueueKey('tg:123', 'agent:multi_agent');
     const routeB = makeAgentThreadQueueKey('tg:456', 'agent:multi_agent');
-    const result = resolveGroupSelector(
-      {
-        [routeA]: {
-          name: 'Multi',
-          folder: 'multi_agent',
-          trigger: '',
-          added_at: '2026-04-24T00:00:00.000Z',
-        },
-        [routeB]: {
-          name: 'Multi',
-          folder: 'multi_agent',
-          trigger: '',
-          added_at: '2026-04-24T00:00:00.000Z',
-        },
+    const groups = {
+      [routeA]: {
+        name: 'Multi',
+        folder: 'multi_agent',
+        trigger: '',
+        added_at: '2026-04-24T00:00:00.000Z',
       },
-      'agent:multi_agent',
-    );
+      [routeB]: {
+        name: 'Multi',
+        folder: 'multi_agent',
+        trigger: '',
+        added_at: '2026-04-24T00:00:00.000Z',
+      },
+    };
 
-    expect(result.error).toBeUndefined();
-    expect(result.found?.group.folder).toBe('multi_agent');
+    const result = resolveGroupSelector(groups, 'agent:multi_agent');
+    expect(result.found).toBeNull();
+    expect(result.error).toContain('2 routes');
+    // The error must name every route so the user can pick one.
+    expect(result.error).toContain(routeA);
+    expect(result.error).toContain(routeB);
+
+    // Each route remains individually addressable by its exact JID.
+    expect(resolveGroupSelector(groups, routeA).found?.jid).toBe(routeA);
+    expect(resolveGroupSelector(groups, routeB).found?.jid).toBe(routeB);
   });
 
   it('keeps exact route-JID precedence, with agent:<folder> addressing the other agent', () => {

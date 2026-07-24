@@ -304,12 +304,21 @@ function resolveAgentIdRoute(
       error: `Selector "${selector}" resolves to multiple agents (${[...folders].join(', ')}). Use the exact folder or route JID.`,
     };
   }
-  // ponytail: one agent may own several routes, but this resolver's contract
-  // returns a single {jid, group} — same limitation the folder form already
-  // has. Sort so the pick is deterministic rather than insertion-ordered.
-  // Agent-level operations that must span every route need the {agentId,
-  // folder, routeKeys[]} contract tracked in issue #283.
-  const [jid, group] = [...matches].sort(([a], [b]) => a.localeCompare(b))[0]!;
+  // This resolver's contract returns ONE {jid, group}, so it cannot faithfully
+  // represent an agent that owns several routes: silently picking one would let
+  // an agent-level command act on a single route and leave the rest live.
+  // Refuse instead of narrowing. The {agentId, folder, routeKeys[]} contract
+  // that makes multi-route agents addressable is tracked in issue #283.
+  if (matches.length > 1) {
+    const routes = matches
+      .map(([jid]) => jid)
+      .sort((a, b) => a.localeCompare(b));
+    return {
+      found: null,
+      error: `Selector "${selector}" matches an agent with ${routes.length} routes; this command targets a single route. Use an exact route JID: ${routes.join(', ')}.`,
+    };
+  }
+  const [jid, group] = matches[0]!;
   return { found: { jid, group } };
 }
 
