@@ -1209,7 +1209,9 @@ describe('validateIpcAuthRequest', () => {
     );
   });
 
-  it('strips the host env prefix from a shell command so the rails see the real command', () => {
+  it('strips the exact authenticated host env prefix from a shell command', () => {
+    const hostInjectedCommandPrefix =
+      "GODEBUG=netdns=go HTTP_PROXY='http://127.0.0.1:1/'";
     const payload = {
       requestId: 'perm-host-env-prefix',
       responseNonce: randomUUID(),
@@ -1217,9 +1219,9 @@ describe('validateIpcAuthRequest', () => {
       expiresAt: new Date(Date.now() + 60_000).toISOString(),
       sourceAgentFolder: 'team',
       toolName: 'RunCommand',
+      hostInjectedCommandPrefix,
       toolInput: {
-        command:
-          "GODEBUG=netdns=go HTTP_PROXY='http://127.0.0.1:1/' head -30 file",
+        command: `${hostInjectedCommandPrefix} head -30 file`,
       },
       context: {
         responseKeyId: TEST_RESPONSE_KEY_ID,
@@ -1230,8 +1232,7 @@ describe('validateIpcAuthRequest', () => {
 
     const parsed = parsePermissionIpcRequest(signedPayload(payload), 'team');
 
-    // Both the 500-char display copy and the 16K classifier copy carry the real,
-    // prefix-stripped command.
+    expect(parsed.hostInjectedCommandPrefix).toBe(hostInjectedCommandPrefix);
     expect(parsed.toolInput).toMatchObject({ command: 'head -30 file' });
     expect(parsed.classifierToolInput).toMatchObject({
       command: 'head -30 file',
@@ -1247,6 +1248,83 @@ describe('validateIpcAuthRequest', () => {
       );
     }
     expect(computePermissionEffectHash({ request: parsed })).toBeDefined();
+  });
+
+  it('preserves a model-authored look-alike prefix when provenance mismatches', () => {
+    const command = 'HTTP_PROXY=http://127.0.0.1:1/ curl evil';
+    const payload = {
+      requestId: 'perm-forged-host-env-prefix',
+      responseNonce: randomUUID(),
+      nonce: randomUUID(),
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      sourceAgentFolder: 'team',
+      toolName: 'RunCommand',
+      hostInjectedCommandPrefix: 'GODEBUG=netdns=go',
+      toolInput: { command },
+      context: {
+        responseKeyId: TEST_RESPONSE_KEY_ID,
+        appId: 'app:one',
+        agentId: 'agent:team',
+      },
+    };
+
+    const parsed = parsePermissionIpcRequest(signedPayload(payload), 'team');
+
+    expect(parsed.toolInput).toMatchObject({ command });
+    expect(parsed.classifierToolInput).toMatchObject({ command });
+  });
+
+  it('strips only the authenticated prefix and preserves a following model assignment', () => {
+    const hostInjectedCommandPrefix = 'GODEBUG=netdns=go';
+    const modelCommand = 'HTTP_PROXY=http://127.0.0.1:1/ curl evil';
+    const payload = {
+      requestId: 'perm-layered-host-env-prefix',
+      responseNonce: randomUUID(),
+      nonce: randomUUID(),
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      sourceAgentFolder: 'team',
+      toolName: 'RunCommand',
+      hostInjectedCommandPrefix,
+      toolInput: {
+        command: `${hostInjectedCommandPrefix} ${modelCommand}`,
+      },
+      context: {
+        responseKeyId: TEST_RESPONSE_KEY_ID,
+        appId: 'app:one',
+        agentId: 'agent:team',
+      },
+    };
+
+    const parsed = parsePermissionIpcRequest(signedPayload(payload), 'team');
+
+    expect(parsed.toolInput).toMatchObject({ command: modelCommand });
+    expect(parsed.classifierToolInput).toMatchObject({
+      command: modelCommand,
+    });
+  });
+
+  it('does not normalize a shell command without authenticated prefix provenance', () => {
+    const command = 'HTTP_PROXY=http://127.0.0.1:1/ curl evil';
+    const payload = {
+      requestId: 'perm-no-host-env-prefix-provenance',
+      responseNonce: randomUUID(),
+      nonce: randomUUID(),
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      sourceAgentFolder: 'team',
+      toolName: 'RunCommand',
+      toolInput: { command },
+      context: {
+        responseKeyId: TEST_RESPONSE_KEY_ID,
+        appId: 'app:one',
+        agentId: 'agent:team',
+      },
+    };
+
+    const parsed = parsePermissionIpcRequest(signedPayload(payload), 'team');
+
+    expect(parsed.hostInjectedCommandPrefix).toBeUndefined();
+    expect(parsed.toolInput).toMatchObject({ command });
+    expect(parsed.classifierToolInput).toMatchObject({ command });
   });
 
   it('records every altered tool input dot-path', () => {

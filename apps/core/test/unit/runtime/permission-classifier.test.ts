@@ -1081,8 +1081,14 @@ describe('permission classifier decision events', () => {
     );
   });
 
-  it('matches the YOLO denylist through host-injected env prefixes', async () => {
-    const classifierConsult = vi.fn();
+  it('does not treat an unnormalized env prefix as host provenance', async () => {
+    const command =
+      "GODEBUG=netdns=go HTTP_PROXY='http://127.0.0.1:18790/' HTTPS_PROXY='http://127.0.0.1:18790/' cat README.md";
+    const classifierConsult = vi.fn(async () => ({
+      risk_level: 'high' as const,
+      reason: 'Untrusted command environment.',
+      latencyMs: 1,
+    }));
     const publishRuntimeEvent = vi.fn(async () => undefined);
 
     await expect(
@@ -1095,10 +1101,7 @@ describe('permission classifier decision events', () => {
         intentSource: 'operator_message',
         turnIntentSummary: 'Read the repository overview.',
         canonicalToolName: 'RunCommand',
-        toolInput: {
-          command:
-            "GODEBUG=netdns=go HTTP_PROXY='http://127.0.0.1:18790/' HTTPS_PROXY='http://127.0.0.1:18790/' cat README.md",
-        },
+        toolInput: { command },
         policyDecisionReason: 'No durable rule matched.',
         approvedCapabilityIds: ['filesystem.read'],
         workspaceRoot,
@@ -1113,9 +1116,16 @@ describe('permission classifier decision events', () => {
       }),
     ).resolves.toMatchObject({
       decision: 'ask',
-      reason: expect.stringContaining('YOLO-mode denylist backstop'),
+      reason: 'Untrusted command environment.',
     });
-    expect(classifierConsult).not.toHaveBeenCalled();
+    expect(classifierConsult).toHaveBeenCalledWith(
+      expect.objectContaining({ toolInput: { command } }),
+    );
+    expect(publishRuntimeEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventType: 'permission.yolo_denylist_hit',
+      }),
+    );
   });
 
   it('matches the YOLO command denylist for RunCommand tool names too', async () => {
@@ -1344,15 +1354,17 @@ describe('permission classifier decision events', () => {
     );
   });
 
-  it('strips host loopback environment assignments from the judged shell command', async () => {
+  it('preserves unnormalized loopback assignments in the judged shell command', async () => {
     const classifierConsult = vi.fn(async () => ({
       risk_level: 'low' as const,
       reason: 'Read-only help command.',
       latencyMs: 1,
     }));
+    const command =
+      "GODEBUG=netdns=go HTTP_PROXY='http://127.0.0.1:18790/' HTTPS_PROXY='http://127.0.0.1:18790/' cat README.md";
 
     await consultPermissionClassifierBeforePrompt({
-      permissionMode: 'auto_strict',
+      permissionMode: 'auto',
       requestFamily: 'tool',
       agentFolder: 'researcher',
       correlationId: 'request:runtime-env',
@@ -1360,10 +1372,7 @@ describe('permission classifier decision events', () => {
       intentSource: 'operator_message',
       turnIntentSummary: 'Read the repository overview.',
       canonicalToolName: 'RunCommand',
-      toolInput: {
-        command:
-          "GODEBUG=netdns=go HTTP_PROXY='http://127.0.0.1:18790/' HTTPS_PROXY='http://127.0.0.1:18790/' cat README.md",
-      },
+      toolInput: { command },
       policyDecisionReason: 'No durable rule matched.',
       approvedCapabilityIds: ['filesystem.read'],
       workspaceRoot,
@@ -1374,7 +1383,7 @@ describe('permission classifier decision events', () => {
 
     expect(classifierConsult).toHaveBeenCalledWith(
       expect.objectContaining({
-        toolInput: { command: 'cat README.md' },
+        toolInput: { command },
       }),
     );
   });

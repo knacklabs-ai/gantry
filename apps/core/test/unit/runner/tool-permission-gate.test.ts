@@ -426,6 +426,53 @@ describe('createCanUseToolCallback', () => {
     );
   });
 
+  it('sends the exact runner-injected prefix with the command for host decisioning', async () => {
+    const canUseTool = makeCallback({
+      agentInput: {
+        runMode: 'normal',
+        isScheduledJob: false,
+        appId: 'default',
+        agentId: 'agent:test',
+        runId: 'run-1',
+        chatJid: 'tg:test',
+        allowedTools: [],
+        toolNetworkEnv: {
+          HTTP_PROXY: 'http://127.0.0.1:18790/',
+        },
+        yoloMode: {
+          enabled: true,
+          denylist: [],
+          denylistPaths: [],
+        },
+      } as never,
+    });
+
+    const result = await canUseTool(
+      'Bash',
+      { command: 'curl https://example.test' },
+      makePermissionOptions() as never,
+    );
+    const hostInjectedCommandPrefix =
+      "GODEBUG=netdns=go HTTP_PROXY='http://127.0.0.1:18790/'";
+
+    expect(permissionMock.requestPermissionApproval).toHaveBeenCalledWith(
+      expect.objectContaining({
+        hostInjectedCommandPrefix,
+        toolInput: {
+          command: `${hostInjectedCommandPrefix} curl https://example.test`,
+        },
+      }),
+    );
+    expect(result).toEqual(
+      expect.objectContaining({
+        behavior: 'allow',
+        updatedInput: {
+          command: `${hostInjectedCommandPrefix} curl https://example.test`,
+        },
+      }),
+    );
+  });
+
   it('does not silently allow a tool listed in allowedTools — the coordinator still decides', async () => {
     // PERM-2 Task F: a rule on the agent's configured allowedTools must not
     // mint a worker-side `allow` that skips the host coordinator. Even with a

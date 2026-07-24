@@ -28,7 +28,6 @@ import {
 } from '../shared/memory-dreaming-timeout.js';
 import { resolveModelSelectionForWorkload } from '../shared/model-catalog.js';
 import type { PermissionMode } from '../shared/permission-mode.js';
-import { stripHostInjectedEnvPrefix } from '../shared/runtime-env-command.js';
 import * as yolo from '../shared/yolo-mode-policy.js';
 import type {
   PermissionApprovalDecision,
@@ -278,7 +277,7 @@ export async function consultPermissionClassifierBeforePrompt(
       : shellInput?.cmd;
   const classifierToolInput = shellRequest
     ? {
-        command: stripClassifierHostInjectedEnvPrefix(shellCommandField),
+        command: shellCommandField,
       }
     : input.toolInput;
   const incompletePaths = [
@@ -410,11 +409,6 @@ export async function consultPermissionClassifierBeforePrompt(
       ? { promotionHintCount: promotionCounter.allowCount }
       : {}),
   };
-}
-
-function stripClassifierHostInjectedEnvPrefix(command: unknown): unknown {
-  if (typeof command !== 'string') return command;
-  return stripHostInjectedEnvPrefix(command).command;
 }
 
 export async function permissionPromotionHintCount(input: {

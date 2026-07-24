@@ -26,6 +26,7 @@ import { sanitizeIpcToolInput } from './ipc-tool-input-sanitization.js';
 import { PERMISSION_CLASSIFIER_MAX_STRING_LENGTH } from './permission-classifier-prompt.js';
 
 const IPC_REQUEST_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/;
+const HOST_INJECTED_COMMAND_PREFIX_MAX_LENGTH = 65_536;
 export type ParsedPermissionIpcRequest = PermissionApprovalRequest & {
   classifierToolInput?: Record<string, unknown>;
   toolInputRedactedPaths?: string[];
@@ -401,12 +402,17 @@ export function parsePermissionIpcRequest(
   }
   const targetJid = payloadTargetJid ?? contextTargetJid;
   const subagentType = toTrimmedString(raw.subagentType, { maxLen: 200 });
-  // Strip the host-injected env prefix (proxy/GODEBUG assignments the runner
-  // prepends) from the shell command BEFORE sanitizing, so the permission
-  // decision/display/cache see the REAL command. Execution is unaffected: the
-  // runner still runs the real prefixed command; this only normalizes what the
-  // rails + effect-key classify.
-  const decisionToolInput = stripShellCommandEnvPrefix(toolName, raw.toolInput);
+  const hostInjectedCommandPrefix = toTrimmedString(
+    raw.hostInjectedCommandPrefix,
+    { maxLen: HOST_INJECTED_COMMAND_PREFIX_MAX_LENGTH },
+  );
+  // The signed runner payload carries the exact prefix it injected. Strip only
+  // that byte-for-byte prefix; legacy producers and mismatches stay unchanged.
+  const decisionToolInput = stripShellCommandEnvPrefix(
+    toolName,
+    raw.toolInput,
+    hostInjectedCommandPrefix,
+  );
   const {
     toolInput,
     altered: toolInputSanitized,
@@ -455,6 +461,7 @@ export function parsePermissionIpcRequest(
     ...(closestRule ? { closestRule } : {}),
     ...(blockedPath ? { blockedPath } : {}),
     ...(toolInput ? { toolInput } : {}),
+    ...(hostInjectedCommandPrefix ? { hostInjectedCommandPrefix } : {}),
     ...(toolInputSanitized ? { toolInputSanitized: true } : {}),
     ...(toolInputSanitizedPaths.length > 0 ? { toolInputSanitizedPaths } : {}),
     ...(classifierToolInput ? { classifierToolInput } : {}),

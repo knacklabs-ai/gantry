@@ -1,18 +1,21 @@
 import { isPlainObject } from '../shared/object.js';
-import { stripHostInjectedEnvPrefix } from '../shared/runtime-env-command.js';
 
 const SHELL_TOOL_NAMES = new Set(['Bash', 'RunCommand']);
 
 /**
- * For shell tools, return a shallow-copied toolInput with the host-injected env
- * prefix stripped from the `command`/`cmd` field. Non-shell tools and inputs
- * without a string command field pass through unchanged.
+ * For shell tools, strip only the exact prefix authenticated by the runner.
+ * Missing or mismatched provenance leaves the command unchanged.
  */
 export function stripShellCommandEnvPrefix(
   toolName: string,
   toolInput: unknown,
+  hostInjectedCommandPrefix?: string,
 ): unknown {
-  if (!SHELL_TOOL_NAMES.has(toolName) || !isPlainObject(toolInput)) {
+  if (
+    !SHELL_TOOL_NAMES.has(toolName) ||
+    !isPlainObject(toolInput) ||
+    !hostInjectedCommandPrefix
+  ) {
     return toolInput;
   }
   const field =
@@ -22,8 +25,11 @@ export function stripShellCommandEnvPrefix(
         ? 'cmd'
         : undefined;
   if (!field) return toolInput;
+  const command = toolInput[field] as string;
+  const prefixWithSeparator = `${hostInjectedCommandPrefix} `;
+  if (!command.startsWith(prefixWithSeparator)) return toolInput;
   return {
     ...toolInput,
-    [field]: stripHostInjectedEnvPrefix(toolInput[field] as string).command,
+    [field]: command.slice(prefixWithSeparator.length),
   };
 }
