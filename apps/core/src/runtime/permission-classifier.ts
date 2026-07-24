@@ -76,7 +76,6 @@ export interface PermissionClassifierInput {
   approvedCapabilityIds: string[];
   recentlyApprovedExactToolShape?: boolean;
   recentlyDeniedExactToolShape?: boolean;
-  posture?: 'allow_leaning' | 'strict';
   autoModeModel?: string;
   memoryModelConfig: {
     extractor: string;
@@ -198,7 +197,7 @@ export async function consultPermissionClassifier(
           ...(modelSelection.modelProfile
             ? { modelProfile: modelSelection.modelProfile }
             : {}),
-          systemPrompt: permissionClassifierSystemPrompt(input.posture),
+          systemPrompt: permissionClassifierSystemPrompt(),
           prompt: classifierUserPayload(input),
           signal,
           timeoutMs: PERMISSION_CLASSIFIER_TIMEOUT_MS,
@@ -335,10 +334,6 @@ export async function consultPermissionClassifierBeforePrompt(
             recentlyApprovedExactToolShape:
               wasRecentlyApproved(promotionCounter),
             recentlyDeniedExactToolShape: wasRecentlyDenied(promotionCounter),
-            posture:
-              input.permissionMode === 'auto_strict'
-                ? 'strict'
-                : 'allow_leaning',
             autoModeModel: input.classifierConfig.autoModeModel,
             memoryModelConfig: {
               extractor: input.classifierConfig.memoryExtractorModel,

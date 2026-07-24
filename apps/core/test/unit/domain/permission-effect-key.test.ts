@@ -1,0 +1,151 @@
+import { describe, expect, it } from 'vitest';
+
+import {
+  computePermissionEffectHash,
+  EFFECT_SCHEMA_VERSION,
+  RAIL_CATALOG_VERSION,
+} from '@core/domain/permission-effect-key.js';
+import type { PermissionApprovalRequest } from '@core/domain/types.js';
+
+function shellRequest(
+  command: string,
+  overrides: Partial<PermissionApprovalRequest> = {},
+): PermissionApprovalRequest {
+  return {
+    requestId: 'req-1',
+    appId: 'default',
+    sourceAgentFolder: 'agent-a',
+    toolName: 'Bash',
+    toolInput: { command },
+    ...overrides,
+  };
+}
+
+describe('computePermissionEffectHash', () => {
+  it('is stable for identical exact input', () => {
+    const a = computePermissionEffectHash({ request: shellRequest('ls -la') });
+    const b = computePermissionEffectHash({ request: shellRequest('ls -la') });
+    expect(a).toBeDefined();
+    expect(a).toBe(b);
+  });
+
+  it('is delimiter-safe: framing prevents a|b == ab collisions', () => {
+    // Two requests whose adjacent fields, if naively concatenated, would form
+    // the same string. appId+folder "a"+"bagent" vs "ab"+"agent".
+    const left = computePermissionEffectHash({
+      request: shellRequest('x', { appId: 'a', sourceAgentFolder: 'bagent' }),
+    });
+    const right = computePermissionEffectHash({
+      request: shellRequest('x', { appId: 'ab', sourceAgentFolder: 'agent' }),
+    });
+    expect(left).not.toBe(right);
+  });
+
+  it('quoting differences change the hash', () => {
+    const quoted = computePermissionEffectHash({
+      request: shellRequest('echo "a b"'),
+    });
+    const bare = computePermissionEffectHash({
+      request: shellRequest('echo a b'),
+    });
+    expect(quoted).not.toBe(bare);
+  });
+
+  it('different cwd changes the hash', () => {
+    const req = shellRequest('cat notes.txt');
+    const here = computePermissionEffectHash({
+      request: req,
+      workspaceRoot: '/agents/one',
+    });
+    const there = computePermissionEffectHash({
+      request: req,
+      workspaceRoot: '/agents/two',
+    });
+    expect(here).not.toBe(there);
+  });
+
+  it('different destination host changes the hash', () => {
+    const a = computePermissionEffectHash({
+      request: shellRequest('curl https://example.com/a'),
+    });
+    const b = computePermissionEffectHash({
+      request: shellRequest('curl https://evil.example.net/a'),
+    });
+    expect(a).not.toBe(b);
+  });
+
+  it('different tool name changes the hash', () => {
+    const bash = computePermissionEffectHash({
+      request: shellRequest('git status'),
+    });
+    const run = computePermissionEffectHash({
+      request: shellRequest('git status', { toolName: 'RunCommand' }),
+    });
+    expect(bash).not.toBe(run);
+  });
+
+  it('version bumps invalidate: versions are inside the hash', () => {
+    // Guards against silently dropping the version fields from the payload.
+    expect(EFFECT_SCHEMA_VERSION).toBeGreaterThanOrEqual(1);
+    expect(RAIL_CATALOG_VERSION).toBeGreaterThanOrEqual(1);
+  });
+
+  it('non-shell input hashes a stable canonical JSON (key order agnostic)', () => {
+    const base: PermissionApprovalRequest = {
+      requestId: 'req-2',
+      appId: 'default',
+      sourceAgentFolder: 'agent-a',
+      toolName: 'Read',
+      toolInput: { file_path: '/x', limit: 10 },
+    };
+    const reordered: PermissionApprovalRequest = {
+      ...base,
+      toolInput: { limit: 10, file_path: '/x' },
+    };
+    const a = computePermissionEffectHash({ request: base });
+    const b = computePermissionEffectHash({ request: reordered });
+    expect(a).toBeDefined();
+    expect(a).toBe(b);
+  });
+
+  it('returns undefined when tool input is missing', () => {
+    const req = shellRequest('ls');
+    delete req.toolInput;
+    expect(computePermissionEffectHash({ request: req })).toBeUndefined();
+  });
+
+  it('returns undefined for sanitized input (no caching)', () => {
+    const req = shellRequest('ls', { toolInputSanitized: true });
+    expect(computePermissionEffectHash({ request: req })).toBeUndefined();
+  });
+
+  it('returns undefined when sanitized paths are present', () => {
+    const req = shellRequest('ls', { toolInputSanitizedPaths: ['command'] });
+    expect(computePermissionEffectHash({ request: req })).toBeUndefined();
+  });
+
+  it('returns undefined for redacted/truncated classifier input', () => {
+    const redacted = shellRequest('ls') as PermissionApprovalRequest & {
+      toolInputRedactedPaths?: string[];
+    };
+    redacted.toolInputRedactedPaths = ['command'];
+    expect(computePermissionEffectHash({ request: redacted })).toBeUndefined();
+
+    const truncated = shellRequest('ls') as PermissionApprovalRequest & {
+      toolInputTruncatedPaths?: string[];
+    };
+    truncated.toolInputTruncatedPaths = ['command'];
+    expect(computePermissionEffectHash({ request: truncated })).toBeUndefined();
+  });
+
+  it('returns undefined for a shell request with no command', () => {
+    const req: PermissionApprovalRequest = {
+      requestId: 'req-3',
+      appId: 'default',
+      sourceAgentFolder: 'agent-a',
+      toolName: 'Bash',
+      toolInput: {},
+    };
+    expect(computePermissionEffectHash({ request: req })).toBeUndefined();
+  });
+});

@@ -195,6 +195,9 @@ function renderPermissionSettingsYaml(
     '  egress:',
     `    denylist: ${JSON.stringify(permissions.egress.denylist)}`,
   );
+  if (permissions.trustedRoots.length > 0) {
+    lines.push(`  trusted_roots: ${JSON.stringify(permissions.trustedRoots)}`);
+  }
   if (permissions.autoMode.model) {
     lines.push(
       '  auto_mode:',
@@ -603,6 +606,7 @@ function isDefaultPermissionSettings(
     permissions.yoloMode.denylist.length === 0 &&
     permissions.yoloMode.denylistPaths.length === 0 &&
     permissions.egress.denylist.length === 0 &&
+    permissions.trustedRoots.length === 0 &&
     permissions.autoMode.model === undefined
   );
 }
