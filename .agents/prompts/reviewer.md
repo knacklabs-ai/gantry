@@ -1,8 +1,16 @@
 # Review Prompt — one autoreview run, three lenses
 
 Review runs ONCE per task, after `verify.py` passes and the automated testing
-artifact is recorded: a single autoreview run in a Codex session. Never review
-inline in the coordinating session; never nest reviewers.
+artifact is recorded: a single autoreview run. **Invoke the autoreview SKILL
+HELPER DIRECTLY** (`"$AUTOREVIEW" --mode branch --base origin/main`, or
+`--mode commit --commit <ref>` for a landed commit) — the helper spawns the
+Codex review engine itself in an isolated, read-only sandbox and returns a
+definitive exit code (0 = clean, nonzero = accepted findings). Do NOT trigger a
+`/codex:rescue` / codex-companion `review` job to do the review: that wrapper
+hangs at final serialization (~40 min, no verdict) and its result drops post-
+completion. Running the helper is NOT "reviewing inline" — the coordinating
+model never judges the diff; the helper's isolated Codex engine does. Never nest
+reviewers; never call built-in `codex review`.
 
 Loop discipline (carried over from the retired subagent panel): scope-freeze —
 review the diff that exists, do not expand scope; verify findings against the

@@ -277,8 +277,12 @@ through the loop:
 3. the orchestrator inspects the diff and rejects overbuilt code
 4. that stage's assumption rows are validated (`forge assumptions list --open`)
 5. smallest relevant checks run
-6. **local autoreview on the UNCOMMITTED diff until clean** (`autoreview
-   --mode local`, run as a Codex handoff) — a stage commits only clean
+6. **local autoreview until clean** — invoke the autoreview SKILL HELPER
+   DIRECTLY (`"$AUTOREVIEW" --mode local` on the uncommitted diff, or
+   `--mode commit --commit HEAD` after committing); the helper spawns the Codex
+   engine in an isolated sandbox and returns a definitive exit code. NEVER a
+   `/codex:rescue`/companion `review` job — it hangs at finalization. A stage
+   is clean only on a clean helper run
 7. commit, then `forge stage done <id>`
 
 Per-stage local reviews are pre-commit hygiene and record nothing; the ONE

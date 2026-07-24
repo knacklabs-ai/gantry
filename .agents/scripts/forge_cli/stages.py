@@ -103,7 +103,9 @@ def cmd_start(args: argparse.Namespace) -> None:
     print(f"Stage {args.id} active — {stage.get('title')}")
     print("Loop: implement via /codex:rescue → inspect diff → validate assumptions → "
           "smallest checks → commit → LOCAL autoreview of the commit UNTIL CLEAN "
-          f"(record_stage_review_from_json.py --stage {args.id}, verdict clean; a fix "
+          "(run the autoreview SKILL HELPER directly: \"$AUTOREVIEW\" --mode commit "
+          "--commit HEAD — NOT a /codex:rescue review job, which hangs; then "
+          f"record_stage_review_from_json.py --stage {args.id}, verdict clean; a fix "
           "moves HEAD and staleness-fails the gate → re-review) → forge stage done "
           f"{args.id}")
 
