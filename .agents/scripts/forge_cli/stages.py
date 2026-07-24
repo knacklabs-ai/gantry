@@ -96,6 +96,26 @@ def _require_clean_stage_review(base: Path, stage_id: str) -> None:
              f"({', '.join(dirty[:5])}) — these are unreviewed even though HEAD "
              "matches the review. Commit them and re-review the new HEAD before "
              "done.")
+    # reviewed_sha == HEAD only proves the review's TIP commit is HEAD; a
+    # `--mode commit HEAD` review of a multi-commit stage passes that check while
+    # leaving earlier stage commits unreviewed. Bind the review to the full stage
+    # RANGE: it must attest reviewed_scope.base == the stage's start_sha, i.e. it
+    # covered start_sha..HEAD. (Stages recorded before start_sha stamping skip
+    # this — nothing to bind against.)
+    stage = next((s for s in load_stages(base).get("stages", [])
+                  if s.get("id") == stage_id), None)
+    start_sha = str((stage or {}).get("start_sha") or "").strip()
+    if start_sha:
+        scope = review.get("reviewed_scope")
+        scope_base = str(
+            (scope.get("base") if isinstance(scope, dict) else "") or "").strip()
+        if scope_base != start_sha:
+            fail(f"{stage_id} stage review does not attest the full stage range "
+                 f"(reviewed_scope.base {scope_base[:12] or 'missing'} != stage "
+                 f"start {start_sha[:12]}) — a latest-commit review can pass the "
+                 "HEAD check yet skip earlier stage commits. Re-run the autoreview "
+                 f"helper with --mode branch --base {start_sha[:12]} and record its "
+                 "reviewed_scope.base before done.")
 
 
 def stages_path(base: Path) -> Path:
@@ -150,14 +170,24 @@ def cmd_start(args: argparse.Namespace) -> None:
                  "(WORKFLOW.md Concurrency).")
     stage["status"] = "active"
     stage["started_at"] = now_iso()
+    # Pin the base so the stage's LOCAL autoreview covers the CUMULATIVE range,
+    # not just the terminal commit. A stage can accrue several commits (a fix
+    # after a clean review advances HEAD); `--mode commit HEAD` would review
+    # only the last one yet still attest reviewed_sha == HEAD and pass the gate.
+    start_sha = head_sha(base)
+    if start_sha:
+        stage["start_sha"] = start_sha
     if args.parallel:
         stage["parallel"] = True
     dump_json(stages_path(base), data)
+    base_ref = start_sha[:12] if start_sha else "<stage start commit>"
     print(f"Stage {args.id} active — {stage.get('title')}")
     print("Loop: implement via /codex:rescue → inspect diff → validate assumptions → "
-          "smallest checks → commit → LOCAL autoreview of the commit UNTIL CLEAN "
-          "(run the autoreview SKILL HELPER directly: \"$AUTOREVIEW\" --mode commit "
-          "--commit HEAD — NOT a /codex:rescue review job, which hangs; then "
+          "smallest checks → commit → LOCAL autoreview of the WHOLE stage range "
+          "UNTIL CLEAN (run the autoreview SKILL HELPER directly: \"$AUTOREVIEW\" "
+          f"--mode branch --base {base_ref} — range mode covers every stage commit; "
+          "NOT --mode commit HEAD, which reviews only the latest commit, and NOT a "
+          "/codex:rescue review job, which hangs; then "
           f"record_stage_review_from_json.py --stage {args.id}, verdict clean; a fix "
           "moves HEAD and staleness-fails the gate → re-review) → forge stage done "
           f"{args.id}")
