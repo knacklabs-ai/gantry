@@ -526,13 +526,7 @@ function createSessionEventStreamRouteHarness() {
       req,
       res,
       run: () =>
-        handleSessionRoutes(
-          req as never,
-          res as never,
-          ctx,
-          url,
-          url.pathname,
-        ),
+        handleSessionRoutes(req as never, res as never, ctx, url, url.pathname),
     };
   };
 
@@ -4402,7 +4396,9 @@ describe('control server runtime hardening', () => {
     });
 
     expect(harness.state.activeStreams).toBe(25);
-    expect(requests.filter(({ res }) => res.statusCode === 429)).toHaveLength(1);
+    expect(requests.filter(({ res }) => res.statusCode === 429)).toHaveLength(
+      1,
+    );
     expect(
       JSON.parse(requests.find(({ res }) => res.statusCode === 429)!.res.body),
     ).toMatchObject({ error: { code: 'TOO_MANY_STREAMS' } });
