@@ -11,7 +11,6 @@ export const BARE_SAFE_EXECUTABLES = new Set([
   'expr',
   'false',
   'id',
-  'seq',
   'tr',
   'true',
   'uname',

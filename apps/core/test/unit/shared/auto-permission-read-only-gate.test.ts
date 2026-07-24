@@ -89,6 +89,12 @@ describe('auto-permission deterministic read-only gate', () => {
     );
   });
 
+  it('does not treat seq as bare-safe', () => {
+    expect(
+      shell('seq 1 1000000000000', ['filesystem.read'], makeTempRoot()),
+    ).toMatchObject({ allowed: false });
+  });
+
   it('rejects file -f because NAMEFILE targets are not validated', () => {
     const workspaceRoot = makeTempRoot();
     fs.writeFileSync(path.join(workspaceRoot, 'targets.txt'), '/etc/passwd\n');
