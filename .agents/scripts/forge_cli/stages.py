@@ -21,24 +21,36 @@ from factory_lib import (
 from .common import fail
 
 
-def _tracked_worktree_dirty(base: Path) -> list[str]:
-    """Tracked files with staged or unstaged changes (untracked ignored).
+# Build/backup artifacts that legitimately live in the worktree and are not
+# stage implementation. Everything else — tracked changes AND untracked source —
+# counts as unreviewed work the stage gate must reject.
+_WORKTREE_NOISE_PREFIXES = ("dist/", "dist.bak", "node_modules/", "coverage/")
 
-    A clean review binds to a commit SHA, but uncommitted edits to TRACKED
-    files do not move HEAD — so a review can be stale even when reviewed_sha ==
-    HEAD. `stage done` must reject those. Untracked paths (e.g. dist backups)
-    are noise and excluded."""
+
+def _worktree_dirty(base: Path) -> list[str]:
+    """Uncommitted work — TRACKED changes AND UNTRACKED files — excluding known
+    build/backup noise.
+
+    A clean review binds to a commit SHA, but uncommitted edits to tracked files
+    (or newly created untracked source/test files) do not move HEAD — so a
+    review can be stale even when reviewed_sha == HEAD. `stage done` must reject
+    those. Fail CLOSED: a `git status` error returns a sentinel so the gate
+    refuses rather than attesting a stage it cannot verify."""
     proc = subprocess.run(
-        ["git", "status", "--porcelain", "--untracked-files=no"],
+        ["git", "status", "--porcelain", "--untracked-files=normal"],
         cwd=base, capture_output=True, text=True,
     )
     if proc.returncode != 0:
-        return []
-    return [
-        line[3:].split(" -> ")[-1].strip()
-        for line in proc.stdout.splitlines()
-        if line.strip()
-    ]
+        return ["<git status failed — cannot verify worktree cleanliness>"]
+    dirty = []
+    for line in proc.stdout.splitlines():
+        if not line.strip():
+            continue
+        path = line[3:].split(" -> ")[-1].strip().strip('"')
+        if path.startswith(_WORKTREE_NOISE_PREFIXES):
+            continue
+        dirty.append(path)
+    return dirty
 
 
 def _require_clean_stage_review(base: Path, stage_id: str) -> None:
@@ -68,7 +80,7 @@ def _require_clean_stage_review(base: Path, stage_id: str) -> None:
              f"review (reviewed {reviewed[:12]}, HEAD {head[:12]}). A fix "
              "after review is unreviewed; re-review the final commit and record "
              f"again: record_stage_review_from_json.py --stage {stage_id}.")
-    dirty = _tracked_worktree_dirty(base)
+    dirty = _worktree_dirty(base)
     if dirty:
         fail(f"{stage_id} has uncommitted changes to tracked files "
              f"({', '.join(dirty[:5])}) — these are unreviewed even though HEAD "
