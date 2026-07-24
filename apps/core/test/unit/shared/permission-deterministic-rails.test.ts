@@ -87,6 +87,33 @@ describe('permission deterministic rails', () => {
     }
   });
 
+  it('asks when only the display input is available and was sanitized', () => {
+    for (const metadata of [
+      { toolInputSanitized: true },
+      { toolInputSanitizedPaths: ['command'] },
+    ]) {
+      expect(
+        evaluatePermissionDeterministicRails({
+          request: request('git status', metadata),
+        }),
+      ).toMatchObject({
+        railOutcome: 'ask',
+        reason: expect.stringContaining('truncated'),
+      });
+    }
+  });
+
+  it('keeps evaluating unsanitized display-only input normally', () => {
+    expect(
+      evaluatePermissionDeterministicRails({
+        request: request('git reset --hard'),
+      }),
+    ).toMatchObject({
+      railOutcome: 'ask',
+      reason: expect.stringContaining('Destructive'),
+    });
+  });
+
   it('evaluates the full 16K command, not the 500-char display copy', () => {
     const workspaceRoot = makeRoot();
     const benignPrefix = `echo ${'a'.repeat(520)}`;

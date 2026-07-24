@@ -200,6 +200,27 @@ describe('computePermissionEffectHash', () => {
     expect(computePermissionEffectHash({ request: req })).toBeUndefined();
   });
 
+  it('returns undefined when only the display input is available and was sanitized', () => {
+    for (const metadata of [
+      { toolInputSanitized: true },
+      { toolInputSanitizedPaths: ['command'] },
+    ]) {
+      expect(
+        computePermissionEffectHash({
+          request: shellRequest('git status', metadata),
+        }),
+      ).toBeUndefined();
+    }
+  });
+
+  it('still hashes unsanitized display-only input', () => {
+    expect(
+      computePermissionEffectHash({
+        request: shellRequest('git status'),
+      }),
+    ).toBeDefined();
+  });
+
   it('returns undefined for every classifier-redacted input', () => {
     const requests = [
       {

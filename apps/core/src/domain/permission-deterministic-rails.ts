@@ -139,6 +139,13 @@ function inputIsIncomplete(request: PermissionApprovalRequest): boolean {
     toolInputTruncatedPaths?: string[];
   };
   if (!request.toolInput) return true;
+  if (
+    !request.classifierToolInput &&
+    (request.toolInputSanitized === true ||
+      (request.toolInputSanitizedPaths?.length ?? 0) > 0)
+  ) {
+    return true;
+  }
   if ((ipc.toolInputTruncatedPaths?.length ?? 0) > 0) return true;
   if (!SHELL_TOOLS.has(request.toolName)) {
     // Mirror the effect-key no-cache invariant: any hidden non-shell field may

@@ -123,6 +123,9 @@ function inputIsIncomplete(request: PermissionApprovalRequest): boolean {
   };
   return (
     !request.toolInput ||
+    (!request.classifierToolInput &&
+      (request.toolInputSanitized === true ||
+        (request.toolInputSanitizedPaths?.length ?? 0) > 0)) ||
     (ipc.toolInputRedactedPaths?.length ?? 0) > 0 ||
     (ipc.toolInputTruncatedPaths?.length ?? 0) > 0
   );
