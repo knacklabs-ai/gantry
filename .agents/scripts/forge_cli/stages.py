@@ -11,147 +11,11 @@ scoped: archived to .factory/history/<issue>/ and cleaned at ship.
 from __future__ import annotations
 
 import argparse
-import re
-import subprocess
 from pathlib import Path
 
-from factory_lib import (
-    dump_json, factory_dir, head_sha, load_json, now_iso, repo_root,
-)
+from factory_lib import dump_json, load_json, now_iso, repo_root
 
 from .common import fail
-
-
-# Build/backup artifacts that legitimately live in the worktree and are not
-# stage implementation. Everything else — tracked changes AND untracked source —
-# counts as unreviewed work the stage gate must reject.
-#
-# Matched as DIRECTORY CONTENTS only (a path component followed by "/"), so a
-# crafted root source file like `dist.bakdoor.ts` is NOT mistaken for the
-# `dist.bak-*/` backup dirs — it has no trailing slash and stays counted as
-# unreviewed work. `dist.bak(-<tag>)?/` covers the backup dirs the ship flow
-# creates (e.g. `dist.bak-perm2test/`).
-_WORKTREE_NOISE_RE = re.compile(
-    r"^(?:dist|node_modules|coverage|dist\.bak(?:-[\w.]+)?)/")
-
-
-def _is_worktree_noise(path: str) -> bool:
-    return bool(_WORKTREE_NOISE_RE.match(path))
-
-
-def _resolve_sha(base: Path, ref: str) -> str:
-    """Full 40-char commit SHA for `ref`, or "" if it doesn't resolve. Lets the
-    range gate accept an abbreviated reviewed_scope.base (the guidance prints a
-    short SHA) as equal to the full stored start_sha — both sides canonicalize
-    to the same commit rather than being compared as raw strings."""
-    if not ref:
-        return ""
-    proc = subprocess.run(
-        ["git", "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"],
-        cwd=base, capture_output=True, text=True,
-    )
-    return proc.stdout.strip() if proc.returncode == 0 else ""
-
-
-def _worktree_dirty(base: Path) -> list[str]:
-    """Uncommitted work — TRACKED changes AND UNTRACKED files — excluding known
-    build/backup noise.
-
-    A clean review binds to a commit SHA, but uncommitted edits to tracked files
-    (or newly created untracked source/test files) do not move HEAD — so a
-    review can be stale even when reviewed_sha == HEAD. `stage done` must reject
-    those. Fail CLOSED: a `git status` error returns a sentinel so the gate
-    refuses rather than attesting a stage it cannot verify."""
-    # -z is NUL-separated and unquoted; a rename/copy (status R/C) is emitted as
-    # `XY <new>\0<old>\0`, so BOTH sides are inspected — a move of a source file
-    # INTO an excluded build dir (e.g. `git mv src/x dist/x`) still counts.
-    proc = subprocess.run(
-        ["git", "status", "--porcelain", "-z", "--untracked-files=normal"],
-        cwd=base, capture_output=True, text=True,
-    )
-    if proc.returncode != 0:
-        return ["<git status failed — cannot verify worktree cleanliness>"]
-    tokens = [t for t in proc.stdout.split("\0") if t]
-    dirty = []
-    i = 0
-    while i < len(tokens):
-        entry = tokens[i]
-        status, new_path = entry[:2], entry[3:]
-        paths = [new_path]
-        if "R" in status or "C" in status:  # rename/copy: old path is next token
-            i += 1
-            if i < len(tokens):
-                paths.append(tokens[i])
-        # The build/backup exclusion applies ONLY to untracked output (status
-        # `??`). A TRACKED change under dist/coverage/etc. is real work that can
-        # go stale after a clean review without moving HEAD, so it must always
-        # count. No .strip(): porcelain -z is unquoted and delimiter-safe, so a
-        # path like " dist/x.ts" (leading space) is a real, distinct filename —
-        # trimming it would let it masquerade as excluded build noise.
-        untracked = status == "??"
-        for p in paths:
-            if p and not (untracked and _is_worktree_noise(p)):
-                dirty.append(p)
-        i += 1
-    return dirty
-
-
-def _require_clean_stage_review(base: Path, stage_id: str) -> None:
-    """Gate: `stage done` refuses unless the latest stage review is `clean`
-    AND bound to the current HEAD. A fix after a clean review advances HEAD →
-    the review goes stale → the gate refuses until the final commit is
-    re-reviewed. This enforces "LOCAL autoreview until clean before done"
-    (WORKFLOW.md Stage Loop) instead of trusting the operator to remember it."""
-    path = factory_dir(base) / "stage-reviews" / f"{stage_id}.json"
-    if not path.exists():
-        fail(f"{stage_id} has no recorded stage review — LOCAL autoreview until "
-             "clean is the gate for done. Review the COMMITTED diff, then record: "
-             f"record_stage_review_from_json.py --stage {stage_id} (verdict clean).")
-    review = load_json(path) or {}
-    if str(review.get("verdict", "")).lower() != "clean":
-        fail(f"{stage_id} stage review verdict is "
-             f"{review.get('verdict', 'missing')!r}, not 'clean' — fix the "
-             "findings, re-review the new commit, and record again before done.")
-    head = head_sha(base)
-    reviewed = str(review.get("reviewed_sha") or "").strip()
-    if not reviewed:
-        fail(f"{stage_id} stage review has no reviewed_sha — it cannot attest "
-             "which commit was reviewed. Re-review the current HEAD and record "
-             f"again: record_stage_review_from_json.py --stage {stage_id}.")
-    if head and reviewed != head:
-        fail(f"{stage_id} stage review is STALE — HEAD moved since the clean "
-             f"review (reviewed {reviewed[:12]}, HEAD {head[:12]}). A fix "
-             "after review is unreviewed; re-review the final commit and record "
-             f"again: record_stage_review_from_json.py --stage {stage_id}.")
-    dirty = _worktree_dirty(base)
-    if dirty:
-        fail(f"{stage_id} has uncommitted changes to tracked files "
-             f"({', '.join(dirty[:5])}) — these are unreviewed even though HEAD "
-             "matches the review. Commit them and re-review the new HEAD before "
-             "done.")
-    # reviewed_sha == HEAD only proves the review's TIP commit is HEAD; a
-    # `--mode commit HEAD` review of a multi-commit stage passes that check while
-    # leaving earlier stage commits unreviewed. Bind the review to the full stage
-    # RANGE: it must attest reviewed_scope.base == the stage's start_sha, i.e. it
-    # covered start_sha..HEAD. (Stages recorded before start_sha stamping skip
-    # this — nothing to bind against.)
-    stage = next((s for s in load_stages(base).get("stages", [])
-                  if s.get("id") == stage_id), None)
-    start_sha = str((stage or {}).get("start_sha") or "").strip()
-    if start_sha:
-        scope = review.get("reviewed_scope")
-        scope_base = str(
-            (scope.get("base") if isinstance(scope, dict) else "") or "").strip()
-        # Canonicalize both sides: the recorded base may be abbreviated (the
-        # start guidance prints a short SHA), so compare resolved commits, not
-        # raw strings. An unresolved/absent base canonicalizes to "" and fails.
-        if _resolve_sha(base, scope_base) != start_sha:
-            fail(f"{stage_id} stage review does not attest the full stage range "
-                 f"(reviewed_scope.base {scope_base[:12] or 'missing'} != stage "
-                 f"start {start_sha[:12]}) — a latest-commit review can pass the "
-                 "HEAD check yet skip earlier stage commits. Re-run the autoreview "
-                 f"helper with --mode branch --base {start_sha[:12]} and record its "
-                 "reviewed_scope.base before done.")
 
 
 def stages_path(base: Path) -> Path:
@@ -206,26 +70,12 @@ def cmd_start(args: argparse.Namespace) -> None:
                  "(WORKFLOW.md Concurrency).")
     stage["status"] = "active"
     stage["started_at"] = now_iso()
-    # Pin the base so the stage's LOCAL autoreview covers the CUMULATIVE range,
-    # not just the terminal commit. A stage can accrue several commits (a fix
-    # after a clean review advances HEAD); `--mode commit HEAD` would review
-    # only the last one yet still attest reviewed_sha == HEAD and pass the gate.
-    start_sha = head_sha(base)
-    if start_sha:
-        stage["start_sha"] = start_sha
     if args.parallel:
         stage["parallel"] = True
     dump_json(stages_path(base), data)
-    base_ref = start_sha[:12] if start_sha else "<stage start commit>"
     print(f"Stage {args.id} active — {stage.get('title')}")
     print("Loop: implement via /codex:rescue → inspect diff → validate assumptions → "
-          "smallest checks → commit → LOCAL autoreview of the WHOLE stage range "
-          "UNTIL CLEAN (run the autoreview SKILL HELPER directly: \"$AUTOREVIEW\" "
-          f"--mode branch --base {base_ref} — range mode covers every stage commit; "
-          "NOT --mode commit HEAD, which reviews only the latest commit, and NOT a "
-          "/codex:rescue review job, which hangs; then "
-          f"record_stage_review_from_json.py --stage {args.id}, verdict clean; a fix "
-          "moves HEAD and staleness-fails the gate → re-review) → forge stage done "
+          "smallest checks → LOCAL autoreview until clean → commit → forge stage done "
           f"{args.id}")
 
 
@@ -238,7 +88,6 @@ def cmd_done(args: argparse.Namespace) -> None:
     if stage.get("status") != "active":
         fail(f"{args.id} is {stage.get('status', 'pending')!r}, not active — "
              "`forge stage start` it first; done attests a stage that actually ran.")
-    _require_clean_stage_review(base, args.id)
     stage["status"] = "done"
     stage["completed_at"] = now_iso()
     dump_json(stages_path(base), data)

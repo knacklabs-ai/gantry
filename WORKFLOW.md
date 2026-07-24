@@ -277,28 +277,14 @@ through the loop:
 3. the orchestrator inspects the diff and rejects overbuilt code
 4. that stage's assumption rows are validated (`forge assumptions list --open`)
 5. smallest relevant checks run
-6. **commit** the stage
-7. **autoreview the CUMULATIVE stage until clean** — invoke the autoreview SKILL
-   HELPER DIRECTLY on the whole stage range, `"$AUTOREVIEW" --mode branch --base
-   <START_SHA>` where `<START_SHA>` is the stage start commit that `forge stage
-   start` recorded and printed (NOT `origin/main`, which for any stage after the
-   first spans earlier stages and is rejected by the range gate; and NOT `--mode
-   commit`, which reviews only the latest commit and misses earlier commits in a
-   multi-commit stage). The helper spawns the Codex engine in an isolated sandbox
-   and returns a definitive exit code. NEVER a `/codex:rescue`/companion `review`
-   job — it hangs at finalization. A finding means fix, commit, and autoreview the
-   range AGAIN; the recorded review binds to the resulting HEAD, so the whole
-   stage must be clean at that HEAD.
-8. **record the clean review** — `record_stage_review_from_json.py --stage <id>`
-   with the reviewed HEAD SHA and `reviewed_scope.base` == the stage `start_sha`
-   (verdict `clean`), then `forge stage done <id>`.
+6. **local autoreview on the UNCOMMITTED diff until clean** (`autoreview
+   --mode local`, run as a Codex handoff) — a stage commits only clean
+7. commit, then `forge stage done <id>`
 
-The `stage done` gate is enforced: it refuses unless the stage's recorded review
-is `clean`, its `reviewed_sha` equals current HEAD, and the tracked worktree is
-clean — so a fix after review (which moves HEAD or dirties the tree) staleness-
-fails until the final commit is re-reviewed. The ONE branch-wide autoreview at
-the review phase remains the producer of `.factory/reviews/*` (decision 0001 D6
-— it catches cross-stage issues the local passes cannot see). `pr_ready.py`
+Per-stage local reviews are pre-commit hygiene and record nothing; the ONE
+branch-wide autoreview at the review phase remains the only review gate and
+sole producer of `.factory/reviews/*` (decision 0001 D6 unchanged — it
+catches cross-stage issues the local passes cannot see). `pr_ready.py`
 refuses while any stage is not done; `forge next` shows stage progress; the
 tracker archives to `.factory/history/<issue>/` at ship.
 
