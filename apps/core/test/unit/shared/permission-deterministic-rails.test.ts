@@ -57,23 +57,39 @@ describe('permission deterministic rails', () => {
     });
   });
 
-  it('does not treat sensitive-key redaction or display sanitization as incomplete', () => {
-    const workspaceRoot = makeRoot();
-    fs.writeFileSync(path.join(workspaceRoot, 'README.md'), 'Gantry');
-    // Redaction replaces secret VALUES, not the risk-relevant command verbs, so
-    // a redacted-but-not-truncated shell command still evaluates on the rails.
-    expect(
-      evaluatePermissionDeterministicRails({
-        request: {
-          ...request('cat README.md'),
-          toolInputSanitized: true,
-          toolInputSanitizedPaths: ['command'],
-          toolInputRedactedPaths: ['command'],
-        } as PermissionApprovalRequest,
-        approvedCapabilityIds: ['filesystem.read'],
-        workspaceRoot,
-      }),
-    ).toMatchObject({ railOutcome: 'allow' });
+  it('asks when redaction or sanitization can hide shell syntax', () => {
+    const redactedCommand = 'echo api_key="[REDACTED]"';
+    const requests = [
+      {
+        ...request(redactedCommand),
+        toolInputRedactedPaths: ['command'],
+      },
+      {
+        ...request(redactedCommand),
+        toolInputSanitizedPaths: ['command'],
+      },
+      {
+        ...request(redactedCommand),
+        toolInputSanitized: true,
+      },
+      {
+        ...request(redactedCommand),
+        toolInput: { cmd: redactedCommand },
+        toolInputRedactedPaths: ['cmd'],
+      },
+    ] as PermissionApprovalRequest[];
+
+    for (const candidate of requests) {
+      expect(
+        evaluatePermissionDeterministicRails({
+          request: candidate,
+          approvedCapabilityIds: ['filesystem.read'],
+        }),
+      ).toMatchObject({
+        railOutcome: 'ask',
+        reason: expect.stringContaining('sanitized'),
+      });
+    }
   });
 
   it('evaluates the full 16K command, not the 500-char display copy', () => {
@@ -103,7 +119,8 @@ describe('permission deterministic rails', () => {
         } as PermissionApprovalRequest,
       }),
     ).not.toMatchObject({
-      reason: 'Exact tool input is missing or the command was truncated.',
+      reason:
+        'Exact tool input is missing, or the command was sanitized or truncated.',
     });
   });
 
@@ -344,7 +361,7 @@ describe('permission deterministic rails', () => {
     });
   });
 
-  it('preserves the read-only fast path for cat and read-only git', () => {
+  it('preserves an unsanitized in-workspace read but not git', () => {
     const workspaceRoot = makeRoot();
     fs.writeFileSync(path.join(workspaceRoot, 'README.md'), 'Gantry');
 
@@ -366,7 +383,7 @@ describe('permission deterministic rails', () => {
         workspaceRoot,
         trustedRoots: [workspaceRoot],
       }),
-    ).toMatchObject({ railOutcome: 'allow' });
+    ).toBeUndefined();
   });
 
   it.each([
@@ -405,6 +422,25 @@ describe('permission deterministic rails', () => {
         }),
       ).not.toMatchObject({ railOutcome: 'allow' });
     }
+    expect(
+      evaluatePermissionDeterministicRails({
+        request: request('unused', {
+          toolName: 'mcp__gantry__send_message',
+          toolInput: { text: 'ordinary progress update' },
+        }),
+      }),
+    ).toMatchObject({ railOutcome: 'allow' });
+  });
+
+  it('requires the canonical gantry namespace for the benign MCP shortcut', () => {
+    expect(
+      evaluatePermissionDeterministicRails({
+        request: request('unused', {
+          toolName: 'send_message',
+          toolInput: { text: 'ordinary progress update' },
+        }),
+      }),
+    ).not.toMatchObject({ railOutcome: 'allow' });
     expect(
       evaluatePermissionDeterministicRails({
         request: request('unused', {

@@ -200,33 +200,63 @@ describe('computePermissionEffectHash', () => {
     expect(computePermissionEffectHash({ request: req })).toBeUndefined();
   });
 
-  it('still caches sanitized/redacted input (values redacted, verbs intact)', () => {
-    // Sensitive-VALUE redaction and 500-char display alteration do not change
-    // the risk-relevant command, so the key still builds.
-    expect(
-      computePermissionEffectHash({
-        request: shellRequest('ls', { toolInputSanitized: true }),
-      }),
-    ).toBeDefined();
-    expect(
-      computePermissionEffectHash({
-        request: shellRequest('ls', { toolInputSanitizedPaths: ['command'] }),
-      }),
-    ).toBeDefined();
+  it('returns undefined for every sanitized or redacted input', () => {
+    const requests = [
+      shellRequest('ls', { toolInputSanitized: true }),
+      shellRequest('ls', { toolInputSanitizedPaths: ['command'] }),
+      {
+        ...shellRequest('ls'),
+        toolInputRedactedPaths: ['command'],
+      } as PermissionApprovalRequest,
+      {
+        ...shellRequest('unused', {
+          toolName: 'mcp__example__update',
+          toolInput: { value: '[REDACTED]' },
+        }),
+        toolInputRedactedPaths: ['value'],
+      } as PermissionApprovalRequest,
+    ];
 
-    const redacted = shellRequest('ls') as PermissionApprovalRequest & {
-      toolInputRedactedPaths?: string[];
-    };
-    redacted.toolInputRedactedPaths = ['command'];
-    expect(computePermissionEffectHash({ request: redacted })).toBeDefined();
+    for (const request of requests) {
+      expect(computePermissionEffectHash({ request })).toBeUndefined();
+    }
   });
 
-  it('returns undefined only when the shell command was truncated', () => {
+  it('returns undefined whenever any field was truncated', () => {
     const truncated = shellRequest('ls') as PermissionApprovalRequest & {
       toolInputTruncatedPaths?: string[];
     };
     truncated.toolInputTruncatedPaths = ['command'];
     expect(computePermissionEffectHash({ request: truncated })).toBeUndefined();
+
+    const nonShell = {
+      ...shellRequest('unused', {
+        toolName: 'mcp__example__update',
+        toolInput: { value: 'x'.repeat(16_384) },
+      }),
+      toolInputTruncatedPaths: ['value'],
+    } as PermissionApprovalRequest;
+    expect(computePermissionEffectHash({ request: nonShell })).toBeUndefined();
+  });
+
+  it('cannot collide a truncated non-shell effect with its visible prefix', () => {
+    const visiblePrefix = `${'x'.repeat(16_384)}...[truncated]`;
+    const shortRequest = shellRequest('unused', {
+      toolName: 'mcp__example__update',
+      toolInput: { value: visiblePrefix },
+    });
+    const truncatedLongRequest = {
+      ...shortRequest,
+      requestId: 'req-long',
+      toolInputTruncatedPaths: ['value'],
+    } as PermissionApprovalRequest;
+
+    expect(
+      computePermissionEffectHash({ request: shortRequest }),
+    ).toBeDefined();
+    expect(
+      computePermissionEffectHash({ request: truncatedLongRequest }),
+    ).toBeUndefined();
   });
 
   it('builds a key for a benign host-env-prefixed (already-stripped) command', () => {

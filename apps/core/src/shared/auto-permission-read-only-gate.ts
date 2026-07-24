@@ -14,7 +14,6 @@ import {
   FIND_UNSAFE_PRIMARY,
   GENERIC_READ_EXECUTABLES,
   genericReadFileArgs,
-  gitReadOnly,
   hasHiddenPathSegment,
   normalizeCapabilityId,
   sedReadFileArgs,
@@ -165,11 +164,6 @@ function evaluateLeaf(
 
   if (BARE_SAFE_EXECUTABLES.has(executable)) {
     return allowed(`Known-safe command ${executable}.`);
-  }
-  if (executable === 'git') {
-    return gitReadOnly(args, capabilityIds)
-      ? allowed('Read-only git command.')
-      : blocked('git command is not a reviewed read-only operation.');
   }
   if (executable === 'sed') {
     const fileArgs = sedReadFileArgs(args);

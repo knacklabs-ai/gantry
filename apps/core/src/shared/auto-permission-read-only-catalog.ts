@@ -28,69 +28,10 @@ export const GENERIC_READ_EXECUTABLES = new Set([
   'uniq',
 ]);
 
-const GIT_READ_ONLY_SUBCOMMANDS = new Set([
-  'branch',
-  'diff',
-  'log',
-  'show',
-  'status',
-]);
-const GIT_SAFE_GLOBAL_OPTIONS = new Set([
-  '--literal-pathspecs',
-  '--no-optional-locks',
-  '--no-pager',
-  '--no-replace-objects',
-]);
-const GIT_BRANCH_READ_OPTIONS =
-  /^(?:-a|-r|-v|-vv|--list|--all|--remotes|--verbose|--color(?:=\w+)?|--no-color)$/;
-const GIT_STATUS_READ_OPTIONS =
-  /^(?:-s|-b|--short|--branch|--porcelain(?:=v[12])?|--long|--show-stash|--ignored(?:=\w+)?|--untracked-files(?:=\w+)?|--ahead-behind|--no-ahead-behind|--renames|--no-renames|--find-renames(?:=\d+%)?)$/;
-const GIT_LOG_READ_OPTIONS =
-  /^(?:--oneline|--graph|--stat|--shortstat|--numstat|--name-only|--name-status|--abbrev-commit|--decorate(?:=\w+)?|--no-decorate|--all|--branches(?:=[A-Za-z0-9._/-]+)?|--tags(?:=[A-Za-z0-9._/-]+)?|--remotes(?:=[A-Za-z0-9._/-]+)?|--first-parent|--merges|--no-merges|-n\d+|--max-count=\d+|--skip=\d+|--since=[^/]+|--until=[^/]+|--author=[^/]+|--grep=[^/]+|--format=[^/]+|--pretty=[^/]+|--color(?:=\w+)?|--no-color)$/;
-const GIT_DIFF_READ_OPTIONS =
-  /^(?:--cached|--staged|--stat|--shortstat|--numstat|--name-only|--name-status|--check|--exit-code|--quiet|--minimal|--patience|--histogram|--word-diff(?:=\w+)?|-U\d+|--unified=\d+|--color(?:=\w+)?|--no-color)$/;
-const GIT_SHOW_READ_OPTIONS =
-  /^(?:--oneline|--stat|--shortstat|--numstat|--name-only|--name-status|--abbrev-commit|--decorate(?:=\w+)?|--no-decorate|--format=[^/]+|--pretty=[^/]+|-U\d+|--unified=\d+|--color(?:=\w+)?|--no-color)$/;
-const GIT_REVISION = /^[A-Za-z0-9_@{}^~:+./-]+$/;
-
 // -exec/-delete/etc. run or mutate; -follow/-L/-H escape workspace confinement.
 export const FIND_UNSAFE_PRIMARY =
   /^-(?:exec|execdir|okdir|ok|delete|fprintf|fprint0|fprint|fls|follow|L|H|files0-from|anewer|cnewer|newer(?:[A-Za-z]{2})?|samefile)$/;
 export const FIND_GLOBAL_OPTION = /^-(?:O\d*|P|D|f)$/;
-
-// Read-only git subset (status/log/diff/show/read-only branch). Each
-// subcommand has a strict display/read option allowlist: helper execution,
-// config overrides, no-index file reads, output files, external directories,
-// and unknown options all fail closed.
-export function gitReadOnly(
-  args: readonly string[],
-  capabilityIds: readonly string[],
-): boolean {
-  if (!capabilityIds.some((id) => capabilityTokens(id)[0] === 'git')) {
-    return false;
-  }
-  let index = 0;
-  while (index < args.length && args[index]!.startsWith('-')) {
-    if (!GIT_SAFE_GLOBAL_OPTIONS.has(args[index]!)) return false;
-    index += 1;
-  }
-  const subcommand = args[index];
-  if (!subcommand || !GIT_READ_ONLY_SUBCOMMANDS.has(subcommand)) return false;
-  const rest = args.slice(index + 1);
-  if (subcommand === 'branch') {
-    return rest.every((arg) => GIT_BRANCH_READ_OPTIONS.test(arg));
-  }
-  if (subcommand === 'status') {
-    return gitReadArgs(rest, GIT_STATUS_READ_OPTIONS, false);
-  }
-  if (subcommand === 'log') {
-    return gitReadArgs(rest, GIT_LOG_READ_OPTIONS, true);
-  }
-  if (subcommand === 'diff') {
-    return gitReadArgs(rest, GIT_DIFF_READ_OPTIONS, true);
-  }
-  return gitReadArgs(rest, GIT_SHOW_READ_OPTIONS, true);
-}
 
 // Only `sed -n <script> [file...]` (print-only). Any other flag (`-i`, `-e`,
 // `-f`, `--in-place`) blocks, as does a script naming a read/write/exec command.
@@ -137,57 +78,6 @@ export function genericReadFileArgs(
   }
   if (executable === 'uniq' && fileArgs.length > 1) return undefined;
   return fileArgs;
-}
-
-function gitReadArgs(
-  args: readonly string[],
-  safeOption: RegExp,
-  revisionsAllowed: boolean,
-): boolean {
-  let pathspecs = false;
-  for (const arg of args) {
-    if (!pathspecs && arg === '--') {
-      pathspecs = true;
-      continue;
-    }
-    if (!pathspecs && arg.startsWith('-')) {
-      if (!safeOption.test(arg)) return false;
-      continue;
-    }
-    if (pathspecs || !revisionsAllowed) {
-      if (!isSafeGitPathspec(arg)) return false;
-      continue;
-    }
-    if (
-      !GIT_REVISION.test(arg) ||
-      pathLikeAbsolute(arg) ||
-      hasHiddenPathSegment(
-        arg.includes(':') ? arg.slice(arg.indexOf(':') + 1) : arg,
-      )
-    ) {
-      return false;
-    }
-  }
-  return true;
-}
-
-function isSafeGitPathspec(value: string): boolean {
-  return (
-    Boolean(value) &&
-    !pathLikeAbsolute(value) &&
-    !value
-      .replaceAll('\\', '/')
-      .split('/')
-      .some((segment) => segment === '..' || segment.startsWith('.'))
-  );
-}
-
-function pathLikeAbsolute(value: string): boolean {
-  return (
-    value.startsWith('/') ||
-    value.startsWith('~') ||
-    /^[A-Za-z]:[\\/]/.test(value)
-  );
 }
 
 function genericReadOptionValue(

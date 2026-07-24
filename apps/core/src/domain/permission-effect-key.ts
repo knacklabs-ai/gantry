@@ -16,10 +16,8 @@ import type { PermissionApprovalRequest } from './types.js';
  *  - Every field is length-prefixed so `a|b` can never equal `ab`.
  *
  * Returns `undefined` (⇒ NO caching) whenever the risk-relevant input is
- * unavailable: the toolInput is missing, or a shell command field was actually
- * truncated. Sensitive-value redaction and 500-char display alteration do not
- * change the risk-relevant command, so those alone still cache. Never hash a
- * truncated command.
+ * unavailable: the toolInput is missing or any input field was sanitized,
+ * redacted, or truncated. Never hash a sanitized input.
  */
 
 // Bump on ANY change to the canonicalizer below (field set, order, framing,
@@ -31,7 +29,7 @@ export const EFFECT_SCHEMA_VERSION = 3;
 // is a standalone int. Bump it whenever the deterministic rails' allow/ask
 // floor changes, so a rails tightening invalidates cached classifier verdicts.
 // Upgrade path: import a shared RAIL_CATALOG_VERSION here once the rails export one.
-export const RAIL_CATALOG_VERSION = 1;
+export const RAIL_CATALOG_VERSION = 2;
 
 const SHELL_TOOLS = new Set(['Bash', 'RunCommand']);
 
@@ -113,16 +111,20 @@ function commandText(input: Record<string, unknown>): string | undefined {
 }
 
 /**
- * Mirrors `inputIsIncomplete` in permission-deterministic-rails.ts: incomplete
- * ONLY when the toolInput is missing or a shell command field was actually
- * TRUNCATED. Redaction (secret VALUES) and 500-char display alteration are not
- * risk gaps, so a benign redacted-but-not-truncated input still caches.
+ * Cache reuse requires a complete, byte-representative decision input. Any
+ * sanitization marker makes the effect uncacheable, regardless of tool family
+ * or altered field, because hidden content could change the effect.
  */
 function inputIsIncomplete(request: PermissionApprovalRequest): boolean {
   const ipc = request as PermissionApprovalRequest & {
+    toolInputRedactedPaths?: string[];
     toolInputTruncatedPaths?: string[];
   };
-  if (!request.toolInput) return true;
-  const truncated = ipc.toolInputTruncatedPaths ?? [];
-  return truncated.includes('command') || truncated.includes('cmd');
+  return (
+    !request.toolInput ||
+    request.toolInputSanitized === true ||
+    (request.toolInputSanitizedPaths?.length ?? 0) > 0 ||
+    (ipc.toolInputRedactedPaths?.length ?? 0) > 0 ||
+    (ipc.toolInputTruncatedPaths?.length ?? 0) > 0
+  );
 }

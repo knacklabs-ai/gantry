@@ -128,11 +128,14 @@ describe('auto-permission deterministic read-only gate', () => {
     'git show --stat HEAD',
     'git branch',
     'git branch --list',
-  ])('proves read-only git commands: %s', (command) => {
-    expect(
-      shell(command, ['filesystem.read', 'git.read'], makeTempRoot()),
-    ).toMatchObject({ allowed: true });
-  });
+  ])(
+    'leaves every git command for classifier or human review: %s',
+    (command) => {
+      expect(
+        shell(command, ['filesystem.read', 'git.read'], makeTempRoot()),
+      ).toMatchObject({ allowed: false });
+    },
+  );
 
   it.each([
     'git show HEAD:.npmrc',
@@ -156,12 +159,6 @@ describe('auto-permission deterministic read-only gate', () => {
   ])('leaves write, network, or escaping git unproven: %s', (command) => {
     expect(
       shell(command, ['filesystem.read', 'git.read'], makeTempRoot()),
-    ).toMatchObject({ allowed: false });
-  });
-
-  it('requires a git capability boundary for git reads', () => {
-    expect(
-      shell('git status', ['filesystem.read'], makeTempRoot()),
     ).toMatchObject({ allowed: false });
   });
 

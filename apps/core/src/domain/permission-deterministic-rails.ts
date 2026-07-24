@@ -62,7 +62,9 @@ export function evaluatePermissionDeterministicRails(
 ): PermissionDeterministicRailDecision | undefined {
   const { request } = input;
   if (inputIsIncomplete(request)) {
-    return ask('Exact tool input is missing or the command was truncated.');
+    return ask(
+      'Exact tool input is missing, or the command was sanitized or truncated.',
+    );
   }
   if (
     isBenignGantryTool(request.toolName) &&
@@ -124,11 +126,10 @@ export function evaluatePermissionDeterministicRails(
 
 /**
  * Incomplete ⇒ the risk-relevant input is genuinely unavailable, so we must
- * ask. That is ONLY when the toolInput is missing, or a shell command field was
- * actually TRUNCATED (`toolInputTruncatedPaths` contains `command`/`cmd`).
- * Sensitive-key redaction replaces secret VALUES — not the risk-relevant
- * verbs/paths — and 500-char display alteration is not a risk gap now that the
- * host env-prefix is stripped, so neither alone marks the input incomplete.
+ * ask. Shell commands are executable strings, so redaction or sanitization can
+ * hide syntax inside a value (for example, command substitution). A shell
+ * command is therefore incomplete whenever its command/cmd field was altered,
+ * redacted, or truncated. Non-shell tools keep their existing behavior.
  *
  * SECURITY COUPLING: benign first-party MCP tools are a separate auto-allow
  * shortcut. That shortcut is gated on zero redaction/sanitization metadata, so
@@ -136,11 +137,21 @@ export function evaluatePermissionDeterministicRails(
  */
 function inputIsIncomplete(request: PermissionApprovalRequest): boolean {
   const ipc = request as PermissionApprovalRequest & {
+    toolInputRedactedPaths?: string[];
     toolInputTruncatedPaths?: string[];
   };
   if (!request.toolInput) return true;
-  const truncated = ipc.toolInputTruncatedPaths ?? [];
-  return truncated.includes('command') || truncated.includes('cmd');
+  if (!SHELL_TOOLS.has(request.toolName)) return false;
+  return (
+    request.toolInputSanitized === true ||
+    hasCommandPath(request.toolInputSanitizedPaths) ||
+    hasCommandPath(ipc.toolInputRedactedPaths) ||
+    hasCommandPath(ipc.toolInputTruncatedPaths)
+  );
+}
+
+function hasCommandPath(paths: readonly string[] | undefined): boolean {
+  return paths?.some((path) => path === 'command' || path === 'cmd') ?? false;
 }
 
 function hasRiskRelevantSanitization(
@@ -156,11 +167,9 @@ function hasRiskRelevantSanitization(
   );
 }
 
-// Accepts both the mcp-prefixed canonical form (`mcp__gantry__send_message`)
-// and the bare tool name. Non-gantry MCP tools never match.
 function isBenignGantryTool(toolName: string): boolean {
   const match = /^mcp__gantry__(.+)$/.exec(toolName);
-  return BENIGN_GANTRY_MCP_TOOLS.has(match ? match[1]! : toolName);
+  return match !== null && BENIGN_GANTRY_MCP_TOOLS.has(match[1]!);
 }
 
 function isInterpreterString(leaf: BashCommandLeaf): boolean {
