@@ -977,4 +977,97 @@ describe('cli telegram helpers', () => {
     expect(result.error).toContain('ambiguous');
     expect(result.error).toContain('folder/agent selector');
   });
+
+  it('resolves the canonical agent:<folder> id surfaced by status and jobs', () => {
+    const firstRouteKey = makeAgentThreadQueueKey(
+      'tg:123',
+      'agent:first_agent',
+    );
+    const secondRouteKey = makeAgentThreadQueueKey(
+      'tg:456',
+      'agent:second_agent',
+    );
+    const groups = {
+      [firstRouteKey]: {
+        name: 'First',
+        folder: 'first_agent',
+        trigger: '',
+        added_at: '2026-04-24T00:00:00.000Z',
+      },
+      [secondRouteKey]: {
+        name: 'Second',
+        folder: 'second_agent',
+        trigger: '',
+        added_at: '2026-04-24T00:00:00.000Z',
+      },
+    };
+
+    const byAgentId = resolveGroupSelector(groups, 'agent:second_agent');
+    expect(byAgentId.error).toBeUndefined();
+    expect(byAgentId.found?.jid).toBe(secondRouteKey);
+    expect(byAgentId.found?.group.folder).toBe('second_agent');
+
+    // Same agent, reachable by folder and by full route JID.
+    expect(resolveGroupSelector(groups, 'second_agent').found?.jid).toBe(
+      secondRouteKey,
+    );
+    expect(resolveGroupSelector(groups, secondRouteKey).found?.jid).toBe(
+      secondRouteKey,
+    );
+
+    // agent:<folder> is agent-only: unknown ids do not fall back to anything.
+    const unknown = resolveGroupSelector(groups, 'agent:missing_agent');
+    expect(unknown.found).toBeNull();
+    expect(unknown.error).toBeUndefined();
+  });
+
+  it('resolves an agent id that owns multiple routes to that single agent', () => {
+    const routeA = makeAgentThreadQueueKey('tg:123', 'agent:multi_agent');
+    const routeB = makeAgentThreadQueueKey('tg:456', 'agent:multi_agent');
+    const result = resolveGroupSelector(
+      {
+        [routeA]: {
+          name: 'Multi',
+          folder: 'multi_agent',
+          trigger: '',
+          added_at: '2026-04-24T00:00:00.000Z',
+        },
+        [routeB]: {
+          name: 'Multi',
+          folder: 'multi_agent',
+          trigger: '',
+          added_at: '2026-04-24T00:00:00.000Z',
+        },
+      },
+      'agent:multi_agent',
+    );
+
+    expect(result.error).toBeUndefined();
+    expect(result.found?.group.folder).toBe('multi_agent');
+  });
+
+  it('reports ambiguity when a token is both a route JID and another agent folder', () => {
+    const collidingJid = 'tg:999';
+    const otherRouteKey = makeAgentThreadQueueKey('tg:123', 'agent:other');
+    const result = resolveGroupSelector(
+      {
+        [collidingJid]: {
+          name: 'Direct route',
+          folder: 'direct_route',
+          trigger: '',
+          added_at: '2026-04-24T00:00:00.000Z',
+        },
+        [otherRouteKey]: {
+          name: 'Other',
+          folder: collidingJid,
+          trigger: '',
+          added_at: '2026-04-24T00:00:00.000Z',
+        },
+      },
+      collidingJid,
+    );
+
+    expect(result.found).toBeNull();
+    expect(result.error).toContain('ambiguous');
+  });
 });

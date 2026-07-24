@@ -289,6 +289,25 @@ function resolveBareJidRoute(
   return { found: { jid, group } };
 }
 
+function resolveAgentIdRoute(
+  groups: Record<string, ConversationRoute>,
+  selector: string,
+): { found: { jid: string; group: ConversationRoute } | null; error?: string } {
+  const matches = Object.entries(groups).filter(
+    ([jid]) => parseAgentThreadQueueKey(jid).agentId === selector,
+  );
+  if (matches.length === 0) return { found: null };
+  const folders = new Set(matches.map(([, group]) => group.folder));
+  if (folders.size > 1) {
+    return {
+      found: null,
+      error: `Selector "${selector}" resolves to multiple agents (${[...folders].join(', ')}). Use the exact folder or route JID.`,
+    };
+  }
+  const [jid, group] = matches[0]!;
+  return { found: { jid, group } };
+}
+
 export function resolveGroupSelector(
   groups: Record<string, ConversationRoute>,
   rawSelector: string,
@@ -296,10 +315,28 @@ export function resolveGroupSelector(
   const selector = rawSelector.trim();
   if (!selector) return { found: null };
 
+  // The canonical `agent:<folder>` id surfaced by `gantry status`, `gantry jobs
+  // list`, and system-job ids is embedded (url-encoded) in every route key.
+  // It is an agent-only form: never fall back to folder/JID matching for it.
+  if (selector.startsWith('agent:')) {
+    return resolveAgentIdRoute(groups, selector);
+  }
+
   const directJid = groups[selector]
     ? { jid: selector, group: groups[selector] }
     : null;
   if (directJid) {
+    // A token that is BOTH an exact route JID and another agent's folder is
+    // ambiguous — do not silently prefer the JID.
+    const folderCollision = Object.entries(groups).find(
+      ([jid, group]) => group.folder === selector && jid !== selector,
+    );
+    if (folderCollision) {
+      return {
+        found: null,
+        error: `Selector "${selector}" is ambiguous (route JID "${selector}" and folder "${selector}" of agent "${folderCollision[1].name}"). Use the full route JID or the agent:<folder> id.`,
+      };
+    }
     return { found: directJid };
   }
 
