@@ -147,21 +147,45 @@ describe('permission deterministic rails', () => {
     });
   });
 
-  it('does not short-circuit a non-shell tool whose display field was altered', () => {
-    // A redacted/altered display field on a non-shell tool must not force an
-    // incomplete ask; the rails fall through to read-only evaluation (undefined
-    // here, since the Read tool is not a deterministic read-only match).
+  it('asks for a redacted non-shell read but still allows the same complete read', () => {
+    const mcpRead = {
+      approvedCapabilityIds: ['mcp.google-drive.files.access'],
+      reviewedMcpReadBindings: [
+        {
+          capabilityId: 'mcp.google-drive.files.access',
+          toolPattern: 'mcp__google_drive__files_list',
+        },
+      ],
+    };
+
     expect(
       evaluatePermissionDeterministicRails({
         request: {
           ...request('unused'),
-          toolName: 'Read',
-          toolInput: { file_path: '/x' },
-          toolInputSanitized: true,
-          toolInputSanitizedPaths: ['file_path'],
+          toolName: 'mcp__google_drive__files_list',
+          toolInput: { folder_id: '[REDACTED]' },
+          toolInputRedactedPaths: ['folder_id'],
         } as PermissionApprovalRequest,
+        ...mcpRead,
       }),
-    ).toBeUndefined();
+    ).toMatchObject({
+      railOutcome: 'ask',
+      reason: expect.stringContaining('redacted'),
+    });
+    expect(
+      evaluatePermissionDeterministicRails({
+        request: {
+          ...request('unused'),
+          toolName: 'mcp__google_drive__files_list',
+          toolInput: { folder_id: 'root' },
+        },
+        ...mcpRead,
+      }),
+    ).toMatchObject({
+      approved: true,
+      decidedBy: 'deterministic_read_only',
+      railOutcome: 'allow',
+    });
   });
 
   it.each([
